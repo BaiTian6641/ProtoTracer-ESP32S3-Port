@@ -1,6 +1,9 @@
 # **ProtoTracer-ESP32: The ESP32S3 port of 3D Rendering and Animation Engine**
 This project is a live 3D rendering and animation engine designed for use on microcontrollers.
-This port is still under the development.
+
+This port is still under the development. The ESP-NOW Remote Controller part is not finished.
+
+The design files of screen controller and remote controller will be available soon.
 
 ## Demonstration:
 As a quick way to showcase the capabilities of this software, here is a demo showing a live rendering of a rotating and textured .OBJ file:
@@ -9,6 +12,9 @@ As a quick way to showcase the capabilities of this software, here is a demo sho
 * ESP32-S3-WROOM-1/1U NxxR8
 
 This codebase has been tested on an Arduino Mega (smaller .OBJ file with a 89 pixel matrix) and on a Teensy 4.0 and ESP32S3(2000 triangle scene with a 2,804 pixel matrix).
+
+# Issues:
+The rainbow spiral is not stable.
 
 # Usage:
 The following links give a detailed description on how to import files, set up controllers, manipulate objects, and render to displays:
