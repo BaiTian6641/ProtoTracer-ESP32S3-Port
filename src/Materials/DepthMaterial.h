@@ -15,7 +15,7 @@ public:
 
 private:
     RGBColor spectrum[4] = {RGBColor(0, 255, 0), RGBColor(255, 0, 0), RGBColor(0, 255, 0), RGBColor(0, 0, 255)};
-    GradientMaterial gNoiseMat = GradientMaterial(4, spectrum, 2.0f, false);
+    GradientMaterial<2> gNoiseMat = GradientMaterial<2>(spectrum, 2.0f, false);
     Axis axis;
     float depth = 0.0f;
     float zOffset = 0.0f;

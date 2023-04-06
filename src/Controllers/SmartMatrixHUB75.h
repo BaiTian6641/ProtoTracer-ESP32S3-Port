@@ -44,8 +44,8 @@ class SmartMatrixHUB75 : public Controller {
 private:
     CameraLayout cameraLayout = CameraLayout(CameraLayout::ZForward, CameraLayout::YUp);
 
-    Transform camTransform = Transform(Vector3D(), Vector3D(0, 0, -500.0f), Vector3D(1, 1, 1));
-    Transform camSideTransform = Transform(Vector3D(), Vector3D(0, 0, -500.0f), Vector3D(1, 1, 1));
+    Transform camTransform = Transform(Vector3D(), Vector3D(0, 0, -100.0f), Vector3D(1, 1, 1));
+    Transform camSideTransform = Transform(Vector3D(), Vector3D(0, 0, 0.0f), Vector3D(1, 1, 1));
 
     PixelGroup<2048> camPixels = PixelGroup<2048>(P3HUB75);
     PixelGroup<100> camSidePixels = PixelGroup<100>(LinearPixels);

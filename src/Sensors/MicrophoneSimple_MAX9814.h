@@ -27,8 +27,9 @@ public:
         this->pin = pin;
         this->gain = gain;
 
-        analogReadRes(12);
-        analogReadAveraging(32);
+        //analogReadRes(12);
+        //analogReadAveraging(32);
+        analogReadResolution(12);
 
         pinMode(pin, INPUT);
 

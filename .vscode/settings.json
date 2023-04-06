@@ -1,5 +1,6 @@
 {
     "files.associations": {
+        "*.scala": "scala",
         "string": "cpp",
         "initializer_list": "cpp",
         "utility": "cpp",
@@ -10,6 +11,7 @@
         "unordered_map": "cpp",
         "vector": "cpp",
         "memory": "cpp",
-        "random": "cpp"
+        "random": "cpp",
+        "string_view": "cpp"
     }
 }

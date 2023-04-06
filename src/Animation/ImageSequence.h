@@ -3,7 +3,7 @@
 #include "Arduino.h"
 #include "..\Materials\Image.h"
 #include "..\Materials\Material.h"
-
+#include "..\Math\Mathematics.h"
 class ImageSequence : public Material{
 private:
     Image* image;
@@ -52,7 +52,9 @@ public:
     void Update(){
         float currentTime = fmod((millis() - startTime) / 1000.0f, frameTime) / frameTime;//normalize time to ratio
 
-        currentFrame = (unsigned int)Mathematics::Map(currentTime, 0.0f, 1.0f, 0, imageCount - 1);
+        currentFrame = (unsigned int)Mathematics::Map((int)currentTime, 0, 1, 0, (int)(imageCount - 1));
+        //((currentTime - 0.0) * (float)((imageCount - 1) - 0) / (1.0f - 0.0f) + 0.0);
+        //Mathematics::Map(currentTime, 0.0f, 1.0f, 0, imageCount - 1);
 
         image->SetData(data[currentFrame]);
     }

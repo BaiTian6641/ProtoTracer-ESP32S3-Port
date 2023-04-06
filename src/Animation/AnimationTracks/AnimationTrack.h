@@ -8,7 +8,7 @@ protected:
     KeyFrameTrack<maxParameters, maxKeyFrames> track;
 
 private:
-    virtual void AddKeyFrames();
+    //virtual void AddKeyFrames();
 
 public:
     AnimationTrack() : track(KeyFrameTrack<maxParameters, maxKeyFrames>(0.0f, 1.0f, KeyFrameInterpolation::Cosine)){}
@@ -38,5 +38,9 @@ public:
     void AddParameter(float* parameter){
         track.AddParameter(parameter);
     }
+
+    //void AddKeyFrame(float time, float value){
+    //    track.AddKeyFrame(time, value);
+    //}
 
 };

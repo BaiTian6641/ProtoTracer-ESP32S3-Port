@@ -1,6 +1,6 @@
 //#define ALPHARIGHT
 //#define ALPHALEFT
-#define BETAWS35
+//#define BETAWS35
 //#define GAMMAFRONT
 //#define GAMMABACK
 //#define HUB75
@@ -11,8 +11,9 @@
 //#define ESP32HUB75
 //#define CUSTOMHUB75
 //#define CUSTOMWS35
+#define TASESP32S3
 
-//#define PRINTINFO
+#define PRINTINFO
 
 #include <Arduino.h>
 
@@ -69,10 +70,40 @@ KaiborgV1D1Controller controller = KaiborgV1D1Controller(maxBrightness);
 ProtogenKitFaceAnimation animation = ProtogenKitFaceAnimation();
 #elif defined(ESP32HUB75)
 #include "Controllers\ESP32DevKitV1.h"
-#include "Animation\ESP32Clock.h"
+//#include "Animation\ESP32Clock.h"
+//#include "Animation\BetaAnimation.h"
+#include "Animation\ProtogenHUB75Animation.h"
+//#include "Animation\CoelaBonkAnimation.h"
 
 ESP32DevKitV1 controller = ESP32DevKitV1(maxBrightness);
-ESP32Clock animation = ESP32Clock();
+//ESP32Clock animation = ESP32Clock();
+//BetaAnimation animation = BetaAnimation();
+ProtogenHUB75Animation animation = ProtogenHUB75Animation();
+//CoelaBonkAnimation animation = CoelaBonkAnimation();
+
+#elif defined(TASESP32S3)
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include "Controllers\TasESP32S3KitV1.h"
+#include "Animation\TasSimpleProtogenHUB75Animation.h"
+#include <ESPAsyncWebServer.h>
+#include <AsyncElegantOTA.h>
+#include <M5GFX.h>
+#include <M5UnitOLED.h>
+#include <Adafruit_NeoPixel.h>
+
+Adafruit_NeoPixel pixels(1, 45, NEO_GRB + NEO_KHZ800);
+//M5UnitOLED display; // default setting
+M5UnitOLED display ( 20, 19, 400000 ); // SDA, SCL, FREQ
+
+//#include "Animation\ProtogenHUB75Animation.h"
+const char* ssid = "ssidofAP";
+const char* password = "00000000";
+
+AsyncWebServer server(80);
+TasESP32S3KitV1 controller = TasESP32S3KitV1(maxBrightness);
+//ProtogenHUB75Animation animation = ProtogenHUB75Animation();
+TasSimpleProtogenHUB75Animation animation = TasSimpleProtogenHUB75Animation();
 #elif defined(CUSTOMHUB75)
 #define HUB75
 #include "Controllers\SmartMatrixHUB75.h"
@@ -129,10 +160,75 @@ float FreeMem(){
 }
 
 void setup() {
-    Serial.begin(115200);
-    Serial.println("\nStarting...");
+  pinMode(14,INPUT_PULLUP);
+    Serial0.begin(115200);
+    Serial0.println("\nStarting...");
+    pixels.begin();
 
-    controller.Initialize();
+WiFi.mode(WIFI_AP);
+
+    if(digitalRead(14) == LOW){
+
+     display.begin();
+  display.setEpdMode(epd_mode_t::epd_fastest);
+  if (display.width() < display.height())
+  {
+    display.setRotation(display.getRotation() ^ 1);
+  }
+  display.clearDisplay();
+  display.startWrite();
+    
+    WiFi.begin(ssid, password);
+    Serial0.println("");
+
+    int wifiretrycount = 0;
+
+  // Wait for connection
+  while ((WiFi.status() != WL_CONNECTED)&& wifiretrycount < 12) {
+    delay(500);
+    Serial0.print(".");
+    wifiretrycount++;
+  }
+
+  Serial0.println("");
+  Serial0.print("Connected to ");
+  Serial0.println(ssid);
+  Serial0.print("IP address: ");
+  Serial0.println(WiFi.localIP());
+
+  //char* IPaddr = WiFi.localIP().toString();
+    display.setColorDepth(1);
+    display.setTextColor(TFT_WHITE);
+    display.setFont(&fonts::Font2);
+    display.setTextDatum(textdatum_t::top_left);
+    display.drawString(ssid, 0, 50);
+    display.drawString(WiFi.localIP().toString(), 0, 12);
+
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(200, "text/plain", "Please access http://"+WiFi.localIP().toString()+"/update/ to update firmware.");
+  });
+
+    AsyncElegantOTA.begin(&server);    // Start AsyncElegantOTA
+    server.begin();
+    pixels.clear();
+    while(true){
+      pixels.clear();
+      pixels.setPixelColor(0, pixels.Color(80, 0, 0));
+      delay(300);
+      pixels.show();
+      pixels.clear();
+      pixels.setPixelColor(0, pixels.Color(0, 80, 0));
+      delay(300);
+      pixels.show();
+      pixels.clear();
+      pixels.setPixelColor(0, pixels.Color(0, 0, 80));
+      delay(300);
+      pixels.show();
+    }
+    }
+  display.endWrite();
+  controller.Initialize();
+    
 }
 
 void loop() {
@@ -157,6 +253,15 @@ void loop() {
     controller.Render(animation.GetScene());
     #elif defined(ESP32HUB75)
     controller.SetBrightness(100);
+    //controller.SetAccentBrightness(animation.GetAccentBrightness() * 25 + 5);
+    //controller.SetBrightness(powf(animation.GetBrightness() + 3, 2) / 3);
+
+    animation.UpdateTime(ratio);
+    controller.Render(animation.GetScene());
+    #elif defined(TASESP32S3)
+    //controller.SetAccentBrightness(animation.GetAccentBrightness() * 25 + 5);
+    //controller.SetBrightness(powf(animation.GetBrightness() + 3, 2) / 3);
+    controller.SetBrightness(animation.GetBrightness());
 
     animation.UpdateTime(ratio);
     controller.Render(animation.GetScene());
@@ -197,16 +302,19 @@ void loop() {
     controller.Display();
 
     #ifdef PRINTINFO
-    Serial.print("Animated in ");
-    Serial.print(animation.GetAnimationTime(), 4);
+    Serial0.print("Animated in ");
+    Serial0.print(animation.GetAnimationTime(), 4);
 
-    Serial.print("s, Rendered in ");
-    Serial.print(controller.GetRenderTime(), 4);
+    Serial0.print("s, Rendered in ");
+    Serial0.print(controller.GetRenderTime(), 4);
 
     
-    Serial.print("s, Free memory ");
-    Serial.print(FreeMem(),3);
+    Serial0.print("s, Free memory ");
+    Serial0.print(FreeMem(),3);
 
-    Serial.println("Kb");
+    Serial0.println("Kb");
+
+    Serial0.print("IP address: ");
+    Serial0.println(WiFi.localIP());
     #endif
 }

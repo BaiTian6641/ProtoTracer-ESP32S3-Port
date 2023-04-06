@@ -1,7 +1,8 @@
 #pragma once
 
-#include "..\Materials\Material.h"
+#include "Material.h"
 #include "..\Math\Vector2D.h"
+#include "..\Math\Mathematics.h"
 
 class Image : public Material{
 public:
@@ -52,8 +53,12 @@ public:
     RGBColor GetRGB(Vector3D position, Vector3D normal, Vector3D uvw) override {
         Vector2D rPos = angle != 0.0f ? Vector2D(position.X, position.Y).Rotate(angle, offset) - offset : Vector2D(position.X, position.Y) - offset;
 
-        unsigned int x = (unsigned int)Mathematics::Map(rPos.X, size.X / -2.0f, size.X / 2.0f, xPixels, 0);
-        unsigned int y = (unsigned int)Mathematics::Map(rPos.Y, size.Y / -2.0f, size.Y / 2.0f, yPixels, 0);
+        unsigned int x = (unsigned int)((rPos.X - size.X / -2.0f) * (float)(0 - xPixels) / (size.X / 2.0f - size.X / -2.0f) + xPixels);
+
+        //Mathematics::Map(rPos.X, size.X / -2.0f, size.X / 2.0f, xPixels, 0);
+        unsigned int y = (unsigned int)((rPos.Y - size.Y / -2.0f) * (float)(0 - yPixels) / (size.Y / 2.0f - size.Y / -2.0f) + yPixels);
+
+        //Mathematics::Map(rPos.Y, size.Y / -2.0f, size.Y / 2.0f, yPixels, 0);
 
         if(x <= 0 || x >= xPixels || y <= 0 || y >= yPixels) return RGBColor();
 

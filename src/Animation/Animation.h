@@ -16,6 +16,7 @@ public:
     Animation(){}
 
     Scene* GetScene(){
+        //Serial0.print("SCENEOK");
         return &scene;
     }
 

@@ -122,6 +122,8 @@ public:
     }
 
     static Material* GetMaterial(){
+        Serial0.begin(115200);
+        Serial0.println("RETURN MATERIAL");
         return &textEngine;
     }
 

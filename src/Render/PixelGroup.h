@@ -57,7 +57,7 @@ public:
 
     ~PixelGroup(){}
 
-    virtual Vector2D GetCoordinate(unsigned int count) override {
+    Vector2D GetCoordinate(unsigned int count) override {
         count = Mathematics::Constrain<int>(count, 0, pixelCount);
 
         if (isRectangular){
@@ -81,7 +81,7 @@ public:
         }
     }
 
-    virtual int GetPixelIndex(Vector2D location) override {
+    int GetPixelIndex(Vector2D location) override {
         float row = Mathematics::Map(location.X, position.X - size.X / 2.0f, position.X + size.X / 2.0f, 0.0f, float(rowCount));
         float col = Mathematics::Map(location.Y, position.Y - size.Y / 2.0f, position.Y + size.Y / 2.0f, 0.0f, float(colCount));
 
@@ -95,31 +95,31 @@ public:
         }
     }
 
-    virtual RGBColor* GetColor(unsigned int count) override {
+    RGBColor* GetColor(unsigned int count) override {
         return &pixelColors[count];
     }
 
-    virtual RGBColor* GetColors() override {
+    RGBColor* GetColors() override {
         return &pixelColors[0];
     }
 
-    virtual RGBColor* GetColorBuffer() override {
+    RGBColor* GetColorBuffer() override {
         return &pixelBuffer[0];
     }
 
-    virtual unsigned int GetPixelCount() override {
+    unsigned int GetPixelCount() override {
         return pixelCount;
     }
 
-    virtual bool Overlaps(BoundingBox2D* box) override {
+    bool Overlaps(BoundingBox2D* box) override {
         return bounds.Overlaps(box);
     }
 
-    virtual bool ContainsVector2D(Vector2D v) override {
+    bool ContainsVector2D(Vector2D v) override {
         return v.CheckBounds(bounds.GetMinimum(), bounds.GetMaximum());
     }
 
-    virtual bool GetUpIndex(unsigned int count, unsigned int* upIndex) override {
+    bool GetUpIndex(unsigned int count, unsigned int* upIndex) override {
         if (isRectangular){
             unsigned int index = count + rowCount;
 
@@ -136,7 +136,7 @@ public:
         }
     }
 
-    virtual bool GetDownIndex(unsigned int count, unsigned int* downIndex) override {
+    bool GetDownIndex(unsigned int count, unsigned int* downIndex) override {
         if (isRectangular){
             unsigned int index = count - rowCount;
 
@@ -153,7 +153,7 @@ public:
         }
     }
 
-    virtual bool GetLeftIndex(unsigned int count, unsigned int* leftIndex) override {
+    bool GetLeftIndex(unsigned int count, unsigned int* leftIndex) override {
         if (isRectangular){
             unsigned int index = count - 1;
 
@@ -170,7 +170,7 @@ public:
         }
     }
 
-    virtual bool GetRightIndex(unsigned int count, unsigned int* rightIndex) override {
+    bool GetRightIndex(unsigned int count, unsigned int* rightIndex) override {
         if (isRectangular){
             unsigned int index = count + 1;
 
@@ -187,7 +187,7 @@ public:
         }
     }
 
-    virtual bool GetAlternateXIndex(unsigned int count, unsigned int* index, int pixels){
+    bool GetAlternateXIndex(unsigned int count, unsigned int* index, int pixels){
         unsigned int tempIndex = count;
         bool isEven = count % 2;
         bool valid = true;
@@ -208,7 +208,7 @@ public:
         return valid;
     }
 
-    virtual bool GetAlternateYIndex(unsigned int count, unsigned int* index, int pixels){
+    bool GetAlternateYIndex(unsigned int count, unsigned int* index, int pixels){
         unsigned int tempIndex = count;
         bool isEven = count % 2;
         bool valid = true;
@@ -229,7 +229,7 @@ public:
         return valid;
     }
 
-    virtual bool GetOffsetXYIndex(unsigned int count, unsigned int* index, int x1, int y1) override {
+    bool GetOffsetXYIndex(unsigned int count, unsigned int* index, int x1, int y1) override {
         unsigned int tempIndex = count;
         bool valid = true;
 
@@ -254,7 +254,7 @@ public:
         return valid;
     }
 
-    virtual bool GetRadialIndex(unsigned int count, unsigned int* index, int pixels, float angle) override {//walks in the direction of the angle to a target pixel to grab an index
+    bool GetRadialIndex(unsigned int count, unsigned int* index, int pixels, float angle) override {//walks in the direction of the angle to a target pixel to grab an index
         int x1 = int(float(pixels) * cosf(angle * Mathematics::MPID180));
         int y1 = int(float(pixels) * sinf(angle * Mathematics::MPID180));
 
@@ -293,7 +293,7 @@ public:
         return valid;
     }
 
-    virtual void GridSort() override {
+    void GridSort() override {
         if(!isRectangular){
             // Loop through all pixels
             for (unsigned int i = 0; i < pixelCount; i++) {

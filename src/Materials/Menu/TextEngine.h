@@ -26,12 +26,15 @@ private:
 
 public:
     TextEngine(bool isEfficient = false){
+        Serial0.begin(115200);
+        Serial0.print("TEXTENGINE");
         this->isEfficient = isEfficient;
 
         ClearText();//init to spaces
     }
 
     TextEngine(Vector2D size, Vector2D position, uint16_t blinkTime, bool isEfficient = false){
+        Serial0.begin(115200);
         this->size = size;
         this->positionOffset = position;
         this->blinkTime = blinkTime;
@@ -41,6 +44,8 @@ public:
     }
 
     void SetMaterial(Material* material){
+                Serial0.print("ABD");
+
         this->material = material;
     }
 

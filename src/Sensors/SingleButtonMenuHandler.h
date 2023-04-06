@@ -2,12 +2,16 @@
 
 #include <Arduino.h>
 #include <EEPROM.h>
-#include <IntervalTimer.h>
+//#include <IntervalTimer.h>
+//hw_timer_t * singlebmenutimer = NULL;
+//portMUX_TYPE singlebmenutimerMux = portMUX_INITIALIZER_UNLOCKED;
 
 template<uint8_t menuCount>
 class MenuHandler{
 private:
-    static IntervalTimer menuChangeTimer;
+    //static IntervalTimer menuChangeTimer;
+    static hw_timer_t * singlebmenutimer;
+
     static long previousMillisHold;
     static uint16_t holdingTime;
     static uint8_t currentMenu;
@@ -17,7 +21,7 @@ private:
     static bool holdingState;
     static bool previousState;
 
-    static void UpdateState(){
+    static void ARDUINO_ISR_ATTR UpdateState(){
         long currentTime = millis();
         bool pinState = digitalRead(pin);
         long timeOn = 0;
@@ -61,15 +65,27 @@ private:
 
 public:
     static void Begin(){
-        menuChangeTimer.begin(UpdateState, 1000);
+        //menuChangeTimer.begin(UpdateState, 1000);
+        timerAlarmEnable(singlebmenutimer);
+        
+        
+
     }
 
     static bool Initialize(uint8_t pin, uint16_t holdingTime){//if true, eeprom needs set
         MenuHandler::holdingState = true;
 
         MenuHandler::previousState = false;
-
-        pinMode(pin, INPUT_PULLUP);
+        Serial0.begin(115200);
+        singlebmenutimer = timerBegin(1, 80, true);
+        Serial0.print("OK-");
+        timerAttachInterrupt(singlebmenutimer, &UpdateState, true);
+        Serial0.print("OK--");
+        timerAlarmWrite(singlebmenutimer, 1000, true);
+        Serial0.print("OK---");
+        //timerAlarmEnable(singlebmenutimer);
+        //Serial0.print("OK----");
+        pinMode(pin, INPUT);
 
         MenuHandler::pin = pin;
         MenuHandler::holdingTime = holdingTime;
@@ -77,7 +93,7 @@ public:
         for (uint8_t i = 0; i < menuCount; i++){
             currentValue[i] = ReadEEPROM(i);
         }
-
+        Serial0.print("OK-----");
         return ReadEEPROM(menuCount + 1) != 255;
     }
 
@@ -109,8 +125,8 @@ public:
     
 };
 
-template<uint8_t menuCount>
-IntervalTimer MenuHandler<menuCount>::menuChangeTimer;
+//template<uint8_t menuCount>
+//IntervalTimer MenuHandler<menuCount>::menuChangeTimer;
 template<uint8_t menuCount>
 long MenuHandler<menuCount>::previousMillisHold;
 template<uint8_t menuCount>
@@ -127,3 +143,5 @@ template<uint8_t menuCount>
 bool MenuHandler<menuCount>::holdingState = true;
 template<uint8_t menuCount>
 bool MenuHandler<menuCount>::previousState = false;
+template<uint8_t menuCount>
+hw_timer_t * MenuHandler<menuCount>::singlebmenutimer = NULL;

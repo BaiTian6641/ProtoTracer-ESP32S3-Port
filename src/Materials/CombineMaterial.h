@@ -46,6 +46,8 @@ public:
         Vector3D rgb;
         Vector3D tempV;
         RGBColor temp;
+        RGBColor addtemp;
+        Serial0.begin(115200);
 
         for(int i = 0; i < materialsAdded; i++){
             if (opacity[i] > 0.01f){
@@ -64,6 +66,7 @@ public:
                         //Add all colors to base color
                         temp = materials[i]->GetRGB(position, normal, uvw);
                         
+
                         rgb.X = (rgb.X + temp.R) * opacity[i] + rgb.X * (1.0f - opacity[i]);
                         rgb.Y = (rgb.Y + temp.G) * opacity[i] + rgb.Y * (1.0f - opacity[i]);
                         rgb.Z = (rgb.Z + temp.B) * opacity[i] + rgb.Z * (1.0f - opacity[i]);

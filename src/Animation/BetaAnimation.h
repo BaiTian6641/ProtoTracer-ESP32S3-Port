@@ -21,7 +21,7 @@
 #include "AnimationTracks\BlinkTrack.h"
 
 
-#include "..\Sensors\APDS9960.h"
+//#include "..\Sensors\APDS9960.h"
 #include "..\Sensors\MicrophoneFourier_MAX9814.h"
 
 class BetaAnimation : public Animation<2>{
@@ -59,7 +59,7 @@ private:
     FunctionGenerator fGenMatYMove = FunctionGenerator(FunctionGenerator::Sine, -2.0f, 2.0f, 6.7f);
     FunctionGenerator fGenMatHue = FunctionGenerator(FunctionGenerator::Triangle, 0.0f, 360.0f, 17.3f);
 
-    APDS9960 boop;
+    //APDS9960 boop;
 
     FFTVoiceDetection<128> voiceDetection;
 
@@ -112,7 +112,9 @@ private:
     }
 
     void SetMaterialLayers(){
+Serial0.print("materialAnimator-MATERIAL-SET");
         materialAnimator.SetBaseMaterial(Material::Add, &gradientMat);
+        Serial0.println("materialAnimator-MATERIAL-SET");
         materialAnimator.AddMaterial(Material::Replace, &orangeMaterial, 40, 0.0f, 1.0f);//layer 1
         materialAnimator.AddMaterial(Material::Replace, &whiteMaterial, 40, 0.0f, 1.0f);//layer 2
         materialAnimator.AddMaterial(Material::Replace, &greenMaterial, 40, 0.0f, 1.0f);//layer 3
@@ -122,10 +124,14 @@ private:
         materialAnimator.AddMaterial(Material::Replace, &blueMaterial, 40, 0.0f, 1.0f);//layer 7
         materialAnimator.AddMaterial(Material::Replace, &rainbowSpiral, 40, 0.0f, 1.0f);//layer 8
         materialAnimator.AddMaterial(Material::Lighten, &rainbowNoise, 40, 0.0f, 1.0f);//layer 9
+        
 
         backgroundMaterial.SetBaseMaterial(Material::Add, Menu::GetMaterial());
+        Serial0.println("BACKGROUND-MATERIAL-SET");
         backgroundMaterial.AddMaterial(Material::Add, &sA, 40, 0.0f, 1.0f);
+        Serial0.println("BACKGROUND-MATERIAL-ADD1");
         backgroundMaterial.AddMaterial(Material::Add, &rainbowSpiral, 40, 0.0f, 1.0f);
+        Serial0.println("BACKGROUND-MATERIAL-ADD2");
     }
 
     void UpdateKeyFrameTracks(){
@@ -212,23 +218,33 @@ private:
 
 public:
     BetaAnimation(){
+        Serial0.begin(115200);
+        //Serial0.print("OK");
         scene.AddObject(pM.GetObject());
         scene.AddObject(background.GetObject());
+        
+        //Serial0.print("OK");
 
         LinkEasyEase();
         LinkParameters();
 
+        //Serial0.print("OK");
+        
         ChangeInterpolationMethods();
 
+        //Serial0.println("OK");
+
         SetMaterialLayers();
+
+        Serial0.println("OK=");
 
         pM.GetObject()->SetMaterial(&materialAnimator);
         background.GetObject()->SetMaterial(&backgroundMaterial);
 
-        boop.Initialize(5);
+        //boop.Initialize(5);
 
-        MicrophoneFourierIT::Initialize(A8, 8000, 50.0f, 120.0f);//8KHz sample rate, 50dB min, 120dB max
-        Menu::Initialize(7, 0, 500);//7 is number of faces
+        MicrophoneFourierIT::Initialize(11, 8000, 50.0f, 120.0f);//8KHz sample rate, 50dB min, 120dB max
+        Menu::Initialize(45, 0, 500);//7 is number of faces
 
         Menu::SetSize(Vector2D(280, 60));
         Menu::SetPositionOffset(Vector2D(-40.0f, -30.0f));
@@ -259,7 +275,7 @@ public:
 
         SetMaterialColor();
 
-        bool isBooped = Menu::UseBoopSensor() ? boop.isBooped() : 0;
+        //bool isBooped = Menu::UseBoopSensor() ? boop.isBooped() : 0;
         uint8_t mode = Menu::GetFaceState();//change by button press
 
         MicrophoneFourierIT::Update();
@@ -270,7 +286,7 @@ public:
         
         UpdateFFTVisemes();
 
-        if (isBooped && mode != 6){
+        if (true){
             Surprised();
         }
         else{
