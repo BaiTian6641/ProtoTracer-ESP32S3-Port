@@ -1,7 +1,7 @@
 # **ProtoTracer-ESP32: The ESP32S3 port of 3D Rendering and Animation Engine**
 This project is a live 3D rendering and animation engine designed for use on microcontrollers.
 
-This port is still under the development. The ESP-NOW Remote Controller part is not finished.
+This port is still under the development. The ESP-NOW Remote Controller part now is finished！
 
 The design files of screen controller and remote controller will be available soon.
 
