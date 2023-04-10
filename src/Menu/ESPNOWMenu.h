@@ -74,10 +74,10 @@ private:
         snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
             mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
             memcpy(&raw_data, data, sizeof(data));
-        Serial0.print("Last Packet Recv from: "); Serial0.println(macStr);
-        Serial0.print("Last Packet Length: "); Serial0.println(data_len);
-        Serial0.print("Last Packet Recv Data: "); Serial0.println(raw_data);
-        Serial0.println("");
+        //Serial0.print("Last Packet Recv from: "); Serial0.println(macStr);
+        //Serial0.print("Last Packet Length: "); Serial0.println(data_len);
+        //Serial0.print("Last Packet Recv Data: "); Serial0.println(raw_data);
+        //Serial0.println("");
 }
 
 public:
