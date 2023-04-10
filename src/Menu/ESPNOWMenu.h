@@ -267,7 +267,6 @@ uint8_t Menu::data_type = 0;
 float Menu::GyroX = 0;
 float Menu::GyroY = 0;
 float Menu::GyroZ = 0;
-
 float Menu::AccelerometerX = 0;
 float Menu::AccelerometerY = 0;
 float Menu::AccelerometerZ = 0;

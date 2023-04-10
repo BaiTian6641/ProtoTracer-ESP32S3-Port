@@ -95,7 +95,6 @@ ProtogenHUB75Animation animation = ProtogenHUB75Animation();
 Adafruit_NeoPixel pixels(1, 45, NEO_GRB + NEO_KHZ800);
 //M5UnitOLED display; // default setting
 M5UnitOLED display ( 20, 19, 400000 ); // SDA, SCL, FREQ
-
 //#include "Animation\ProtogenHUB75Animation.h"
 const char* ssid = "MainOTAWiFi";
 const char* password = "password";
