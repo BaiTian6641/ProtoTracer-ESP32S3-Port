@@ -165,7 +165,7 @@ void setup() {
     pixels.begin();
 
 WiFi.mode(WIFI_AP);
-
+WiFi.softAP(ssid, password);
     if(digitalRead(14) == LOW){
 
      display.begin();
@@ -178,7 +178,7 @@ WiFi.mode(WIFI_AP);
   display.startWrite();
     
     //WiFi.begin(ssid, password);
-    WiFi.softAP(ssid, password);
+    
     Serial0.println("");
 
     int wifiretrycount = 0;
