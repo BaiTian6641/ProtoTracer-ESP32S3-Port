@@ -33,6 +33,7 @@ private:
     static uint8_t boopSensor;
     static uint8_t spectrumMirror;
     static uint8_t faceSize;
+    static uint8_t confirm;
     static uint8_t color;
 
     static uint8_t facialexpression;
@@ -100,40 +101,57 @@ static void Update(float ratio){
 
         data_type = (uint8_t)(raw_data >> 24);
         /*
-        data_type 0 -> color, brightness, and facialexpression data
-        data_type 1 -> Gyro X with 6 radix
-        data_type 2 -> Gyro Y with 6 radix
-        data_type 3 -> Gyro Z with 6 radix
-        data_type 4 -> Accelerometer X with 6 radix
-        data_type 5 -> Accelerometer Y with 6 radix
-        data_type 6 -> Accelerometer Z with 6 radix
-        data_type 7 -> Reverse
-        data_type 8 -> Device's Battery status
-        data_type 9-15 -> Resistance bending sensor value
+        data_type 0 -> facialexpression data
+        data_type 1 -> brightness
+        data_type 2 -> Gyro X with 6 radix
+        data_type 3 -> Gyro Y with 6 radix
+        data_type 4 -> Gyro Z with 6 radix
+        data_type 5 -> Accelerometer X with 6 radix
+        data_type 6 -> Accelerometer Y with 6 radix
+        data_type 7 -> Accelerometer Z with 6 radix
+        data_type 8 -> Reverse
+        data_type 9 -> Device's Battery status
+        data_type 10-15 -> Resistance bending sensor value
         */
 
         if(data_type == 0){
-            color = (uint8_t)((raw_data & 0x00FF0000) >> 16);
-            bright = (uint8_t)((raw_data & 0x0000FF00) >> 8);
-            facialexpression = (uint8_t)(raw_data & 0x000000FF);
-            if (facialexpression == 0)      nowpixels.setPixelColor(0, nowpixels.Color(0, 100, 0));   //Green
-                else if (facialexpression == 1) nowpixels.setPixelColor(0, nowpixels.Color(100, 0, 0));   //Red
-                else if (facialexpression == 2) nowpixels.setPixelColor(0, nowpixels.Color(120, 60, 0));   //Orange
-                else if (facialexpression == 3) nowpixels.setPixelColor(0, nowpixels.Color(5, 140, 120));   //Cyan
-                else if (facialexpression == 4) nowpixels.setPixelColor(0, nowpixels.Color(100, 0, 100));   //Purple
-                else if (facialexpression == 5) nowpixels.setPixelColor(0, nowpixels.Color(0, 0, 100));   //Blue
+            if (tempvalue == 0)      nowpixels.setPixelColor(0, nowpixels.Color(0, 100, 0));   //Green
+                else if (tempvalue == 1) nowpixels.setPixelColor(0, nowpixels.Color(100, 0, 0));   //Red
+                else if (tempvalue == 2) nowpixels.setPixelColor(0, nowpixels.Color(120, 60, 0));   //Orange
+                else if (tempvalue == 3) nowpixels.setPixelColor(0, nowpixels.Color(5, 140, 120));   //Cyan
+                else if (tempvalue == 4) nowpixels.setPixelColor(0, nowpixels.Color(100, 0, 100));   //Purple
+                else if (tempvalue == 5) nowpixels.setPixelColor(0, nowpixels.Color(0, 0, 100));   //Blue
                 else                     nowpixels.setPixelColor(0, nowpixels.Color(100, 100, 2));   //Yellow
+            if(confirm == 255){
+                facialexpression = tempvalue;
+                confirm = 0;
+                }else{
+                    tempvalue = (uint8_t)(raw_data & 0x000000FF);
+                    confirm = (uint8_t)((raw_data & 0x00FF0000) >> 16);
+                }
+            
         }else if(data_type == 1){
-            GyroX = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
+            
+            nowpixels.setPixelColor(0, nowpixels.Color(tempvalue, tempvalue, tempvalue));
+            if(confirm == 255){
+                bright = tempvalue;
+                confirm = 0;
+                }else{
+                    tempvalue = (uint8_t)((raw_data & 0x0000FF00) >> 8);
+                    confirm = (uint8_t)((raw_data & 0x00FF0000) >> 16);
+                    }
+
         }else if(data_type == 2){
-            GyroY = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
+            GyroX = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
         }else if(data_type == 3){
-            GyroZ = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
+            GyroY = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
         }else if(data_type == 4){
-            AccelerometerX = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
+            GyroZ = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
         }else if(data_type == 5){
-            AccelerometerY = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
+            AccelerometerX = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
         }else if(data_type == 6){
+            AccelerometerY = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
+        }else if(data_type == 7){
             AccelerometerZ = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
         }
 
@@ -240,6 +258,7 @@ uint8_t Menu::micLevel = 0;
 uint8_t Menu::boopSensor = 0;
 uint8_t Menu::spectrumMirror = 0;
 uint8_t Menu::faceSize = 0;
+uint8_t Menu::confirm = 0;
 uint8_t Menu::color = 0;
 uint8_t Menu::facialexpression = 0;
 uint8_t Menu::tempvalue = 0;

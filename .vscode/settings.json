@@ -13,5 +13,6 @@
         "memory": "cpp",
         "random": "cpp",
         "string_view": "cpp"
-    }
+    },
+    "cmake.sourceDirectory": "${workspaceFolder}/.pio/libdeps/esp32s3/Adafruit GFX Library"
 }

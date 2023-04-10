@@ -97,8 +97,8 @@ Adafruit_NeoPixel pixels(1, 45, NEO_GRB + NEO_KHZ800);
 M5UnitOLED display ( 20, 19, 400000 ); // SDA, SCL, FREQ
 
 //#include "Animation\ProtogenHUB75Animation.h"
-const char* ssid = "ssidofAP";
-const char* password = "00000000";
+const char* ssid = "MainOTAWiFi";
+const char* password = "password";
 
 AsyncWebServer server(80);
 TasESP32S3KitV1 controller = TasESP32S3KitV1(maxBrightness);
@@ -178,7 +178,8 @@ WiFi.mode(WIFI_AP);
   display.clearDisplay();
   display.startWrite();
     
-    WiFi.begin(ssid, password);
+    //WiFi.begin(ssid, password);
+    WiFi.softAP(ssid, password);
     Serial0.println("");
 
     int wifiretrycount = 0;
