@@ -270,7 +270,7 @@ void setup()
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
               { request->send(200, "text/html", index_html); });
 
-#if defined(USING_ELEGANTOTA_PRO) || defined(USING_ELEGANTOTA)
+#if defined(USING_ELEGANTOTA_PRO)
     // You can also enable authentication by uncommenting the below line.
     ElegantOTA.setAuth(userConfig.username.c_str(), userConfig.ota_password.c_str());
 
@@ -279,6 +279,8 @@ void setup()
     ElegantOTA.setID(userConfig.device_id.c_str()); // Set Hardware ID
     ElegantOTA.setFWVersion("1.0.0");               // Set Firmware Version
 
+    ElegantOTA.begin(&server); // Start ElegantOTA
+#elif defined(USING_ELEGANTOTA)
     ElegantOTA.begin(&server); // Start ElegantOTA
 #else
     // Fallback: register an informative page when ElegantOTA is not available.
