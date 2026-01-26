@@ -116,7 +116,7 @@ bool EnsureUniversalFaceJson(const FaceUpdateConfig &config, M5UnitGLASS2 &displ
             display.println(TXT("WiFi failed", "WiFi连接失败"));
             display.display();
         }
-        return false;
+        //return false;
     }
 
     if (!LittleFS.begin(false) && !LittleFS.begin(true))
