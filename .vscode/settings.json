@@ -1,0 +1,47 @@
+{
+    "files.associations": {
+        "*.scala": "scala",
+        "string": "cpp",
+        "initializer_list": "cpp",
+        "utility": "cpp",
+        "limits": "cpp",
+        "array": "cpp",
+        "*.tcc": "cpp",
+        "deque": "cpp",
+        "unordered_map": "cpp",
+        "vector": "cpp",
+        "memory": "cpp",
+        "random": "cpp",
+        "string_view": "cpp",
+        "bitset": "cpp",
+        "list": "cpp",
+        "unordered_set": "cpp",
+        "regex": "cpp",
+        "new": "cpp",
+        "*.bak": "cpp"
+    },
+    "cmake.sourceDirectory": "${workspaceFolder}/.pio/libdeps/esp32s3/Adafruit GFX Library",
+    "workbench.colorTheme": "Visual Studio 2019 Dark",
+    "idf.portWin": "COM6",
+    "idf.flashType": "UART",
+    "idf.port": "/dev/ttyACM0",
+    "MicroPython.executeButton": [
+        {
+            "text": "▶",
+            "tooltip": "Run",
+            "alignment": "left",
+            "command": "extension.executeFile",
+            "priority": 3.5
+        }
+    ],
+    "MicroPython.syncButton": [
+        {
+            "text": "$(sync)",
+            "tooltip": "sync",
+            "alignment": "left",
+            "command": "extension.execute",
+            "priority": 4
+        }
+    ],
+    "idf.pythonInstallPath": "/usr/bin/python"
+}

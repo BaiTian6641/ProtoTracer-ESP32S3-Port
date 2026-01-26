@@ -1,0 +1,278 @@
+#pragma once
+
+#include "../Math/Rotation.h"
+#include "../Math/Transform.h"
+#include "../Render/CameraLayout.h"
+#include "CameraBase.h"
+#include "PixelGroup.h"
+#include "Scene.h"
+#include "Triangle2D.h"
+#include "QuadTree.h"
+#include "Node.h"
+#include <esp_heap_caps.h>
+#include <esp_dsp.h>
+
+//template<size_t pixelCount>
+class Camera : public CameraBase{
+private:
+    Transform* transform;
+    CameraLayout* cameraLayout;
+    // --- MODIFIED: Pointer is to the non-templated PixelGroup class ---
+    PixelGroup* pixelGroup; 
+    Quaternion rayDirection;
+    Quaternion lookDirection;
+    Quaternion lookOffset;
+    bool is2D = false;
+
+    Vector2D* cachedRays = nullptr; // reused buffer to avoid per-frame allocations
+    unsigned int cachedRayCount = 0;
+
+    // SIMD buffers for batch rotate/scale
+    float* tmpX = nullptr;
+    float* tmpY = nullptr;
+    float* rotX = nullptr;
+    float* rotY = nullptr;
+
+    struct Rotation2D {
+        float m00;
+        float m01;
+        float m10;
+        float m11;
+    };
+
+    void EnsureRayCache() {
+        const unsigned int desired = pixelGroup ? pixelGroup->GetPixelCount() : 0;
+        if (desired == 0) return;
+
+        if (cachedRayCount != desired || cachedRays == nullptr) {
+            delete[] cachedRays;
+            cachedRays = new Vector2D[desired]; // small; keep on internal heap by default
+            cachedRayCount = desired;
+        }
+    }
+
+    void EnsureFloatCache() {
+        const unsigned int desired = pixelGroup ? pixelGroup->GetPixelCount() : 0;
+        if (desired == 0) return;
+
+        if (cachedRayCount != desired || tmpX == nullptr) {
+            heap_caps_free(tmpX);
+            heap_caps_free(tmpY);
+            heap_caps_free(rotX);
+            heap_caps_free(rotY);
+
+            tmpX = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+            tmpY = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+            rotX = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+            rotY = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+
+            // Fallback to heap if internal allocation fails
+            if (!tmpX) tmpX = new float[desired];
+            if (!tmpY) tmpY = new float[desired];
+            if (!rotX) rotX = new float[desired];
+            if (!rotY) rotY = new float[desired];
+        }
+    }
+
+    Rotation2D BuildRotation2D(const Quaternion& qUnit) {
+        // Derive a 2x2 rotation matrix from a unit quaternion (xy terms only)
+        const float w = qUnit.W;
+        const float x = qUnit.X;
+        const float y = qUnit.Y;
+        const float z = qUnit.Z;
+
+        const float xx = x * x;
+        const float yy = y * y;
+        const float zz = z * z;
+        const float xy = x * y;
+        const float wz = w * z;
+
+        Rotation2D m;
+        m.m00 = 1.0f - 2.0f * (yy + zz);
+        m.m01 = 2.0f * (xy - wz);
+        m.m10 = 2.0f * (xy + wz);
+        m.m11 = 1.0f - 2.0f * (xx + zz);
+        return m;
+    }
+
+    ProtoRGBColor CheckRasterPixel(Triangle2D** triangles, int numTriangles, Vector2D pixelRay){
+        float zBuffer = 3.402823466e+38f;
+        int triangle = 0;
+        bool didIntersect = false;
+        float u = 0.0f, v = 0.0f, w = 0.0f;
+        Vector3D uvw;
+        ProtoRGBColor color;
+        
+        for (int t = 0; t < numTriangles; t++) {
+            if (triangles[t]->averageDepth < zBuffer){
+                if(triangles[t]->DidIntersect(pixelRay.X, pixelRay.Y, u, v, w)){
+                    uvw.X = u;
+                    uvw.Y = v;
+                    uvw.Z = w;
+                    zBuffer = triangles[t]->averageDepth;
+                    triangle = t;
+                    didIntersect = true;
+                }
+            }
+        }
+
+        if(didIntersect){
+            Vector3D intersect = (*triangles[triangle]->t3p1 * uvw.X) + (*triangles[triangle]->t3p2 * uvw.Y) + (*triangles[triangle]->t3p3 * uvw.Z);
+
+            intersect = rayDirection.UnrotateVector(intersect);
+            Vector2D uv;
+
+            if (triangles[triangle]->hasUV){
+                uv = *triangles[triangle]->p1UV * uvw.X + *triangles[triangle]->p2UV * uvw.Y + *triangles[triangle]->p3UV * uvw.Z;
+            }
+            
+            color = triangles[triangle]->GetMaterial()->GetRGB(intersect, *triangles[triangle]->normal, Vector3D(uv.X, uv.Y, 0.0f));
+        }
+        
+        return color;
+    }
+
+public:
+    Camera(Transform* transform, PixelGroup* pixelGroup) {
+        this->transform = transform;
+        this->pixelGroup = pixelGroup;
+
+        is2D = true;
+    }
+
+    Camera(Transform* transform, CameraLayout* cameraLayout, PixelGroup* pixelGroup) {
+        this->transform = transform;
+        this->pixelGroup = pixelGroup;
+        this->cameraLayout = cameraLayout;
+
+        transform->SetBaseRotation(cameraLayout->GetRotation());
+    }
+
+    ~Camera() {
+        delete[] cachedRays;
+        heap_caps_free(tmpX);
+        heap_caps_free(tmpY);
+        heap_caps_free(rotX);
+        heap_caps_free(rotY);
+    }
+
+    Transform* GetTransform(){
+        return transform;
+    }
+
+    PixelGroup* GetPixelGroup(){
+        return pixelGroup;
+    }
+
+    CameraLayout* GetCameraLayout(){
+        return cameraLayout;
+    }
+
+    // --- OPTIMIZATION: Replaced inefficient loops with a direct call to PixelGroup's bounds ---
+    // This assumes you add a GetBounds() method to PixelGroup as shown in the next section.
+    Vector2D GetCameraMinCoordinate() {
+        // O(1) instead of O(N)
+        return pixelGroup->GetBounds().GetMinimum();
+    }
+
+    Vector2D GetCameraMaxCoordinate() {
+        // O(1) instead of O(N)
+        return pixelGroup->GetBounds().GetMaximum();
+    }
+
+    Vector2D GetCameraCenterCoordinate() {
+        // O(1) instead of O(N)
+        return pixelGroup->GetBounds().GetCenter();
+    }
+
+    void SetLookOffset(Quaternion lookOffset) {
+        this->lookOffset = lookOffset;
+    }
+
+    void Rasterize(Scene* scene) override {
+        if (is2D){
+            for (unsigned int i = 0; i < pixelGroup->GetPixelCount(); i++) {
+                Vector2D pixelRay = pixelGroup->GetCoordinate(i);//scale pixel location prior to rotating and moving
+                Vector3D pixelRay3D = Vector3D(pixelRay.X, pixelRay.Y, 0) + transform->GetPosition();
+
+                ProtoRGBColor color = scene->GetObjects()[0]->GetMaterial()->GetRGB(pixelRay3D, Vector3D(), Vector3D());
+
+                pixelGroup->GetColor(i)->R = color.R;
+                pixelGroup->GetColor(i)->G = color.G;
+                pixelGroup->GetColor(i)->B = color.B;
+            }
+        }
+        else{
+            lookDirection = transform->GetRotation().Conjugate() * lookOffset;
+            Quaternion normLookDir = lookDirection.UnitQuaternion();
+            Quaternion camRot = transform->GetRotation();
+            rayDirection  = camRot.Multiply(lookDirection);
+
+            EnsureRayCache();
+            EnsureFloatCache();
+
+            const unsigned int pixelCount = pixelGroup->GetPixelCount();
+            BoundingBox2D transformedBounds;
+            const Vector3D scale = transform->GetScale();
+            const Rotation2D rot2 = BuildRotation2D(normLookDir);
+            const Vector3D camPos = transform->GetPosition();
+            const Quaternion invView = rayDirection.UnitQuaternion().Conjugate();
+            // Batch scale then rotate using ESP-DSP vector ops
+            for (unsigned int i = 0; i < pixelCount; ++i) {
+                const Vector2D baseRay = pixelGroup->GetCoordinate(i);
+                tmpX[i] = baseRay.X * scale.X;
+                tmpY[i] = baseRay.Y * scale.Y;
+            }
+
+            dsps_mulc_f32(tmpX, rotX, pixelCount, rot2.m00, 1, 1);
+            dsps_mulc_f32(tmpY, rotY, pixelCount, rot2.m10, 1, 1);
+            dsps_add_f32(rotX, rotY, rotX, pixelCount, 1, 1, 1); // rotX = m00*x + m10*y
+
+            dsps_mulc_f32(tmpY, rotY, pixelCount, rot2.m11, 1, 1); // reuse rotY buffer
+            dsps_mulc_f32(tmpX, tmpX, pixelCount, rot2.m01, 1, 1); // tmpX now holds m01*x
+            dsps_add_f32(rotY, tmpX, rotY, pixelCount, 1, 1, 1); // rotY = m11*y + m01*x
+
+            for (unsigned int i = 0; i < pixelCount; ++i) {
+                Vector2D rotatedRay(rotX[i], rotY[i]);
+                cachedRays[i] = rotatedRay;
+                transformedBounds.UpdateBounds(rotatedRay);
+            }
+
+            QuadTree tree(transformedBounds);
+
+            //for each object in the scene, get the triangles
+            for(int i = 0; i < scene->GetObjectCount(); i++){
+                if(scene->GetObjects()[i]->IsEnabled()){
+                    //for each triangle in object, project onto 2d surface, but pass material
+                    for (int j = 0; j < scene->GetObjects()[i]->GetTriangleGroup()->GetTriangleCount(); j++) {
+                        tree.Insert(Triangle2D(invView, camPos, &scene->GetObjects()[i]->GetTriangleGroup()->GetTriangles()[j], scene->GetObjects()[i]->GetMaterial()));
+                    }
+                }
+            }
+
+            tree.Rebuild();
+
+            ProtoRGBColor* colors = pixelGroup->GetColors();
+
+            for (unsigned int i = 0; i < pixelCount; i++) {
+                const Vector2D& pixelRay = cachedRays[i];
+                Node* leafNode =  tree.Intersect(pixelRay);
+                
+                if (!leafNode) {
+                    colors[i].R = 0;
+                    colors[i].G = 0;
+                    colors[i].B = 0;
+                    continue;
+                }
+
+                ProtoRGBColor color = CheckRasterPixel(leafNode->GetEntities(), leafNode->GetCount(), pixelRay);
+
+                colors[i].R = color.R;
+                colors[i].G = color.G;
+                colors[i].B = color.B;
+
+            }
+        }
+    }
+    
+};

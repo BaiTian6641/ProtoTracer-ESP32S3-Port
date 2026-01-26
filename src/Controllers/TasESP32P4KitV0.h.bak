@@ -1,0 +1,172 @@
+#include <Arduino.h>
+
+#include "Controller.h"
+#include "Render/Camera.h"
+#include "Flash/PixelGroups/P3HUB75.h"
+
+#include "esp_attr.h"
+#include "esp_log.h"
+#include "driver/parlio_tx.h"
+
+#define PARLIO_HUB75_WIDTH      16 // 8-bit data width, used for transferring color data (RGB222) and control signals (OE and latch), 4-bit address width, 4-bit reserved
+#define PARLIO_HUB75_R1_IDX     7 // R1 bit position
+#define PARLIO_HUB75_R2_IDX     6 // R2 bit position
+#define PARLIO_HUB75_LATCH_IDX  5 // LATCH bit position
+#define PARLIO_HUB75_G1_IDX     4 // G1 bit position
+#define PARLIO_HUB75_G2_IDX     3 // G2 bit position
+#define PARLIO_HUB75_OE_IDX     2 // OE bit position
+#define PARLIO_HUB75_B1_IDX     1 // B1 bit position
+#define PARLIO_HUB75_B2_IDX     0 // B2 bit position
+#define PARLIO_HUB75_NUM_A_IDX  8 // Address A bit position
+#define PARLIO_HUB75_NUM_B_IDX  9 // Address B bit position
+#define PARLIO_HUB75_NUM_C_IDX  10 // Address C bit position
+#define PARLIO_HUB75_NUM_D_IDX  11 // Address D bit position
+#define PARLIO_HUB75_NUM_E_IDX  12 // Reserved for address E bit, for future
+#define PARLIO_HUB75_RESERVED2_IDX  13 // Reserved bit position
+#define PARLIO_HUB75_RESERVED3_IDX  14 // Reserved bit position
+#define PARLIO_HUB75_RESERVED4_IDX  15 // Reserved bit position
+
+#define PANEL_RES_X 128 // Number of pixels wide of each INDIVIDUAL panel module. 
+#define PANEL_RES_Y 32 // Number of pixels tall of each INDIVIDUAL panel module.
+
+// GPIO assignment
+#define R1_PIN   52
+#define G1_PIN   51
+#define B1_PIN   31
+#define R2_PIN   30
+#define G2_PIN   29
+#define B2_PIN   28
+#define LAT_PIN  2
+#define OE_PIN   24
+#define CLK_PIN  3
+#define A_PIN   50
+#define B_PIN   49
+#define C_PIN   5
+#define D_PIN   4
+#define E_PIN   -1 // required for 1/32 scan panels, like 64x64. Any available pin would do, i.e. IO32
+
+// The pixel clock frequency
+#define LED_MATRIX_PIXEL_CLOCK_HZ (20 * 1000 * 1000) // 10MHz
+#define GAP_CYCLE_PER_LINE    20
+#define COLOR_DEPTH 3
+
+//static uint16_t s_frame_buffer[4][(PANEL_RES_X + GAP_CYCLE_PER_LINE) * PANEL_RES_Y / 2] = {};
+static uint16_t s_frame_buffer[COLOR_DEPTH*(PANEL_RES_X + GAP_CYCLE_PER_LINE) * PANEL_RES_Y / 2] = {};
+//static uint8_t buffer_idx = 0;
+
+class TasESP32P4KitV1 : public Controller {
+private:
+    CameraLayout cameraLayout = CameraLayout(CameraLayout::ZForward, CameraLayout::YUp);
+    Transform camTransform1 = Transform(Vector3D(), Vector3D(0.0f, 0.0f, -500.0f), Vector3D(1, 1, 1));
+    Transform camTransform2 = Transform(Vector3D(), Vector3D(0.0f, 0.0f, -500.0f), Vector3D(1, 1, 1));
+
+    PixelGroup* camPixels1 = new PixelGroup(2048,P3HUB75);
+    PixelGroup* camPixels2 = new PixelGroup(4,P3HUB75);
+    
+    Camera* camMain1 = new Camera(&camTransform1, &cameraLayout, camPixels1);
+    Camera* camMain2 = new Camera(&camTransform2, &cameraLayout, camPixels2);
+
+    //CameraBase* cameras[1] = { &camMain1 };
+    CameraBase* cameras[2] = { camMain1, camMain2 };
+
+    typedef struct {
+        parlio_tx_unit_handle_t tx_unit;
+        parlio_transmit_config_t transmit_config;
+    } parlio_tx_context_t;
+
+    parlio_tx_unit_config_t config;
+    parlio_tx_unit_handle_t tx_unit = NULL;
+    parlio_transmit_config_t transmit_config;
+
+    void merge_two_pixels(ProtoRGBColor *upper_half, ProtoRGBColor *lower_half, uint8_t buffer_idx, uint32_t pixel_idx)
+    {
+        /*
+        s_frame_buffer[buffer_idx][pixel_idx]  = ((camPixels1.GetColor(pixelNumUpper)->R >> 4)&0x1) << PARLIO_HUB75_R1_IDX | ((camPixels1.GetColor(pixelNumUpper)->G >> 5)&0x1) << PARLIO_HUB75_G1_IDX | ((camPixels1.GetColor(pixelNumUpper)->B >> 4)&0x1) << PARLIO_HUB75_B1_IDX;
+        s_frame_buffer[buffer_idx][pixel_idx] |= ((camPixels1.GetColor(pixelNumLower)->R >> 4)&0x1) << PARLIO_HUB75_R2_IDX | ((camPixels1.GetColor(pixelNumLower)->G >> 5)&0x1) << PARLIO_HUB75_G2_IDX | ((camPixels1.GetColor(pixelNumLower)->B >> 4)&0x1) << PARLIO_HUB75_B2_IDX;
+            
+        */
+        s_frame_buffer[(buffer_idx*(PANEL_RES_X + GAP_CYCLE_PER_LINE) * PANEL_RES_Y / 2)+pixel_idx]  = ((upper_half->R >> 7-buffer_idx)&0x1) << PARLIO_HUB75_R1_IDX | ((upper_half->G >> 7-buffer_idx)&0x1) << PARLIO_HUB75_G1_IDX | ((upper_half->B >> 7-buffer_idx)&0x1) << PARLIO_HUB75_B1_IDX;
+        s_frame_buffer[(buffer_idx*(PANEL_RES_X + GAP_CYCLE_PER_LINE) * PANEL_RES_Y / 2)+pixel_idx] |= ((lower_half->R >> 7-buffer_idx)&0x1) << PARLIO_HUB75_R2_IDX | ((lower_half->G >> 7-buffer_idx)&0x1) << PARLIO_HUB75_G2_IDX | ((lower_half->B >> 7-buffer_idx)&0x1) << PARLIO_HUB75_B2_IDX;
+        
+        s_frame_buffer[(buffer_idx*(PANEL_RES_X + GAP_CYCLE_PER_LINE) * PANEL_RES_Y / 2)+pixel_idx]  = ((upper_half->R >> 7-buffer_idx)&0x1) << PARLIO_HUB75_R1_IDX | ((upper_half->G >> 7-buffer_idx)&0x1) << PARLIO_HUB75_G1_IDX | ((upper_half->B >> 7-buffer_idx)&0x1) << PARLIO_HUB75_B1_IDX;
+        s_frame_buffer[(buffer_idx*(PANEL_RES_X + GAP_CYCLE_PER_LINE) * PANEL_RES_Y / 2)+pixel_idx] |= ((lower_half->R >> 7-buffer_idx)&0x1) << PARLIO_HUB75_R2_IDX | ((lower_half->G >> 7-buffer_idx)&0x1) << PARLIO_HUB75_G2_IDX | ((lower_half->B >> 7-buffer_idx)&0x1) << PARLIO_HUB75_B2_IDX;
+        
+        //s_frame_buffer[1][pixel_idx]  = ((upper_half->R >> 2)&0x1) << PARLIO_HUB75_R1_IDX | ((upper_half->G >> 3)&0x1) << PARLIO_HUB75_G1_IDX | ((upper_half->B >> 2)&0x1) << PARLIO_HUB75_B1_IDX;
+        //s_frame_buffer[1][pixel_idx] |= ((lower_half->R >> 2)&0x1) << PARLIO_HUB75_R2_IDX | ((lower_half->G >> 3)&0x1) << PARLIO_HUB75_G2_IDX | ((lower_half->B >> 2)&0x1) << PARLIO_HUB75_B2_IDX;
+        //s_frame_buffer[2][pixel_idx]  = ((upper_half->R >> 3)&0x1) << PARLIO_HUB75_R1_IDX | ((upper_half->G >> 4)&0x1) << PARLIO_HUB75_G1_IDX | ((upper_half->B >> 3)&0x1) << PARLIO_HUB75_B1_IDX;
+        //s_frame_buffer[2][pixel_idx] |= ((lower_half->R >> 3)&0x1) << PARLIO_HUB75_R2_IDX | ((lower_half->G >> 4)&0x1) << PARLIO_HUB75_G2_IDX | ((lower_half->B >> 3)&0x1) << PARLIO_HUB75_B2_IDX;
+        //s_frame_buffer[3][pixel_idx]  = ((upper_half->R >> 4)&0x1) << PARLIO_HUB75_R1_IDX | ((upper_half->G >> 5)&0x1) << PARLIO_HUB75_G1_IDX | ((upper_half->B >> 4)&0x1) << PARLIO_HUB75_B1_IDX;
+        //s_frame_buffer[3][pixel_idx] |= ((lower_half->R >> 4)&0x1) << PARLIO_HUB75_R2_IDX | ((lower_half->G >> 5)&0x1) << PARLIO_HUB75_G2_IDX | ((lower_half->B >> 4)&0x1) << PARLIO_HUB75_B2_IDX;
+        // OE=1: disable the output
+        s_frame_buffer[(buffer_idx*(PANEL_RES_X + GAP_CYCLE_PER_LINE) * PANEL_RES_Y / 2)+pixel_idx] |= 1 << PARLIO_HUB75_OE_IDX;
+        // update the address line
+        s_frame_buffer[(buffer_idx*(PANEL_RES_X + GAP_CYCLE_PER_LINE) * PANEL_RES_Y / 2)+pixel_idx] |= (pixel_idx / (PANEL_RES_X + GAP_CYCLE_PER_LINE)) << PARLIO_HUB75_NUM_A_IDX;
+    }
+
+public:
+    TasESP32P4KitV1(uint8_t maxBrightness) : Controller(cameras, 2, maxBrightness, 0){}
+
+    void Initialize() override{
+        ESP_LOGI(TAG, "Install parallel IO TX unit");
+            config.clk_src = PARLIO_CLK_SRC_DEFAULT;
+            config.clk_in_gpio_num = (gpio_num_t)-1; // use internal clock source
+            config.output_clk_freq_hz = LED_MATRIX_PIXEL_CLOCK_HZ;
+            config.data_width = PARLIO_HUB75_WIDTH;
+            config.data_gpio_nums[PARLIO_HUB75_R1_IDX] = (gpio_num_t)R1_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_R2_IDX] = (gpio_num_t)R2_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_G1_IDX] = (gpio_num_t)G1_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_G2_IDX] = (gpio_num_t)G2_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_B1_IDX] = (gpio_num_t)B1_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_B2_IDX] = (gpio_num_t)B2_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_OE_IDX] = (gpio_num_t)OE_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_LATCH_IDX] = (gpio_num_t)LAT_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_NUM_A_IDX] = (gpio_num_t)A_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_NUM_B_IDX] = (gpio_num_t)B_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_NUM_C_IDX] = (gpio_num_t)C_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_NUM_D_IDX] = (gpio_num_t)D_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_NUM_E_IDX] = (gpio_num_t)E_PIN;
+            config.data_gpio_nums[PARLIO_HUB75_RESERVED2_IDX] = (gpio_num_t)-1;
+            config.data_gpio_nums[PARLIO_HUB75_RESERVED3_IDX] = (gpio_num_t)-1;
+            config.data_gpio_nums[PARLIO_HUB75_RESERVED4_IDX] = (gpio_num_t)-1;
+
+            config.clk_out_gpio_num = (gpio_num_t)CLK_PIN;
+            config.valid_gpio_num = (gpio_num_t)-1;  // don't generate valid signal
+            config.trans_queue_depth = 16;
+            config.max_transfer_size = COLOR_DEPTH*(PANEL_RES_X + GAP_CYCLE_PER_LINE) * PANEL_RES_Y / 2 * sizeof(uint16_t);  // full frame as the maximum transfer size
+            config.sample_edge = PARLIO_SAMPLE_EDGE_POS;
+
+            transmit_config.idle_value = 0x00; // the idle value will take no effect since we are using the loop mode
+            transmit_config.flags.queue_nonblocking = false;
+            transmit_config.flags.loop_transmission = true;// use loop mode. we rely on the LVGL flush callback to update the loop transmission payload
+
+        ESP_ERROR_CHECK(parlio_new_tx_unit(&config, &tx_unit));
+        ESP_ERROR_CHECK(parlio_tx_unit_enable(tx_unit));
+    }
+
+    void Display() override {
+        for(int buffer_idx = 0; buffer_idx < COLOR_DEPTH; buffer_idx++){
+            uint32_t pixel_idx = 0;
+            ProtoRGBColor* upper_color = camPixels1->GetColors();
+            ProtoRGBColor* lower_color = camPixels1->GetColors() + PANEL_RES_Y * PANEL_RES_X / 2;
+            for (int line = 0; line < PANEL_RES_Y / 2; line++) {
+                for (int col = 0; col < PANEL_RES_X - 1; col++) {
+                    merge_two_pixels(upper_color++, lower_color++, buffer_idx, pixel_idx++);
+                }
+                merge_two_pixels(upper_color++, lower_color++, buffer_idx, pixel_idx);
+                // need special handling for the last pixel in each line
+                // latch up at the end of each line
+                s_frame_buffer[(buffer_idx*(PANEL_RES_X + GAP_CYCLE_PER_LINE) * PANEL_RES_Y / 2)+pixel_idx++] |= (1 << PARLIO_HUB75_LATCH_IDX);
+                // insert gap cycles to enable the line output (OE=0) for some time.
+                for (int i = 0; i < GAP_CYCLE_PER_LINE; i++) {
+                    // we need to make sure the output is disabled during the second half of gap cycle, otherwise the screen will be ghosted.
+                    int output_disable = (i > GAP_CYCLE_PER_LINE / 2) ? 1 : 0;
+                    s_frame_buffer[(buffer_idx*(PANEL_RES_X + GAP_CYCLE_PER_LINE) * PANEL_RES_Y / 2)+pixel_idx] = output_disable << PARLIO_HUB75_OE_IDX;
+                    s_frame_buffer[(buffer_idx*(PANEL_RES_X + GAP_CYCLE_PER_LINE) * PANEL_RES_Y / 2)+pixel_idx] |= (pixel_idx / (PANEL_RES_X + GAP_CYCLE_PER_LINE)) << PARLIO_HUB75_NUM_A_IDX;
+                    pixel_idx++;
+                }
+            }
+            //parlio_tx_unit_transmit(tx_unit, s_frame_buffer[buffer_idx], (PANEL_RES_Y / 2 * (PANEL_RES_X + GAP_CYCLE_PER_LINE)) * sizeof(uint16_t) * 8, &transmit_config);   
+        }
+        parlio_tx_unit_transmit(tx_unit, &s_frame_buffer, COLOR_DEPTH*(PANEL_RES_Y / 2 * (PANEL_RES_X + GAP_CYCLE_PER_LINE)) * sizeof(uint16_t) * 8, &transmit_config);   
+    }
+};

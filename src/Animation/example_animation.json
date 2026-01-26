@@ -1,0 +1,276 @@
+{
+    "user":"Protogen",
+    "animatiuon_num": 19,
+    "x_offset": 80.0,
+    "y_offset": -20.0,
+    "screen_effect_register":{
+        "blurH": {
+            "type": "HorizontalBlur",
+            "value": 20
+        },
+        "edgeFeather":{
+            "type": "AntiAliasingEffect",
+            "value": 0.5
+        }
+    },
+    "flipped_morphs": [
+        "HideBlush",
+        "HideSecondEye",
+        "Zzz",
+        "MouthEnd"
+    ],
+    "auto_link": [
+        {"name": "HideBlush", "frames": 30, "basis": 0.0, "goal": 1.0},
+        {"name": "HideSecondEye", "frames": 30, "basis": 0.0, "goal": 1.0},
+        {"name": "Zzz", "frames": 12, "basis": 0.0, "goal": 1.0},
+        {"name": "MouthEnd", "frames": 10, "basis": 0.0, "goal": 0.8},
+        {"name": "vrc_v_ee", "frames": 2, "basis": 0.0, "goal": 1.0},
+        {"name": "vrc_v_ih", "frames": 2, "basis": 0.0, "goal": 1.0},
+        {"name": "vrc_v_oh", "frames": 2, "basis": 0.0, "goal": 1.0},
+        {"name": "vrc_v_aa", "frames": 2, "basis": 0.0, "goal": 1.0},
+        {"name": "vrc_v_uh", "frames": 2, "basis": 0.0, "goal": 1.0},
+        {"name": "vrc_v_ss", "frames": 2, "basis": 0.0, "goal": 1.0}
+    ],
+    "Mat_register": {
+        "gradientSpectrum":{
+            "colour_num": 1,
+            "gradientPeriod": 200.0,
+            "isRadial": false,
+            "use_user_data": true,
+            "colour":[
+            {"R":30,"G":180,"B":235}
+            ]
+        },
+        "rainbowMat": {
+            "colour_num": 6,
+            "gradientPeriod": 200.0,
+            "isRadial": false,
+            "colour":[
+            {"R":255,"G":0,"B":0},
+            {"R":255,"G":255,"B":0},
+            {"R":0,"G":255,"B":0},
+            {"R":0,"G":255,"B":255},
+            {"R":0,"G":0,"B":255},
+            {"R":255,"G":0,"B":255}
+            ]
+        },
+        "backgroundMat": {
+            "colour_num": 1,
+            "gradientPeriod": 350.0,
+            "isRadial": false,
+            "colour":[
+            {"R":0,"G":0,"B":0}
+            ]
+        }
+    },
+    "offsetFaceInd": 50,
+    "offsetFaceIndSA": 51,
+    "expressions":{
+        "reset_state":{
+            "backgroundMat": "default",
+            "faceMat": "gradientSpectrum",
+            "voice_enable": true,
+            "blink": true,
+            "show_mouth": true,
+            "eye_shape": true,
+            "interpolation":{
+                "dictionary": 3,
+                "method": "Overshoot"
+            },
+            "scene_effect": {
+                "type": "edgeFeather",
+                "enable": false
+            },
+            "anim_parameter":{
+                "HideEye": 0.0,
+                "HideSecondEye": 0.0
+            }
+        },
+        "Default":{
+            "reset": true,
+            "anim_parameter":{
+                "EyeNY": 0.3
+            }
+        },
+        "DefaultHideMouth":{
+            "reset": true,
+            "show_mouth": false,
+            "anim_parameter":{
+                "EyeNY": 0.35
+            }
+        },
+        "Heart":{
+            "reset": true,
+            "blink": false,
+            "eye_shape": false,
+            "anim_parameter":{
+                "Heart": 0.3
+            }
+        },
+        "NonWord":{
+            "reset": true,
+            "blink": false,
+            "eye_shape": false,
+            "anim_parameter":{
+                "RoundEye": 1.0,
+                "Flat": 1.0
+            }
+        },
+        "UwU":{
+            "reset": true,
+            "blink": false,
+            "eye_shape": false,
+            "anim_parameter":{
+                "UwU": 1.0
+            }
+        },
+        "XwX":{
+            "reset": true,
+            "blink": false,
+            "anim_parameter":{
+                "HideEye": 1.0,
+                "HideSecondEye": 1.0,
+                "XwX": 1.0
+            }
+        },
+        "Happy":{
+            "reset": true,
+            "blink": false,
+            "eye_shape": false,
+            "anim_parameter":{
+                "Happy": 1.0
+            }
+        },
+        "Angry":{
+            "reset": true,
+            "eye_shape": false,
+            "faceMat": "redMat",
+            "anim_parameter":{
+                "Anger": 1.0
+            }
+        },
+        "Sad":{
+            "reset": true,
+            "eye_shape": false,
+            "faceMat": "blueMat",
+            "anim_parameter":{
+                "Sadness": 1.0,
+                "Frown": 1.0
+            }
+        },
+        "Surprised":{
+            "reset": true,
+            "eye_shape": false,
+            "blink": false,
+            "faceMat": "redMat",
+            "scene_effect": {
+                "type": "blurV",
+                "enable": true
+            },
+            "anim_parameter":{
+                "Surprised": 1.0,
+                "HideBlush": 0.0
+            }
+        },
+        "Doubt":{
+            "reset": true,
+            "eye_shape": false,
+            "anim_parameter":{
+                "Doubt": 1.0
+            }
+        },
+        "Zzz":{
+            "reset": true,
+            "blink": false,
+            "anim_parameter":{
+                "HideEye": 1.0,
+                "HideSecondEye": 1.0,
+                "Zzz": 1.0
+            }
+        },
+        "Shy":{
+            "reset": true,
+            "eye_shape": false,
+            "anim_parameter":{
+                "Shy": 1.0
+            }
+        },
+        "Question":{
+            "reset": true,
+            "eye_shape": false,
+            "anim_parameter":{
+                "Question": 1.0,
+                "ALLHIDE": 1.0,
+                "HideSecondEye": 0.0,
+                "HideBlush": 0.0
+            }
+        },
+        "SquareEyeHollow":{
+            "reset": true,
+            "eye_shape": false,
+            "anim_parameter":{
+                "HideEye": 1.0,
+                "HollowSquareEye": 0.9
+            }
+        },
+        "RoundEyeHollow":{
+            "reset": true,
+            "eye_shape": false,
+            "anim_parameter":{
+                "HideEye": 1.0,
+                "HollowSquareEye": 0.9,
+                "HollowRoundEye": 1.0
+            }
+        },
+        "Tones":{
+            "reset": true,
+            "eye_shape": false,
+            "anim_parameter":{
+                "HideEye": 1.0,
+                "Tones": 1.0
+            }
+        },
+        "Exclamation":{
+            "reset": true,
+            "eye_shape": false,
+            "anim_parameter":{
+                "Exclamation": 1.0,
+                "ALLHIDE": 1.0,
+                "HideSecondEye": 0.0,
+                "HideBlush": 0.0
+            }
+        },
+        "ZzzMoved":{
+            "reset": true,
+            "eye_shape": false,
+            "blink": false,
+            "anim_parameter":{
+                "Zzz": 0.0,
+                "ZzzMove": 1.0,
+                "ALLHIDE": 1.0,
+                "HideSecondEye": 0.0,
+                "HideBlush": 0.0
+            }
+        },
+        "Arrow":{
+            "reset": true,
+            "blink": false,
+            "eye_shape": false,
+            "anim_parameter":{
+                "ExpressionArrow": 1.0,
+                "Flat": 1.0
+            }
+        },
+        "SpectrumAnalyzerFace":{
+            "reset": false,
+            "blink": false,
+            "eye_shape": false,
+            "backgroundMat": "SpectrumAnalyzer",
+            "anim_parameter":{
+                "ALLHIDE": 1.0,
+                "HideSecondEye": 0.0,
+                "HideBlush": 0.0
+            }
+        }
+    }
+}

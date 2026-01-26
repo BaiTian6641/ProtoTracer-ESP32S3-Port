@@ -1,0 +1,261 @@
+#pragma once
+
+#include <Arduino.h>
+#include "Controller.h"
+#include "../Render/Camera.h"
+#include "../Flash/PixelGroups/P3HUB75.h"
+
+// P4 HUB75 driver built on ESP-IDF parlio TX example.
+// Defaults match a 64x32 panel; adjust pin macros to your wiring if needed.
+
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+
+#include "esp_err.h"
+#include "esp_log.h"
+#include "driver/gpio.h"
+#include "driver/parlio_tx.h"
+
+class TasESP32P4KitV1 : public Controller
+{
+private:
+    // Panel geometry and timing
+    // Physical layout: two chained 64x32 panels, second is a mirror of the first.
+    static constexpr uint16_t kPanelWidth = 64;
+    static constexpr uint8_t kPanels = 2;
+    static constexpr uint16_t kWidth = kPanelWidth * kPanels; // 128 logical pixels wide
+    static constexpr uint16_t kHeight = 32;
+    static constexpr uint32_t kPixelClockHz = 20 * 1000 * 1000; // 20 MHz pixel clock
+    static constexpr uint16_t kGapCyclesPerLine = 20;           // Gap cycles to blank between rows
+
+    // HUB75 bit positions in the 16-bit parlio word
+    static constexpr uint8_t HUB75_R1_IDX = 7;
+    static constexpr uint8_t HUB75_R2_IDX = 6;
+    static constexpr uint8_t HUB75_LATCH_IDX = 5;
+    static constexpr uint8_t HUB75_G1_IDX = 4;
+    static constexpr uint8_t HUB75_G2_IDX = 3;
+    static constexpr uint8_t HUB75_OE_IDX = 2;
+    static constexpr uint8_t HUB75_B1_IDX = 1;
+    static constexpr uint8_t HUB75_B2_IDX = 0;
+    static constexpr uint8_t HUB75_NUM_A_IDX = 8;
+    static constexpr uint8_t HUB75_NUM_B_IDX = 9;
+    static constexpr uint8_t HUB75_NUM_C_IDX = 10;
+    static constexpr uint8_t HUB75_NUM_D_IDX = 11;
+
+    // Pin defaults (update to match your ESP32-P4 board wiring)
+    static constexpr int PIN_R1 = 52;
+    static constexpr int PIN_G1 = 51;
+    static constexpr int PIN_B1 = 31;
+    static constexpr int PIN_R2 = 30;
+    static constexpr int PIN_G2 = 29;
+    static constexpr int PIN_B2 = 28;
+    static constexpr int PIN_A = 50;
+    static constexpr int PIN_B = 49;
+    static constexpr int PIN_C = 5;
+    static constexpr int PIN_D = 4;
+    static constexpr int PIN_LATCH = 2;
+    static constexpr int PIN_PCLK = 3;
+    static constexpr int PIN_OE = 24;
+    // Framebuffer: packed bitplanes for one frame
+    static constexpr uint8_t kBitDepth = 3;
+    static constexpr size_t kLineStride = kWidth + kGapCyclesPerLine;
+    static constexpr size_t kHalfFrameWords = (kLineStride * (kHeight / 2));
+    uint16_t bitplanes[kBitDepth][kHalfFrameWords] = {};
+
+    // Render resources: scene rendered at single-panel width (64), mirrored to panel 2
+    PixelGroup *camPixels1 = new PixelGroup(kPanelWidth * kHeight, P3HUB75);
+    Camera *camMain1 = new Camera(&camTransform1, &cameraLayout, camPixels1);
+    CameraBase *cameras[1] = {camMain1};
+
+    CameraLayout cameraLayout = CameraLayout(CameraLayout::ZForward, CameraLayout::YUp);
+    Transform camTransform1 = Transform(Vector3D(), Vector3D(0.0f, 0.0f, -500.0f), Vector3D(1, 1, 1));
+
+    // parlio context
+    parlio_tx_unit_handle_t txUnit = nullptr;
+    parlio_transmit_config_t transmitConfig = {};
+
+    static inline uint16_t encodePixelBitplane(const ProtoRGBColor *upper, const ProtoRGBColor *lower, uint8_t rowAddr, bool latch, uint8_t bit)
+    {
+        uint16_t word = 0;
+        const uint8_t mask = 1U << bit;
+        word |= ((upper->R & mask) ? 1U : 0U) << HUB75_R1_IDX;
+        word |= ((upper->G & mask) ? 1U : 0U) << HUB75_G1_IDX;
+        word |= ((upper->B & mask) ? 1U : 0U) << HUB75_B1_IDX;
+        word |= ((lower->R & mask) ? 1U : 0U) << HUB75_R2_IDX;
+        word |= ((lower->G & mask) ? 1U : 0U) << HUB75_G2_IDX;
+        word |= ((lower->B & mask) ? 1U : 0U) << HUB75_B2_IDX;
+
+        word |= (rowAddr & 0x01) << HUB75_NUM_A_IDX;
+        word |= ((rowAddr >> 1) & 0x01) << HUB75_NUM_B_IDX;
+        word |= ((rowAddr >> 2) & 0x01) << HUB75_NUM_C_IDX;
+        word |= ((rowAddr >> 3) & 0x01) << HUB75_NUM_D_IDX;
+
+        // OE is active low; blank during latch to avoid ghosting.
+        word |= (latch ? 1U : 0U) << HUB75_OE_IDX;
+
+        if (latch)
+        {
+            word |= 1U << HUB75_LATCH_IDX;
+        }
+
+        return word;
+    }
+
+    void fillFrameBuffer(uint8_t bit)
+    {
+        const ProtoRGBColor *upperHalf = nullptr;
+        const ProtoRGBColor *lowerHalf = nullptr;
+        size_t pixelIdx = 0;
+
+        for (uint8_t line = 0; line < (kHeight / 2); ++line)
+        {
+            for (uint8_t col = 0; col < kWidth; ++col)
+            {
+                // Map logical column to source column (panel 2 is mirrored copy of panel 1)
+                uint16_t srcCol = (col < kPanelWidth)
+                                      ? col
+                                      : (kPanelWidth - 1 - (col - kPanelWidth));
+
+                size_t upperIndex = line * kPanelWidth + srcCol;
+                size_t lowerIndex = (line + (kHeight / 2)) * kPanelWidth + srcCol;
+
+                upperHalf = camPixels1->GetColor(upperIndex);
+                lowerHalf = camPixels1->GetColor(lowerIndex);
+
+                bool latch = (col == (kWidth - 1));
+                bitplanes[bit][pixelIdx++] = encodePixelBitplane(upperHalf, lowerHalf, line, latch, bit);
+            }
+
+            // Insert gap cycles to ensure OE is high long enough (ghosting protection)
+            for (uint16_t gap = 0; gap < kGapCyclesPerLine; ++gap)
+            {
+                uint16_t word = 0;
+                // Disable output during gap
+                word |= 1U << HUB75_OE_IDX;
+                word |= (line & 0x01) << HUB75_NUM_A_IDX;
+                word |= ((line >> 1) & 0x01) << HUB75_NUM_B_IDX;
+                word |= ((line >> 2) & 0x01) << HUB75_NUM_C_IDX;
+                word |= ((line >> 3) & 0x01) << HUB75_NUM_D_IDX;
+                bitplanes[bit][pixelIdx++] = word;
+            }
+        }
+    }
+
+    void packBitplanes()
+    {
+        for (uint8_t bit = 0; bit < kBitDepth; ++bit)
+        {
+            fillFrameBuffer(bit);
+        }
+    }
+
+    void ensureParlio()
+    {
+        if (txUnit)
+        {
+            return;
+        }
+
+        parlio_tx_unit_config_t config = {};
+        config.clk_src = PARLIO_CLK_SRC_DEFAULT;
+        config.data_width = 16; // 8-bit color/control + 4-bit address + 4 reserved
+        config.clk_in_gpio_num = GPIO_NUM_NC;
+        config.valid_gpio_num = GPIO_NUM_NC;
+        config.clk_out_gpio_num = static_cast<gpio_num_t>(PIN_PCLK);
+        config.output_clk_freq_hz = kPixelClockHz;
+        config.trans_queue_depth = 4;
+        config.max_transfer_size = kBitDepth * kHalfFrameWords * sizeof(uint16_t);
+        config.sample_edge = PARLIO_SAMPLE_EDGE_POS;
+
+        // Pin map to bit positions
+        config.data_gpio_nums[HUB75_R1_IDX] = static_cast<gpio_num_t>(PIN_R1);
+        config.data_gpio_nums[HUB75_R2_IDX] = static_cast<gpio_num_t>(PIN_R2);
+        config.data_gpio_nums[HUB75_G1_IDX] = static_cast<gpio_num_t>(PIN_G1);
+        config.data_gpio_nums[HUB75_G2_IDX] = static_cast<gpio_num_t>(PIN_G2);
+        config.data_gpio_nums[HUB75_B1_IDX] = static_cast<gpio_num_t>(PIN_B1);
+        config.data_gpio_nums[HUB75_B2_IDX] = static_cast<gpio_num_t>(PIN_B2);
+        config.data_gpio_nums[HUB75_OE_IDX] = static_cast<gpio_num_t>(PIN_OE);
+        config.data_gpio_nums[HUB75_LATCH_IDX] = static_cast<gpio_num_t>(PIN_LATCH);
+        config.data_gpio_nums[HUB75_NUM_A_IDX] = static_cast<gpio_num_t>(PIN_A);
+        config.data_gpio_nums[HUB75_NUM_B_IDX] = static_cast<gpio_num_t>(PIN_B);
+        config.data_gpio_nums[HUB75_NUM_C_IDX] = static_cast<gpio_num_t>(PIN_C);
+        config.data_gpio_nums[HUB75_NUM_D_IDX] = static_cast<gpio_num_t>(PIN_D);
+        // Remaining lanes unused
+        config.data_gpio_nums[12] = GPIO_NUM_NC;
+        config.data_gpio_nums[13] = GPIO_NUM_NC;
+        config.data_gpio_nums[14] = GPIO_NUM_NC;
+        config.data_gpio_nums[15] = GPIO_NUM_NC;
+
+        esp_err_t err = parlio_new_tx_unit(&config, &txUnit);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE("TasESP32P4KitV1", "parlio_new_tx_unit failed: %d", err);
+            return;
+        }
+        err = parlio_tx_unit_enable(txUnit);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE("TasESP32P4KitV1", "parlio_tx_unit_enable failed: %d", err);
+            return;
+        }
+
+        transmitConfig.idle_value = 0x00;
+        transmitConfig.flags.loop_transmission = false; // send explicit bitplanes
+    }
+
+public:
+    TasESP32P4KitV1(uint8_t maxBrightness)
+        : Controller(cameras, 1, maxBrightness, 0)
+    {
+    }
+
+    void Initialize() override
+    {
+        ensureParlio();
+    }
+
+    void Display() override
+    {
+        if (!txUnit)
+        {
+            return;
+        }
+
+        // Pack all bitplanes once, then stream them MSB->LSB with weighted repeats.
+        packBitplanes();
+
+        const size_t bitLength = kHalfFrameWords * sizeof(uint16_t) * 8;
+
+        esp_err_t err = parlio_tx_unit_transmit(txUnit, bitplanes, kBitDepth*kHalfFrameWords * 16, &transmitConfig);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE("TasESP32P4KitV1", "parlio_tx_unit_transmit failed: %d", err);
+            return;
+        }
+        /*
+        for (int8_t bit = static_cast<int8_t>(kBitDepth - 1); bit >= 0; --bit)
+        {
+            const uint16_t *plane = bitplanes[bit];
+            uint16_t repeats = 1U << bit;
+            for (uint16_t r = 0; r < repeats; ++r)
+            {
+                esp_err_t err = parlio_tx_unit_transmit(txUnit, plane, bitLength, &transmitConfig);
+                if (err != ESP_OK)
+                {
+                    ESP_LOGE("TasESP32P4KitV1", "parlio_tx_unit_transmit failed: %d", err);
+                    return;
+                }
+            }
+        }*/
+    }
+};
+
+#else
+// Fallback stub to keep other targets building. It logs and does nothing.
+class TasESP32P4KitV1 : public Controller
+{
+public:
+    TasESP32P4KitV1(uint8_t maxBrightness) : Controller(nullptr, 0, maxBrightness, 0) {}
+    void Initialize() override {}
+    void Display() override {}
+};
+#endif

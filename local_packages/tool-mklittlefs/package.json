@@ -1,0 +1,11 @@
+{
+  "name": "tool-mklittlefs",
+  "version": "3.2.0-local",
+  "description": "Local mklittlefs binary pinned in repo to avoid downloads.",
+  "keywords": ["tool", "filesystem", "littlefs"],
+  "license": "Proprietary",
+  "system": ["linux_x86_64"],
+  "export": {
+    "include": ["mklittlefs"]
+  }
+}
