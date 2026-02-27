@@ -54,8 +54,12 @@ uint8_t maxAccentBrightness = 100;
 #else
 #define TXT(en, cn) en
 #endif
-//#include "Auth/AuthToken.h"
-#include "Auth/TassAuthToken.h" //Replace with your own token for OTA updates at AuthToken.h
+
+#ifdef USE_TOKEN_AUTH
+#include "Auth/TassAuthToken.h"
+#else
+#include "Auth/AuthToken.h"
+#endif
 
 UserConfig userConfig;
 FaceUpdateConfig faceUpdateConfig;

@@ -112,7 +112,7 @@ private:
     SimpleMaterial yellowMaterial = SimpleMaterial(ProtoRGBColor(255, 255, 0));
     SimpleMaterial purpleMaterial = SimpleMaterial(ProtoRGBColor(255, 0, 255));
 
-    ProtoRGBColor gradientSpectrum[3] = {ProtoRGBColor(User_R + 12, User_G + 25, User_B + 15), ProtoRGBColor(User_R, User_G, User_B), ProtoRGBColor(User_R - 5, User_G - 10, User_B - 5)};
+    ProtoRGBColor gradientSpectrum[3] = {ProtoRGBColor(User_R, User_G, User_B), ProtoRGBColor(User_R, User_G, User_B), ProtoRGBColor(User_R, User_G, User_B)};
     ProtoRGBColor rainbowSpectrum[6] = {ProtoRGBColor(255, 0, 0), ProtoRGBColor(255, 255, 0), ProtoRGBColor(0, 255, 0), ProtoRGBColor(0, 255, 255), ProtoRGBColor(0, 0, 255), ProtoRGBColor(255, 0, 255)};
     GradientMaterial<3> gradientMat = GradientMaterial<3>(gradientSpectrum, 200.0f, false);
     GradientMaterial<6> rainbowMat = GradientMaterial<6>(rainbowSpectrum, 200.0f, false);
@@ -169,7 +169,14 @@ private:
         float basis = 0.0f;
         float goal = 1.0f;
     };
+    struct HueShiftBinding
+    {
+        Material *material = nullptr;
+        void *instance = nullptr;
+        void (*apply)(void *, float) = nullptr;
+    };
     std::vector<AutoLinkSpec> autoLinkSpecs; // optional per-morph overrides from JSON
+    std::vector<HueShiftBinding> hueShiftRegistry; // material* -> concrete HueShift handler
 
     // Helpers
     Object3D *GetFaceObject()
@@ -392,6 +399,18 @@ private:
         RegisterMaterial("purpleMat", &purpleMaterial);
         RegisterMaterial("whiteMat", &whiteMaterial);
         RegisterMaterial("orangeMat", &orangeMaterial);
+
+        RegisterHueShiftable(&gradientMat);
+        RegisterHueShiftable(&rainbowMat);
+        RegisterHueShiftable(&backgroundMat);
+        RegisterHueShiftable(&redMaterial);
+        RegisterHueShiftable(&orangeMaterial);
+        RegisterHueShiftable(&whiteMaterial);
+        RegisterHueShiftable(&greenMaterial);
+        RegisterHueShiftable(&blueMaterial);
+        RegisterHueShiftable(&yellowMaterial);
+        RegisterHueShiftable(&purpleMaterial);
+        RegisterHueShiftable(&rainbowSpiral);
     }
 
     void RegisterDefaultEffects()
@@ -546,7 +565,55 @@ private:
             }
         }
         ownedMaterials.push_back(std::make_unique<GradientMaterial<N>>(spectrum, period, isRadial));
-        return static_cast<GradientMaterial<N> *>(ownedMaterials.back().get());
+        GradientMaterial<N> *mat = static_cast<GradientMaterial<N> *>(ownedMaterials.back().get());
+        RegisterHueShiftable(mat);
+        return mat;
+    }
+
+    template <typename T>
+    static void ApplyHueShiftTyped(void *instance, float hueDeg)
+    {
+        static_cast<T *>(instance)->HueShift(hueDeg);
+    }
+
+    template <typename T>
+    void RegisterHueShiftable(T *mat)
+    {
+        Material *asMaterial = static_cast<Material *>(mat);
+        for (auto &entry : hueShiftRegistry)
+        {
+            if (entry.material == asMaterial)
+            {
+                entry.instance = mat;
+                entry.apply = &ApplyHueShiftTyped<T>;
+                return;
+            }
+        }
+        hueShiftRegistry.push_back({asMaterial, mat, &ApplyHueShiftTyped<T>});
+    }
+
+    void ApplyHueShiftToCurrentFaceMaterial(float hueDeg)
+    {
+        Object3D *faceObject = GetFaceObject();
+        if (!faceObject)
+        {
+            return;
+        }
+
+        Material *current = faceObject->GetMaterial();
+        if (!current)
+        {
+            return;
+        }
+
+        for (auto &entry : hueShiftRegistry)
+        {
+            if (entry.material == current && entry.apply)
+            {
+                entry.apply(entry.instance, hueDeg);
+                return;
+            }
+        }
     }
 
     Material *RegisterGradientFromJson(const String &name, JsonObject obj)
@@ -593,6 +660,7 @@ private:
         // Keep ownedMaterials alive across calls; clear registry to avoid stale pointers.
         ownedMaterials.clear();
         materialRegistry.clear();
+        hueShiftRegistry.clear();
 
         // Always ensure stock materials are present.
         RegisterDefaultMaterials();
@@ -610,9 +678,9 @@ private:
                 bool isRadial = mObj["isRadial"] | false;
                 if (useUser)
                 {
-                    gradientSpectrum[0] = ProtoRGBColor(User_R + 12, User_G + 25, User_B + 15);
+                    gradientSpectrum[0] = ProtoRGBColor(User_R, User_G, User_B);
                     gradientSpectrum[1] = ProtoRGBColor(User_R, User_G, User_B);
-                    gradientSpectrum[2] = ProtoRGBColor(User_R - 5, User_G - 10, User_B - 5);
+                    gradientSpectrum[2] = ProtoRGBColor(User_R, User_G, User_B);
                 }
                 if (mObj.containsKey("colour"))
                 {
@@ -626,6 +694,7 @@ private:
                 }
                 gradientMat = GradientMaterial<3>(gradientSpectrum, gradientPeriod, isRadial);
                 RegisterMaterial(name, &gradientMat);
+                RegisterHueShiftable(&gradientMat);
                 continue;
             }
 
@@ -643,6 +712,7 @@ private:
                 }
                 rainbowMat = GradientMaterial<6>(rainbowSpectrum, gradientPeriod, isRadial);
                 RegisterMaterial(name, &rainbowMat);
+                RegisterHueShiftable(&rainbowMat);
                 continue;
             }
 
@@ -658,6 +728,7 @@ private:
                 }
                 backgroundMat = GradientMaterial<1>(backgroundSpectrum, gradientPeriod, isRadial);
                 RegisterMaterial(name, &backgroundMat);
+                RegisterHueShiftable(&backgroundMat);
                 continue;
             }
 
@@ -958,9 +1029,9 @@ public:
 
     bool Initialize(const UserConfig &config, const char *githubAnimBase = nullptr, const char *giteeAnimBase = nullptr, const char *githubToken = nullptr, const char *giteeToken = nullptr, M5UnitGLASS2 *downloadDisplay = nullptr, bool verboseDownload = true)
     {
-        gradientSpectrum[0] = ProtoRGBColor(User_R + 12, User_G + 25, User_B + 15);
+        gradientSpectrum[0] = ProtoRGBColor(User_R, User_G, User_B);
         gradientSpectrum[1] = ProtoRGBColor(User_R, User_G, User_B);
-        gradientSpectrum[2] = ProtoRGBColor(User_R - 5, User_G - 10, User_B - 5);
+        gradientSpectrum[2] = ProtoRGBColor(User_R, User_G, User_B);
         gradientMat = GradientMaterial<3>(gradientSpectrum, 200.0f, false);
 
         Serial.begin(115200);
@@ -1078,6 +1149,8 @@ public:
         {
             ApplyExpression(targetExpr);
         }
+
+        ApplyHueShiftToCurrentFaceMaterial(Menu::GetHueShift());
 
         if (enableBlink)
         {

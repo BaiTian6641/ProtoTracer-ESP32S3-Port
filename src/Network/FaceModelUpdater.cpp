@@ -318,8 +318,5 @@ bool EnsureUniversalFaceJson(const FaceUpdateConfig &config, M5UnitGLASS2 &displ
     }
     display.display();
 
-    WiFi.disconnect(true, true);
-    WiFi.mode(WIFI_OFF);
-
     return true;
 }
