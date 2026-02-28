@@ -124,8 +124,8 @@ namespace
         cfg.ble_tx_uuid = "42036097-7c76-4129-a80d-ed4e0d12359c";
         cfg.ota_ssid = "General ProtogenOTAWiFi";
         cfg.ota_password = "Protogen#1229#25";
-        cfg.wifi_ssid = "";
-        cfg.wifi_password = "";
+        cfg.wifi_ssid = "CMCC-503";
+        cfg.wifi_password = "13306270821";
         cfg.user_animation = "";
         return cfg;
     }

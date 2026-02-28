@@ -2,6 +2,7 @@
 
 #include "BoundingBox2D.h"
 #include "Triangle2D.h"
+#include <cstring>
 
 class Node {
 private:
@@ -40,11 +41,11 @@ public:
         //printf("expanding node, new capacity: %d\n", newCount);
         Triangle2D** tmp = entities;
         entities = new Triangle2D*[newCount];
-        for (unsigned int i = 0; i < newCount; ++i) {
-            if (i < count)
-                entities[i] = tmp[i];
-            else
-                entities[i] = NULL;
+        if (count > 0 && tmp) {
+            memcpy(entities, tmp, count * sizeof(Triangle2D*));
+        }
+        if (newCount > count) {
+            memset(entities + count, 0, (newCount - count) * sizeof(Triangle2D*));
         }
 
         delete[] tmp;
@@ -72,7 +73,7 @@ public:
 
     void Subdivide(BoundingBox2D& bbox, unsigned int depth = 0) {
         //printf("subdividing node at depth %d\n", depth);
-        if (depth == maxDepth)
+        if (depth == maxDepth || count <= maxEntities)
             return;
 
         Vector2D mid = (bbox.GetMinimum() + bbox.GetMaximum()) * 0.5f;

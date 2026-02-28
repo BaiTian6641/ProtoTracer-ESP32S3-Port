@@ -46,6 +46,7 @@ uint8_t maxAccentBrightness = 100;
 #include <M5UnitGLASS2.h>
 #include <Wire.h>
 #include <LittleFS.h>
+#include <esp_heap_caps.h>
 #include "Network/FaceModelUpdater.h"
 #include "Network/UserConfigManager.h"
 
@@ -132,6 +133,95 @@ float FreeMem()
 
   return temp / 1000000.0f;
 }
+
+#ifdef PRINTINFO
+#ifndef PRINTINFO_INTERVAL_MS
+#define PRINTINFO_INTERVAL_MS 1000
+#endif
+
+class RuntimeProfiler {
+private:
+  uint32_t lastReportMs = 0;
+  uint32_t lastFrameMs = 0;
+  uint32_t frameCount = 0;
+  float animationAccumMs = 0.0f;
+  float renderAccumMs = 0.0f;
+
+public:
+  void Tick(float animationSec, float renderSec)
+  {
+    const uint32_t nowMs = millis();
+
+    if (lastFrameMs != 0)
+    {
+      frameCount++;
+      animationAccumMs += animationSec * 1000.0f;
+      renderAccumMs += renderSec * 1000.0f;
+    }
+
+    if (lastReportMs == 0)
+    {
+      lastReportMs = nowMs;
+      lastFrameMs = nowMs;
+      return;
+    }
+
+    const uint32_t elapsedMs = nowMs - lastReportMs;
+    if (elapsedMs < PRINTINFO_INTERVAL_MS)
+    {
+      lastFrameMs = nowMs;
+      return;
+    }
+
+    if (frameCount == 0)
+    {
+      lastReportMs = nowMs;
+      lastFrameMs = nowMs;
+      return;
+    }
+
+    const float elapsedSec = elapsedMs / 1000.0f;
+    const float fps = frameCount / elapsedSec;
+    const float avgAnimMs = animationAccumMs / frameCount;
+    const float avgRenderMs = renderAccumMs / frameCount;
+    const float avgFrameMs = elapsedMs / static_cast<float>(frameCount);
+
+    const uint32_t freeHeapKb = ESP.getFreeHeap() / 1024;
+    const uint32_t internalFreeKb = heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024;
+    const uint32_t psramFreeKb = heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024;
+
+    char line[256];
+    const int written = snprintf(
+        line,
+        sizeof(line),
+        "[perf] fps=%.2f frame=%.2fms anim=%.2fms render=%.2fms heap=%luKB int=%luKB psram=%luKB\n",
+        fps,
+        avgFrameMs,
+        avgAnimMs,
+        avgRenderMs,
+        static_cast<unsigned long>(freeHeapKb),
+        static_cast<unsigned long>(internalFreeKb),
+        static_cast<unsigned long>(psramFreeKb));
+
+    if (written > 0)
+    {
+      const int required = (written < static_cast<int>(sizeof(line))) ? written : static_cast<int>(sizeof(line) - 1);
+      if (Serial.availableForWrite() >= required)
+      {
+        Serial.write(reinterpret_cast<const uint8_t *>(line), required);
+      }
+    }
+
+    frameCount = 0;
+    animationAccumMs = 0.0f;
+    renderAccumMs = 0.0f;
+    lastReportMs = nowMs;
+    lastFrameMs = nowMs;
+  }
+};
+
+RuntimeProfiler gRuntimeProfiler;
+#endif
 
 void setup()
 {
@@ -428,18 +518,6 @@ void loop()
   controller.Display();
 
 #ifdef PRINTINFO
-  Serial.print("Animated in ");
-  Serial.print(animation.GetAnimationTime(), 4);
-
-  Serial.print("s, Rendered in ");
-  Serial.print(controller.GetRenderTime(), 4);
-
-  Serial.print("s, Free memory ");
-  Serial.print(FreeMem(), 3);
-
-  Serial.println("Kb");
-
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  gRuntimeProfiler.Tick(animation.GetAnimationTime(), controller.GetRenderTime());
 #endif
 }

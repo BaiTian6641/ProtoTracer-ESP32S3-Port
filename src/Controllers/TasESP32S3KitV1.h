@@ -54,6 +54,22 @@ extern M5UnitGLASS2 display;
 // Change this to your needs, for details on VirtualPanel pls read the PDF!
 #define SERPENT true
 
+#ifndef HUB75_MIRROR_M5
+#define HUB75_MIRROR_M5 0
+#endif
+
+#ifndef HUB75_MIRROR_M5_EVERY_N_FRAMES
+#define HUB75_MIRROR_M5_EVERY_N_FRAMES 2
+#endif
+
+#ifndef HUB75_COLOR_DEPTH_BITS
+#define HUB75_COLOR_DEPTH_BITS 6
+#endif
+
+#ifndef HUB75_DOUBLE_BUFFER
+#define HUB75_DOUBLE_BUFFER 0
+#endif
+
 
 // placeholder for the matrix object
 MatrixPanel_I2S_DMA *dma_display = nullptr;
@@ -63,18 +79,20 @@ VirtualMatrixPanel  *virtualDisp = nullptr;
 
 class TasESP32S3KitV1 : public Controller {
 private:
+    static const uint16_t kHalfPixels = 1024;
+
     CameraLayout cameraLayout = CameraLayout(CameraLayout::ZForward, CameraLayout::YUp);
     Transform camTransform1 = Transform(Vector3D(), Vector3D(0.0f, 0.0f, -500.0f), Vector3D(1, 1, 1));
     Transform camTransform2 = Transform(Vector3D(), Vector3D(0.0f, 0.0f, -500.0f), Vector3D(1, 1, 1));
 
-    PixelGroup* camPixels1 = new PixelGroup(2048,P3HUB75);
-    PixelGroup* camPixels2 = new PixelGroup(4,P3HUB75);
+    PixelGroup* camPixels1 = nullptr;
+    PixelGroup* camPixels2 = nullptr;
     
-    Camera* camMain1 = new Camera(&camTransform1, &cameraLayout, camPixels1);
-    Camera* camMain2 = new Camera(&camTransform2, &cameraLayout, camPixels2);
+    Camera* camMain1 = nullptr;
+    Camera* camMain2 = nullptr;
 
-    //CameraBase* cameras[1] = { &camMain1 };
-    CameraBase* cameras[2] = { camMain1, camMain2 };
+    CameraBase* cameras[2] = { nullptr, nullptr };
+    uint32_t mirrorFrameCounter = 0;
     struct RGB{
     uint8_t R;
     uint8_t G;
@@ -82,7 +100,15 @@ private:
     };
 
 public:
-    TasESP32S3KitV1(uint8_t maxBrightness) : Controller(cameras, 2, maxBrightness, 0){}
+    TasESP32S3KitV1(uint8_t maxBrightness) : Controller(cameras, 2, maxBrightness, 0){
+    }
+
+    ~TasESP32S3KitV1() override {
+        delete camMain1;
+        delete camMain2;
+        delete camPixels1;
+        delete camPixels2;
+    }
 
     void Initialize() override{
         #ifdef VERBOSE_STARTUP
@@ -113,6 +139,8 @@ public:
         mxconfig.gpio.lat = LAT_PIN;
         mxconfig.gpio.oe = OE_PIN;
         mxconfig.clkphase = false;
+        mxconfig.double_buff = HUB75_DOUBLE_BUFFER;
+        mxconfig.setPixelColorDepthBits(HUB75_COLOR_DEPTH_BITS);
 
         // OK, now we can create our matrix object
         dma_display = new MatrixPanel_I2S_DMA(mxconfig);
@@ -167,23 +195,51 @@ public:
         delay(1000);
 
         dma_display->clearScreen();
+
+        if (!camPixels1) camPixels1 = new PixelGroup(kHalfPixels, P3HUB75);
+        if (!camPixels2) camPixels2 = new PixelGroup(kHalfPixels, P3HUB75 + kHalfPixels);
+        if (!camMain1) camMain1 = new Camera(&camTransform1, &cameraLayout, camPixels1);
+        if (!camMain2) camMain2 = new Camera(&camTransform2, &cameraLayout, camPixels2);
+
+        cameras[0] = camMain1;
+        cameras[1] = camMain2;
+
         Serial.println("Init OK!");
     }
 
     void Display() override {
         dma_display->setBrightness8(brightness);
-        
-        display.startWrite();
-        display.drawRect(0,0,66,34,TFT_WHITE);
+
+        const uint32_t mirrorEvery = (HUB75_MIRROR_M5_EVERY_N_FRAMES > 0) ? HUB75_MIRROR_M5_EVERY_N_FRAMES : 1;
+        const bool shouldMirrorM5 = HUB75_MIRROR_M5 && ((mirrorFrameCounter++ % mirrorEvery) == 0);
+
+        if (shouldMirrorM5) {
+            display.startWrite();
+            display.drawRect(0,0,66,34,TFT_WHITE);
+        }
+
         for (uint16_t y = 0; y < 32; y++) {
             for (uint16_t x = 0; x < 64; x++){
                 uint16_t pixelNum = y * 64 + x;
-                virtualDisp->drawPixelRGB888(63 - x, (y) + 32, (uint16_t)camPixels1->GetColor(pixelNum)->R, (uint16_t)camPixels1->GetColor(pixelNum)->G, (uint16_t)camPixels1->GetColor(pixelNum)->B);
-                virtualDisp->drawPixelRGB888(63 - x, (31 - y), (uint16_t)camPixels1->GetColor(pixelNum)->R, (uint16_t)camPixels1->GetColor(pixelNum)->G, (uint16_t)camPixels1->GetColor(pixelNum)->B);
-                display.drawPixel(64 - x, (32 - y), display.color888((camPixels1->GetColor(pixelNum)->R ? 255 : 0), (camPixels1->GetColor(pixelNum)->G ? 255 : 0), (camPixels1->GetColor(pixelNum)->B ? 255 : 0)));
+                ProtoRGBColor* color = nullptr;
+
+                if (pixelNum < kHalfPixels) {
+                    color = camPixels1->GetColor(pixelNum);
+                } else {
+                    color = camPixels2->GetColor(pixelNum - kHalfPixels);
+                }
+
+                virtualDisp->drawPixelRGB888(63 - x, (y) + 32, (uint16_t)color->R, (uint16_t)color->G, (uint16_t)color->B);
+                virtualDisp->drawPixelRGB888(63 - x, (31 - y), (uint16_t)color->R, (uint16_t)color->G, (uint16_t)color->B);
+                if (shouldMirrorM5) {
+                    display.drawPixel(64 - x, (32 - y), display.color888((color->R ? 255 : 0), (color->G ? 255 : 0), (color->B ? 255 : 0)));
+                }
             }
         }
-        display.display();
-        display.endWrite();
+
+        if (shouldMirrorM5) {
+            display.display();
+            display.endWrite();
+        }
     }
 };

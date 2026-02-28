@@ -14,10 +14,23 @@
 class Triangle2D {
 private:
     float denominator = 0.0f;
+    bool valid = true;
 
     float p1X, p1Y, p2X, p2Y, p3X, p3Y, v0X, v0Y, v1X, v1Y, v2X, v2Y;
   
 public:
+    struct Rotation3DMatrix {
+        float m00;
+        float m01;
+        float m02;
+        float m10;
+        float m11;
+        float m12;
+        float m20;
+        float m21;
+        float m22;
+    };
+
 	Vector3D* normal;
     Material* material;
 
@@ -48,7 +61,13 @@ public:
         v1X = p3X - p1X;
         v1Y = p3Y - p1Y;
         
-        denominator = 1.0f / (v0X * v1Y - v1X * v0Y);
+        const float det = (v0X * v1Y - v1X * v0Y);
+        if (fabsf(det) <= 1e-8f) {
+            valid = false;
+            denominator = 0.0f;
+        } else {
+            denominator = 1.0f / det;
+        }
 	}
 
     // Optimized ctor: expects an inverse view rotation (already conjugated/unit) and camera position
@@ -81,7 +100,13 @@ public:
         v1X = p3X - p1X;
         v1Y = p3Y - p1Y;
 
-        denominator = 1.0f / (v0X * v1Y - v1X * v0Y);
+        const float det = (v0X * v1Y - v1X * v0Y);
+        if (fabsf(det) <= 1e-8f) {
+            valid = false;
+            denominator = 0.0f;
+        } else {
+            denominator = 1.0f / det;
+        }
 
 		normal = t->Normal();
 
@@ -89,6 +114,63 @@ public:
         t3p2 = t->p2;
         t3p3 = t->p3;
 	}
+
+    // Matrix-based optimized ctor: avoids per-vertex quaternion operations in hot loops
+    Triangle2D(const Rotation3DMatrix& invViewMatrix, const Vector3D& camPos, Triangle3D* t, Material* material) {
+        this->material = material;
+
+        if (t->hasUV){
+            this->p1UV = t->p1UV;
+            this->p2UV = t->p2UV;
+            this->p3UV = t->p3UV;
+
+            this->hasUV = true;
+        }
+
+        const float r1x = t->p1->X - camPos.X;
+        const float r1y = t->p1->Y - camPos.Y;
+        const float r1z = t->p1->Z - camPos.Z;
+
+        const float r2x = t->p2->X - camPos.X;
+        const float r2y = t->p2->Y - camPos.Y;
+        const float r2z = t->p2->Z - camPos.Z;
+
+        const float r3x = t->p3->X - camPos.X;
+        const float r3y = t->p3->Y - camPos.Y;
+        const float r3z = t->p3->Z - camPos.Z;
+
+        const float p1z = invViewMatrix.m20 * r1x + invViewMatrix.m21 * r1y + invViewMatrix.m22 * r1z;
+        const float p2z = invViewMatrix.m20 * r2x + invViewMatrix.m21 * r2y + invViewMatrix.m22 * r2z;
+        const float p3z = invViewMatrix.m20 * r3x + invViewMatrix.m21 * r3y + invViewMatrix.m22 * r3z;
+
+        averageDepth = (p1z + p2z + p3z) / 3.0f;
+
+		p1X = invViewMatrix.m00 * r1x + invViewMatrix.m01 * r1y + invViewMatrix.m02 * r1z;
+		p1Y = invViewMatrix.m10 * r1x + invViewMatrix.m11 * r1y + invViewMatrix.m12 * r1z;
+		p2X = invViewMatrix.m00 * r2x + invViewMatrix.m01 * r2y + invViewMatrix.m02 * r2z;
+		p2Y = invViewMatrix.m10 * r2x + invViewMatrix.m11 * r2y + invViewMatrix.m12 * r2z;
+		p3X = invViewMatrix.m00 * r3x + invViewMatrix.m01 * r3y + invViewMatrix.m02 * r3z;
+		p3Y = invViewMatrix.m10 * r3x + invViewMatrix.m11 * r3y + invViewMatrix.m12 * r3z;
+
+        v0X = p2X - p1X;
+        v0Y = p2Y - p1Y;
+        v1X = p3X - p1X;
+        v1Y = p3Y - p1Y;
+
+        const float det = (v0X * v1Y - v1X * v0Y);
+        if (fabsf(det) <= 1e-8f) {
+            valid = false;
+            denominator = 0.0f;
+        } else {
+            denominator = 1.0f / det;
+        }
+
+		normal = t->Normal();
+
+        t3p1 = t->p1;
+        t3p2 = t->p2;
+        t3p3 = t->p3;
+    }
 
 	Triangle2D(Quaternion lookDirection, Transform* camT, Triangle3D* t, Material* material) {
         this->material = material;
@@ -119,7 +201,13 @@ public:
         v1X = p3X - p1X;
         v1Y = p3Y - p1Y;
 
-        denominator = 1.0f / (v0X * v1Y - v1X * v0Y);
+        const float det = (v0X * v1Y - v1X * v0Y);
+        if (fabsf(det) <= 1e-8f) {
+            valid = false;
+            denominator = 0.0f;
+        } else {
+            denominator = 1.0f / det;
+        }
 
 		normal = t->Normal();
 
@@ -143,12 +231,59 @@ public:
         v1X = p3X - p1X;
         v1Y = p3Y - p1Y;
 
-        denominator = 1.0f / (v0X * v1Y - v1X * v0Y);
+        const float det = (v0X * v1Y - v1X * v0Y);
+        if (fabsf(det) <= 1e-8f) {
+            valid = false;
+            denominator = 0.0f;
+        } else {
+            denominator = 1.0f / det;
+        }
 
         t3p1 = t->p1;
         t3p2 = t->p2;
         t3p3 = t->p3;
 	}
+
+    // Pre-projected constructor: camera-space points are supplied directly
+    Triangle2D(const Vector3D& p1, const Vector3D& p2, const Vector3D& p3, Triangle3D* t, Material* material) {
+        this->material = material;
+
+        if (t->hasUV){
+            this->p1UV = t->p1UV;
+            this->p2UV = t->p2UV;
+            this->p3UV = t->p3UV;
+
+            this->hasUV = true;
+        }
+
+        averageDepth = (p1.Z + p2.Z + p3.Z) / 3.0f;
+
+        p1X = p1.X;
+        p1Y = p1.Y;
+        p2X = p2.X;
+        p2Y = p2.Y;
+        p3X = p3.X;
+        p3Y = p3.Y;
+
+        v0X = p2X - p1X;
+        v0Y = p2Y - p1Y;
+        v1X = p3X - p1X;
+        v1Y = p3Y - p1Y;
+
+        const float det = (v0X * v1Y - v1X * v0Y);
+        if (fabsf(det) <= 1e-8f) {
+            valid = false;
+            denominator = 0.0f;
+        } else {
+            denominator = 1.0f / det;
+        }
+
+        normal = t->Normal();
+
+        t3p1 = t->p1;
+        t3p2 = t->p2;
+        t3p3 = t->p3;
+    }
 
     Vector2D GetP1(){
         return Vector2D(p1X, p1Y);
@@ -167,6 +302,10 @@ public:
     }
 
     inline bool DidIntersect(float x, float y, float& u, float& v, float& w) {
+        if (!valid) {
+            return false;
+        }
+
         const float v2lX = x - p1X;
         const float v2lY = y - p1Y;
 

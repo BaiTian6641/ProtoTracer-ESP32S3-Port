@@ -3,6 +3,10 @@
 #include "IPixelGroup.h"
 #include <esp_heap_caps.h>
 
+#ifndef RENDER_PREFER_PSRAM_BUFFERS
+#define RENDER_PREFER_PSRAM_BUFFERS 1
+#endif
+
 // Define a sentinel value to indicate no neighbor exists.
 #define NO_NEIGHBOR (static_cast<unsigned int>(-1))
 
@@ -25,6 +29,13 @@ private:
 
     Vector2D* rectCoords = nullptr; // precomputed coordinates for rectangular layouts
     bool rectCoordsBuilt = false;
+    bool rectCoordsHeapCapsOwned = false;
+    bool pixelColorsHeapCapsOwned = false;
+    bool pixelBufferHeapCapsOwned = false;
+    bool upHeapCapsOwned = false;
+    bool downHeapCapsOwned = false;
+    bool leftHeapCapsOwned = false;
+    bool rightHeapCapsOwned = false;
 
     // --- REMOVED: The redundant boolean arrays are gone ---
     // bool upExists[pixelCount]; ... etc.
@@ -37,27 +48,138 @@ private:
 
     //Allocate all array on external PSRAM
     void AllocateMemory() {
-        // Try to keep hot color buffers in internal RAM for steadier bandwidth; fall back to PSRAM/new on failure.
-        pixelColors = static_cast<ProtoRGBColor*>(heap_caps_malloc(pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
-        pixelBuffer = static_cast<ProtoRGBColor*>(heap_caps_malloc(pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
-        if (!pixelColors) pixelColors = new ProtoRGBColor[pixelCount];
-        if (!pixelBuffer) pixelBuffer = new ProtoRGBColor[pixelCount];
+#if RENDER_PREFER_PSRAM_BUFFERS
+        pixelColors = static_cast<ProtoRGBColor*>(heap_caps_aligned_alloc(16, pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!pixelColors) {
+            pixelColors = static_cast<ProtoRGBColor*>(heap_caps_malloc(pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        }
+        if (!pixelColors) {
+            pixelColors = static_cast<ProtoRGBColor*>(heap_caps_aligned_alloc(16, pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        }
+        if (!pixelColors) {
+            pixelColors = static_cast<ProtoRGBColor*>(heap_caps_malloc(pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        }
 
-        up = new unsigned int[pixelCount];
-        down = new unsigned int[pixelCount];
-        left = new unsigned int[pixelCount];
-        right = new unsigned int[pixelCount];
+        pixelBuffer = static_cast<ProtoRGBColor*>(heap_caps_aligned_alloc(16, pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!pixelBuffer) {
+            pixelBuffer = static_cast<ProtoRGBColor*>(heap_caps_malloc(pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        }
+        if (!pixelBuffer) {
+            pixelBuffer = static_cast<ProtoRGBColor*>(heap_caps_aligned_alloc(16, pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        }
+        if (!pixelBuffer) {
+            pixelBuffer = static_cast<ProtoRGBColor*>(heap_caps_malloc(pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        }
+#else
+        // Keep hot color buffers in internal RAM for steadier bandwidth; fall back to PSRAM/new on failure.
+        pixelColors = static_cast<ProtoRGBColor*>(heap_caps_aligned_alloc(16, pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        if (!pixelColors) {
+            pixelColors = static_cast<ProtoRGBColor*>(heap_caps_malloc(pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        }
+
+        pixelBuffer = static_cast<ProtoRGBColor*>(heap_caps_aligned_alloc(16, pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        if (!pixelBuffer) {
+            pixelBuffer = static_cast<ProtoRGBColor*>(heap_caps_malloc(pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        }
+#endif
+
+        pixelColorsHeapCapsOwned = (pixelColors != nullptr);
+        pixelBufferHeapCapsOwned = (pixelBuffer != nullptr);
+        if (!pixelColors) {
+            pixelColors = new ProtoRGBColor[pixelCount];
+            pixelColorsHeapCapsOwned = false;
+        }
+        if (!pixelBuffer) {
+            pixelBuffer = new ProtoRGBColor[pixelCount];
+            pixelBufferHeapCapsOwned = false;
+        }
+
+        up = static_cast<unsigned int*>(heap_caps_malloc(pixelCount * sizeof(unsigned int), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        down = static_cast<unsigned int*>(heap_caps_malloc(pixelCount * sizeof(unsigned int), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        left = static_cast<unsigned int*>(heap_caps_malloc(pixelCount * sizeof(unsigned int), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        right = static_cast<unsigned int*>(heap_caps_malloc(pixelCount * sizeof(unsigned int), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+
+        if (!up) up = static_cast<unsigned int*>(heap_caps_malloc(pixelCount * sizeof(unsigned int), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        if (!down) down = static_cast<unsigned int*>(heap_caps_malloc(pixelCount * sizeof(unsigned int), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        if (!left) left = static_cast<unsigned int*>(heap_caps_malloc(pixelCount * sizeof(unsigned int), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        if (!right) right = static_cast<unsigned int*>(heap_caps_malloc(pixelCount * sizeof(unsigned int), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+
+        upHeapCapsOwned = (up != nullptr);
+        downHeapCapsOwned = (down != nullptr);
+        leftHeapCapsOwned = (left != nullptr);
+        rightHeapCapsOwned = (right != nullptr);
+
+        if (!up) {
+            up = new unsigned int[pixelCount];
+            upHeapCapsOwned = false;
+        }
+        if (!down) {
+            down = new unsigned int[pixelCount];
+            downHeapCapsOwned = false;
+        }
+        if (!left) {
+            left = new unsigned int[pixelCount];
+            leftHeapCapsOwned = false;
+        }
+        if (!right) {
+            right = new unsigned int[pixelCount];
+            rightHeapCapsOwned = false;
+        }
     }
 
     //Deallocate those arrays
     void DeallocateMemory() {
-        heap_caps_free(pixelColors);
-        heap_caps_free(pixelBuffer);
-        delete[] up;
-        delete[] down;
-        delete[] left;
-        delete[] right;
-        delete[] rectCoords;
+        if (pixelColors) {
+            if (pixelColorsHeapCapsOwned) {
+                heap_caps_free(pixelColors);
+            } else {
+                delete[] pixelColors;
+            }
+        }
+
+        if (pixelBuffer) {
+            if (pixelBufferHeapCapsOwned) {
+                heap_caps_free(pixelBuffer);
+            } else {
+                delete[] pixelBuffer;
+            }
+        }
+
+        if (up) {
+            if (upHeapCapsOwned) {
+                heap_caps_free(up);
+            } else {
+                delete[] up;
+            }
+        }
+        if (down) {
+            if (downHeapCapsOwned) {
+                heap_caps_free(down);
+            } else {
+                delete[] down;
+            }
+        }
+        if (left) {
+            if (leftHeapCapsOwned) {
+                heap_caps_free(left);
+            } else {
+                delete[] left;
+            }
+        }
+        if (right) {
+            if (rightHeapCapsOwned) {
+                heap_caps_free(right);
+            } else {
+                delete[] right;
+            }
+        }
+        if (rectCoords) {
+            if (rectCoordsHeapCapsOwned) {
+                heap_caps_free(rectCoords);
+            } else {
+                delete[] rectCoords;
+            }
+        }
     }
 
 public:
@@ -71,7 +193,19 @@ public:
 
         isRectangular = true;
 
-        rectCoords = new Vector2D[pixelCount];
+        rectCoords = static_cast<Vector2D*>(heap_caps_aligned_alloc(16, pixelCount * sizeof(Vector2D), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!rectCoords) {
+            rectCoords = static_cast<Vector2D*>(heap_caps_malloc(pixelCount * sizeof(Vector2D), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        }
+        if (!rectCoords) {
+            rectCoords = static_cast<Vector2D*>(heap_caps_aligned_alloc(16, pixelCount * sizeof(Vector2D), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        }
+        if (!rectCoords) {
+            rectCoords = new Vector2D[pixelCount];
+            rectCoordsHeapCapsOwned = false;
+        } else {
+            rectCoordsHeapCapsOwned = true;
+        }
 
         bounds.UpdateBounds(position - (size / 2.0f));
         bounds.UpdateBounds(position + (size / 2.0f));
@@ -404,6 +538,18 @@ public:
 
     BoundingBox2D& GetBounds() {
         return bounds;
+    }
+
+    const Vector2D* GetCoordinateArray() const {
+        if (isRectangular) {
+            return rectCoordsBuilt ? rectCoords : nullptr;
+        }
+
+        return pixelPositions;
+    }
+
+    bool IsCoordinateArrayReversed() const {
+        return !isRectangular && direction == MAXTOZERO;
     }
 
     // ... ListPixelNeighbors needs a small update to print the sentinel ...
