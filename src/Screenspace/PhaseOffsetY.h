@@ -11,6 +11,9 @@ private:
 public:
     PhaseOffsetY(uint8_t pixels) : pixels(pixels){}
 
+    EffectType GetEffectType() const override { return EffectType::PhaseOffsetY; }
+    uint8_t GetPixels() const { return pixels; }
+
     void ApplyEffect(IPixelGroup* pixelGroup){
         ProtoRGBColor* pixelColors = pixelGroup->GetColors();
 

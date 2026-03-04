@@ -13,9 +13,13 @@ public:
         this->featherStrength = strength;
     }
 
+    EffectType GetEffectType() const override { return EffectType::EdgeFeather; }
+
     void SetFeatherStrength(float strength) {
         this->featherStrength = strength;
     }
+
+    float GetFeatherStrength() const { return featherStrength; }
 
     void ApplyEffect(IPixelGroup* pixelGroup) override {
         unsigned int pixelCount = pixelGroup->GetPixelCount();

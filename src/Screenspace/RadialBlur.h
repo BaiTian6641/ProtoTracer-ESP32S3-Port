@@ -10,6 +10,9 @@ private:
 public:
     RadialBlur(uint8_t pixels) : pixels(pixels){}
 
+    EffectType GetEffectType() const override { return EffectType::RadialBlur; }
+    uint8_t GetPixels() const { return pixels; }
+
     void ApplyEffect(IPixelGroup* pixelGroup){
         unsigned int pixelCount = pixelGroup->GetPixelCount();
         ProtoRGBColor* pixelColors = pixelGroup->GetColors();

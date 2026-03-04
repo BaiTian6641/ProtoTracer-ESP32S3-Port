@@ -9,6 +9,9 @@ private:
 public:
     HorizontalBlur(uint8_t pixels) : pixels(pixels){}
 
+    EffectType GetEffectType() const override { return EffectType::HorizontalBlur; }
+    uint8_t GetPixels() const { return pixels; }
+
     void ApplyEffect(IPixelGroup* pixelGroup) override {
         ProtoRGBColor* pixelColors = pixelGroup->GetColors();
         ProtoRGBColor* colorBuffer = pixelGroup->GetColorBuffer();

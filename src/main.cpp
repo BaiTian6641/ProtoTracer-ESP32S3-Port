@@ -1,6 +1,10 @@
-// Select target controller via build flag: -DTASESP32S3 or -DTASESP32P4.
-// Default to ESP32-S3 when none specified.
-#if !defined(TASESP32S3) && !defined(TASESP32P4)
+// Select target controller via build flag: -DTASESP32S3, -DTASESP32S3_GPU, or -DTASESP32P4.
+// Default to ESP32-S3 (local HUB75) when none specified.
+#if !defined(TASESP32S3) && !defined(TASESP32S3_GPU) && !defined(TASESP32P4)
+#define TASESP32S3
+#endif
+// TASESP32S3_GPU implies TASESP32S3 for shared startup code (WiFi, OTA, display)
+#if defined(TASESP32S3_GPU) && !defined(TASESP32S3)
 #define TASESP32S3
 #endif
 #define ELEGANTOTA_USE_ASYNC_WEBSERVER 1
@@ -20,7 +24,11 @@ uint8_t maxAccentBrightness = 100;
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
 #if defined(TASESP32S3)
+#if defined(TASESP32S3_GPU)
+#include "Controllers/TasESP32S3KitV1_GPU.h"
+#else
 #include "Controllers/TasESP32S3KitV1.h"
+#endif
 #elif defined(TASESP32P4)
 #include "Controllers/TasESP32P4KitV0.h"
 #endif
@@ -79,7 +87,7 @@ constexpr bool kVerboseStartup = true;
 constexpr bool kVerboseStartup = false;
 #endif
 
-#ifdef TASESP32S3
+#if defined(TASESP32S3) && !defined(TASESP32S3_GPU)
 extern VirtualMatrixPanel *virtualDisp;
 #endif
 
@@ -88,7 +96,11 @@ AsyncWebServer server(80);
 // Controller selection per target
 #if defined(TASESP32S3)
 M5UnitGLASS2 display = M5UnitGLASS2(41, 42, 400000); // SDA, SCL, FREQ
+#if defined(TASESP32S3_GPU)
+TasESP32S3KitV1_GPU controller = TasESP32S3KitV1_GPU(maxBrightness);
+#else
 TasESP32S3KitV1 controller = TasESP32S3KitV1(maxBrightness);
+#endif
 Adafruit_NeoPixel nowpixels(1, 45, NEO_GRB + NEO_KHZ800);
 #elif defined(TASESP32P4)
 M5UnitGLASS2 display = M5UnitGLASS2(47, 48, 400000); // SDA, SCL, FREQ
@@ -314,7 +326,7 @@ void setup()
   if (digitalRead(OTA_BTN) == LOW)
   {
     controller.Initialize();
-#ifdef TASESP32S3
+#if defined(TASESP32S3) && !defined(TASESP32S3_GPU)
     virtualDisp->clearScreen();
     virtualDisp->fillScreenRGB888(255, 255, 255);
     qrcode_initText(&qrcode, qrcodeData, 3, 0, userConfig.ble_rx_uuid.c_str());
@@ -348,7 +360,7 @@ void setup()
     display.display();
 #endif
     Serial.println("");
-    #ifdef TASESP32S3
+    #if defined(TASESP32S3) && !defined(TASESP32S3_GPU)
     for (uint8_t y = 0; y < qrcode.size; y++)
     {
       for (uint8_t x = 0; x < qrcode.size; x++)
@@ -473,12 +485,15 @@ void loop()
 #ifdef TASESP32S3
   if (digitalRead(OTA_BTN) == LOW)
   {
+#if !defined(TASESP32S3_GPU)
     virtualDisp->clearScreen();
     virtualDisp->fillScreenRGB888(255, 255, 255);
     qrcode_initText(&qrcode, qrcodeData, 3, 0, userConfig.ble_rx_uuid.c_str());
+#endif
     WiFi.mode(WIFI_AP);
     WiFi.softAP(userConfig.ota_ssid.c_str(), userConfig.ota_password.c_str());
     Serial.println("");
+#if !defined(TASESP32S3_GPU)
     for (uint8_t y = 0; y < qrcode.size; y++)
     {
       for (uint8_t x = 0; x < qrcode.size; x++)
@@ -489,6 +504,7 @@ void loop()
                                      qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_b);
       }
     }
+#endif
     delay(15000);
   }
   // controller.SetAccentBrightness(animation.GetAccentBrightness() * 25 + 5);

@@ -13,9 +13,13 @@ public:
         this->smoothing = smoothing;
     }
 
+    EffectType GetEffectType() const override { return EffectType::AntiAliasing; }
+
     void SetSmoothing(float smoothing) {
         this->smoothing = smoothing;
     }
+
+    float GetSmoothing() const { return smoothing; }
 
     void ApplyEffect(IPixelGroup* pixelGroup) override {
         if (smoothing <= 0.001f) return;
