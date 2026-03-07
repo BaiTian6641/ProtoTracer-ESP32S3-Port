@@ -14,7 +14,8 @@
  *   cfg.spiDataPins = {...};
  *   cfg.spiClkPin   = LCD_CLK;
  *   cfg.spiCsPin    = LCD_CS;
- *   cfg.rdyPin      = LCD_RDY;
+ *   cfg.dirPin      = LCD_DIR;
+ *   cfg.irqPin      = GPU_IRQ;
  *   cfg.i2cSdaPin   = GPU_SDA;
  *   cfg.i2cSclPin   = GPU_SCL;
  *

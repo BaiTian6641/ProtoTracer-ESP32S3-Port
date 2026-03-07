@@ -72,9 +72,12 @@ extern M5UnitGLASS2 display;
 #define GPU_SPI_CLK_MHZ 80
 #endif
 
-// ─── Flow Control Pin ───────────────────────────────────────────────────────
-#ifndef GPU_RDY_PIN
-#define GPU_RDY_PIN 12
+// ─── Bus Direction & Notification Pins ───────────────────────────────────────────
+#ifndef GPU_DIR_PIN
+#define GPU_DIR_PIN 10
+#endif
+#ifndef GPU_IRQ_PIN
+#define GPU_IRQ_PIN 13
 #endif
 
 // ─── I2C Control Bus ────────────────────────────────────────────────────────
@@ -136,13 +139,14 @@ private:
         cfg.spiClkPin      = GPU_SPI_CLK;
         cfg.spiCsPin       = GPU_SPI_CS;
         cfg.spiClockMHz    = GPU_SPI_CLK_MHZ;
-        cfg.rdyPin         = GPU_RDY_PIN;
+        cfg.dirPin         = GPU_DIR_PIN;
+        cfg.irqPin         = GPU_IRQ_PIN;
         cfg.i2cSdaPin      = GPU_I2C_SDA;
         cfg.i2cSclPin      = GPU_I2C_SCL;
         cfg.i2cAddress     = GPU_I2C_ADDR;
         cfg.commandBufferSize = GPU_CMD_BUFFER_SIZE;
         cfg.i2cPort        = 0;   // Wire (shared with M5Glass2 if compatible)
-        cfg.rdyTimeoutMs   = 5;
+        cfg.dirTurnaroundCycles = 2;
         return cfg;
     }
 

@@ -16,9 +16,9 @@ Phase 1 targets the **RP2350** as the concrete GPU implementation:
 | SRAM | 520 KB tightly-coupled (single-cycle access) |
 | FPU | Single-precision hardware FPU per core |
 | Display output | PIO-driven HUB75 (zero CPU overhead) |
-| Data ingress | PIO-driven Octal SPI receiver (8-bit parallel) |
-| Config bus | Hardware I2C slave at 0x3C |
-| Flow control | GPIO RDY pin |
+| Data bus | PIO-driven bidirectional Octal SPI (8-bit parallel, half-duplex) |
+| Management bus | Hardware I2C slave at 0x3C — low-bandwidth control plane (device ID, status, config) |
+| Flow control | GPIO DIR pin (bidirectional bus direction) |
 
 ### 1.2 Architecture-Agnostic API
 The ProtoGL wire protocol is **architecture-agnostic**. Phase 2 can retarget other GPU implementations without host-side changes:
@@ -31,8 +31,8 @@ The ProtoGL wire protocol is **architecture-agnostic**. Phase 2 can retarget oth
 | FPGA (soft-core) | Lattice/Xilinx | Block RAM | Optional | N/A | Phase 2 |
 | ARM Cortex-M7 | STM32H7, i.MX RT | 1 MB+ | Yes (DP) | Yes | Phase 2 |
 
-The GPU reports its architecture and capabilities to the host via the I2C capability query
-(register 0x09, `PglCapabilityResponse`).
+The GPU reports its architecture and capabilities to the host via the I2C management bus
+capability query (register 0x09) or SPI read command (0xE2), returning a `PglCapabilityResponse`.
 
 ## 2. Memory Economics (Phase 1: RP2350, 520 KB SRAM)
 To render at 60+ FPS on a typical 128x64 display, a GPU needs sufficient on-chip SRAM:
@@ -102,7 +102,7 @@ Since Raycasting/Rasterization on a pixel-by-pixel basis is an *embarrassingly p
 On the RP2350, hardware PIO blocks automatically consume the finalized framebuffer and drive the HUB75 pins with zero CPU overhead. The RP2350 has 3 PIO blocks × 4 state machines = 12 total; HUB75 uses 1 SM + 2 DMA channels, Octal SPI uses 1 SM + 1 DMA channel, leaving ample headroom.
 
 Phase 2 GPU implementations may use:
-- **SPI LCD** for small displays
+- **I2C OLED** for small status displays
 - **Custom I/O logic** on FPGA
 - **DMA-to-GPIO** on RISC-V with dedicated peripherals
 
@@ -285,9 +285,10 @@ When implementing ProtoGL on a RISC-V core in Phase 2 (RP2350 Hazard3 or custom)
    screen-space split strategy. Replace RP2350 Multicore FIFO with the available IPC
    mechanism (CLINT software interrupts, shared-memory flags, or hardware semaphores).
 
-4. **Capability reporting:** The GPU firmware should respond to I2C register 0x09 with
-   a `PglCapabilityResponse` struct reporting `PGL_ARCH_RISCV_HAZARD3` (0x02),
-   `PGL_ARCH_RISCV_CUSTOM` (0x03), or `PGL_ARCH_RISCV_RV32IMF` (0x21) as appropriate.
+4. **Capability reporting:** The GPU firmware should respond to SPI read command `0xE2`
+   (or I2C register 0x09 as fallback) with a `PglCapabilityResponse` struct reporting
+   `PGL_ARCH_RISCV_HAZARD3` (0x02), `PGL_ARCH_RISCV_CUSTOM` (0x03), or
+   `PGL_ARCH_RISCV_RV32IMF` (0x21) as appropriate.
 
 ## 8. Tiered Memory Architecture (M8)
 
@@ -307,35 +308,48 @@ Z-buffer, QuadTree) remains permanently in SRAM.
 | Tier | Hardware | Interface | Access Model | Bandwidth | Latency |
 |---|---|---|---|---|---|
 | **0 — SRAM** | RP2350 internal (520 KB) | Direct | Single-cycle load/store | >1 GB/s | 1 cycle (~6.7 ns @ 150 MHz) |
-| **1 — PIO2 External** | OPI PSRAM (8 MB) *or* QSPI MRAM (128–256 KB) via PIO2 | PIO + DMA | Indirect: DMA into SRAM cache arena | ~150 MB/s (OPI) / ~52 MB/s (MRAM) | ~5 cycles + DMA setup |
-| **2 — QSPI XIP** | Auto-detected on QMI CS1 (MRAM 128 KB or PSRAM 8 MB) | QMI hardware | Memory-mapped (XIP) | ~52 MB/s (MRAM) / ~66 MB/s (PSRAM@133) | ~2 cycles (HW cache hit), 100–200 ns (miss) |
+| **1 — QSPI-A** | PIO2 Channel A (up to 2 chips via CS0/CS1) | PIO2 SM0+SM1, DMA | Indirect: DMA into SRAM cache arena | ~52 MB/s per chip | ~5 cycles + DMA setup |
+| **2 — QSPI-B** | PIO2 Channel B (up to 2 chips via CS0/CS1) | PIO2 SM2+SM3, DMA | Indirect: DMA into SRAM cache arena | ~52 MB/s per chip | ~5 cycles + DMA setup |
 
-#### Why Two External Tiers?
+> **RP2350A vs RP2350B:** The RP2350A (QFN-60, 30 GPIO) does **not** have enough
+> pins for external VRAM and operates in SRAM-only mode (Tier 0 only). The RP2350B
+> (QFN-80, 48 GPIO) provides GPIO 34–47 for external VRAM, supporting up to 2×2 = 4
+> external RAM chips.
 
-- **PIO2 External (Tier 1)** uses the last free PIO block with explicit DMA prefetch.
-  The firmware **controls exactly when and what** gets loaded — ideal for pipeline-critical
-  but infrequently-accessed data (large textures, cold meshes). Three operating modes
-  (selected at compile time via `PIO2_MEM_MODE` in `gpu_config.h`):
-  - **OPI PSRAM (APS6408L):** 8 MB, ~150 MB/s burst, 8-bit bus (GPIO 34–41).
-    Highest capacity and bandwidth, but row-buffer miss penalty on random access.
-  - **Dual QSPI MRAM (2× MR10Q010):** 256 KB total, ~52 MB/s per chip, 4-bit bus (GPIO 34–37).
-    Two chips with separate CS (GPIO 11 + 38). Address bit 17 selects chip.
-    No random-access penalty, non-volatile, unlimited write endurance.
-  - **Single QSPI MRAM (1× MR10Q010):** 128 KB, ~52 MB/s, 4-bit bus.
-    Same benefits as dual mode but with one chip.
-  All modes require data staging in the 64 KB SRAM cache arena before the rasterizer can read it.
+#### Dual-Channel QSPI Architecture
 
-- **QSPI XIP (Tier 2)** provides transparent hardware caching via the QMI controller.
-  Code reads from XIP pointers as if they were SRAM — the hardware fetches and caches
-  automatically. At boot, the firmware **auto-detects** the installed chip on QMI CS1:
-  - **MRAM (MR10Q010):** 128 KB, non-volatile, no random-access penalty, ~52 MB/s.
-    Ideal for LUTs, font atlases, material params, small textures. Uniform random-access
-    performance → tier weights are aggressive (LUTs/materials demote from SRAM readily).
-  - **PSRAM (APS6408L):** 8 MB, volatile, row-buffer miss penalty, ~66 MB/s @ 133 MHz.
-    Much higher capacity but random reads suffer. Tier weights are conservative — keep
-    random-access data in SRAM, demote only sequential/burst-friendly resources to QSPI.
-  The `MemTierManager::BaseWeight()` function uses dual weight tables selected at boot
-  based on the detected chip's `hasRandomAccessPenalty` flag. See §8.3.
+Both external tiers use PIO2-driven QSPI (4-bit data bus). Each channel has its own
+clock, data lines, and **two chip selects** — allowing up to 2 chips per channel:
+
+- **QSPI Channel A (Tier 1):** PIO2 SM0 (write/cmd) + SM1 (read), 4 data pins +
+  CLK + CS0 + CS1 = 7 GPIO. Up to 2 RAM chips. The firmware selects the active chip
+  via the CS lines (only one CS asserted at a time).
+- **QSPI Channel B (Tier 2):** PIO2 SM2 (write/cmd) + SM3 (read), 4 data pins +
+  CLK + CS0 + CS1 = 7 GPIO. Up to 2 RAM chips. Independent of Channel A — both
+  channels can DMA concurrently.
+
+Each chip slot is auto-detected at boot via RDID commands. Supported chip types:
+- **MRAM (MR10Q010):** 128 KB, non-volatile, no random-access penalty, ~52 MB/s,
+  unlimited write endurance. Ideal for persistent resources, LUTs, material params.
+- **PSRAM (APS6408L):** 8 MB, volatile, row-buffer miss penalty, ~52 MB/s.
+  Higher capacity, best for large textures and cold meshes (sequential access).
+- **Mixed configurations** are supported: e.g., Channel A = 2× PSRAM (16 MB total),
+  Channel B = 2× MRAM (256 KB persistent). The tier manager detects each chip
+  independently and applies chip-aware weight tables per channel.
+
+All external data requires staging in the 64 KB SRAM cache arena before the rasterizer
+can read it. Both channels use the same DMA prefetch pipeline (§8.5).
+
+#### Why Two Channels Instead of One?
+
+- **Concurrent DMA:** Two independent PIO state machine pairs allow overlapping
+  read/write operations — Channel A can DMA-prefetch textures while Channel B
+  writes back dirty cache lines.
+- **Chip-type separation:** MRAM and PSRAM have different optimal use cases.
+  Keeping them on separate channels avoids bus contention and allows the tier
+  manager to route resources by access pattern (random → MRAM, sequential → PSRAM).
+- **Capacity scaling:** Each channel independently supports 1–2 chips. A minimal
+  board can populate only Channel A with 1 chip; a full board has 4 chips.
 
 ### 8.3 Placement Policy: Weight + Score
 
@@ -362,42 +376,77 @@ Each resource registered with the memory tier system has two metrics:
 | Priority Range | Tier | Rationale |
 |---|---|---|
 | ≥ SRAM threshold | **Tier 0 (SRAM)** | Hot + critical: direct single-cycle access |
-| ≥ PIO2 threshold | **Tier 1 (PIO2)** | Critical but infrequent: DMA prefetch |
-| Below PIO2 threshold | **Tier 2 (QSPI)** | Frequent-read or cold: HW cache |
+| ≥ QSPI-A threshold | **Tier 1 (QSPI-A)** | Critical but infrequent: DMA prefetch |
+| Below QSPI-A threshold | **Tier 2 (QSPI-B)** | Cold / persistent: DMA prefetch |
 
 Special cases:
 - **Pinned resources** (framebuffer, Z-buffer, QuadTree) are **always Tier 0** regardless
   of score. They have `weight = 255` and `pinned = true`.
 - **Promotion:** If a Tier 1/2 resource is accessed heavily for `promotionHysteresis`
-  consecutive frames, it is promoted to SRAM (DMA copy from OPI, or memcpy from QSPI XIP).
+  consecutive frames, it is promoted to SRAM (DMA copy from the external channel).
 - **Demotion:** If a Tier 0 non-pinned resource has `framesSinceAccess ≥ demotionThreshold`,
   it is demoted to the appropriate lower tier (write-back if dirty, then free SRAM slot).
 
 #### Per-Resource-Class Base Weights (Chip-Aware)
 
-Base weights are selected at boot based on the detected QSPI CS1 chip. When MRAM is
-detected (`hasRandomAccessPenalty = false`), random-access resources get lower weights
-so they demote to QSPI more readily — MRAM's uniform latency makes this safe. When
-PSRAM is detected (or no CS1 chip), conservative weights keep random-access data in SRAM.
+Base weights are selected at boot based on the detected chip types per channel. When
+MRAM is detected on a channel (`hasRandomAccessPenalty = false`), random-access resources
+get lower weights so they demote to that channel more readily — MRAM's uniform latency
+makes this safe. When only PSRAM is detected, conservative weights keep random-access
+data in SRAM. When both channel types differ (e.g., PSRAM on QSPI-A, MRAM on QSPI-B),
+the tier manager routes resources to the channel best suited to their access pattern.
 
 | Resource Class | PSRAM Weight | MRAM Weight | Default Tier | Notes |
 |---|---|---|---|---|
 | FRAMEBUFFER | 255 (pinned) | 255 (pinned) | SRAM | Never leaves SRAM |
 | Z_BUFFER | 255 (pinned) | 255 (pinned) | SRAM | Never leaves SRAM |
 | QUADTREE | 255 (pinned) | 255 (pinned) | SRAM | Never leaves SRAM |
-| VERTEX_DATA | 200 | 200 | SRAM → PIO2 | Sequential access — same either way |
-| INDEX_DATA | 200 | 200 | SRAM → PIO2 | Sequential access — same either way |
-| TEXTURE | 128 | **100** | SRAM → QSPI/PIO2 | ↓ MRAM handles texel sampling with uniform latency |
-| MATERIAL_PARAM | 160 | **80** | SRAM → QSPI | ↓ Random param reads are MRAM's sweet spot |
-| LAYOUT_COORDS | 100 | **50** | SRAM / QSPI | ↓ Per-pixel read pattern suits MRAM |
-| UV_DATA | 140 | 140 | SRAM / PIO2 | Tightly coupled to vertex pipeline — unchanged |
-| LOOKUP_TABLE | 60 | **30** | QSPI XIP | ↓ Perfect MRAM fit: single-cycle random reads |
-| FONT_ATLAS | 40 | **20** | QSPI XIP | ↓ Persistent in MRAM, read-only |
-| COLD_MESH | 20 | **10** | QSPI / PIO2 | ↓ MRAM persistence eliminates reload cost |
+| VERTEX_DATA | 200 | 200 | SRAM → QSPI-A | Sequential access — same either way |
+| INDEX_DATA | 200 | 200 | SRAM → QSPI-A | Sequential access — same either way |
+| TEXTURE | 128 | **100** | SRAM → QSPI-A/B | ↓ MRAM handles texel sampling with uniform latency |
+| IMAGE_SEQUENCE_ATLAS | 30 | **15** | QSPI-A / QSPI-B | Large (KB–MB); only active frame cached in SRAM arena |
+| MATERIAL_PARAM | 160 | **80** | SRAM → MRAM ch. | ↓ Random param reads are MRAM's sweet spot |
+| LAYOUT_COORDS | 100 | **50** | SRAM / MRAM ch. | ↓ Per-pixel read pattern suits MRAM |
+| UV_DATA | 140 | 140 | SRAM / QSPI-A | Tightly coupled to vertex pipeline — unchanged |
+| LOOKUP_TABLE | 60 | **30** | MRAM ch. | ↓ Perfect MRAM fit: uniform random reads |
+| FONT_ATLAS | 40 | **20** | MRAM ch. | ↓ Persistent in MRAM, read-only |
+| SHADER_PROGRAM | 80 | **40** | MRAM ch. | Bytecode is read-only; DMA-cached |
+| COLD_MESH | 20 | **10** | QSPI-A / QSPI-B | ↓ MRAM persistence eliminates reload cost |
+
+#### Memory Placement Policy (Resource Categories)
+
+The tiering manager uses the weight table above for automatic placement, but the
+following **hard rules** take precedence regardless of weight scores:
+
+| Category | Policy | Rationale |
+|---|---|---|
+| **Color-based material params** (SimpleMaterial, NormalMaterial, DepthMaterial, GradientMaterial, LightMaterial, SimplexNoise, RainbowNoise, CombineMaterial, MaterialMask, MaterialAnimator) | **Always SRAM (Tier 0)** | 3–50 bytes per material. Read every pixel during rasterization — must be single-cycle. `MaterialAnimator` interpolates between two materials each frame and is equally small. |
+| **ImageMaterial / ImageSequenceMaterial params** | **Always SRAM (Tier 0)** | Only the parameter block (12–13 bytes) resides in SRAM. The backing texture / image-sequence atlas is a separate resource placed by the weight table. |
+| **Small textures** (≤ 4 KB) | **Prefer SRAM (Tier 0)** | Icons, small sprites, and simple textures fit comfortably in SRAM for single-cycle texel lookup. |
+| **Large textures** (> 4 KB) | **External VRAM (Tier 1/2)** | Hot cache lines promoted to SRAM cache arena via DMA on demand. |
+| **Image sequence atlases** | **External VRAM (Tier 1/2), never SRAM** | Atlases are typically tens of KB to several MB. Only the currently active frame (one frameWidth × frameHeight region) is DMA-fetched into the SRAM cache arena during rasterization. |
+| **Font atlases** | **External VRAM (prefer MRAM channel)** | Read-only after upload. DMA-cached on demand. Small fonts (< 2 KB) may stay in SRAM. |
+| **Shader program bytecode** | **External VRAM (prefer MRAM channel)** | Read-only instruction stream, DMA-cached. |
+
+> **Key design principle:** All materials — including animated materials like
+> `MaterialAnimator` that interpolate between two color-based materials each frame —
+> are **guaranteed to remain in SRAM**. This is because their parameter blocks never
+> exceed ~50 bytes and are accessed at per-pixel frequency during rasterization.
+> In contrast, **image sequence atlases** are explicitly excluded from SRAM residency
+> and must live in external VRAM, with only the active frame promoted to the cache arena.
+>
+> **Persistence principle:** Large resources placed in external VRAM follow the
+> persistence decision tree (§9.9): if the external VRAM is MRAM, the data is
+> inherently persistent across power cycles with no additional action. If the VRAM
+> is volatile PSRAM and the host wants the resource to survive reboot, the host sends
+> `CMD_PERSIST_RESOURCE` and the GPU asynchronously writes the data back to on-board
+> flash. On the next boot the GPU auto-restores from flash, so the host can skip
+> re-uploading. This is critical for large textures and image sequence atlases that
+> take many frames to upload over SPI.
 
 ### 8.4 SRAM Cache Arena
 
-When PIO2 external data is needed by the rasterizer, it cannot be accessed directly — the CPU
+When external QSPI data is needed by the rasterizer, it cannot be accessed directly — the CPU
 must read it through DMA into SRAM. The cache arena provides this staging area.
 
 ```
@@ -422,20 +471,20 @@ Cache properties:
 - **Line size:** 4 KB (configurable via `MEM_TIER_CACHE_LINE_SIZE`)
 - **Total lines:** 16 (64 KB / 4 KB)
 - **Eviction policy:** LRU (least recently used frame counter)
-- **Write-back:** Dirty lines are written back to PIO2 external memory before eviction
+- **Write-back:** Dirty lines are written back to external QSPI memory before eviction
 - **Locking:** Lines prefetched for the current draw list are locked until frame end
 
 ### 8.5 Prefetch Pipeline
 
 The key to avoiding rasterization stalls is **predictive prefetching**. The draw list is
 known after command parsing (before rasterization begins), so the tier manager scans it
-and pre-loads any PIO2-resident data needed this frame:
+and pre-loads any QSPI-resident data needed this frame:
 
 ```
     Frame N Timeline:
     ┌──────────┬──────────────────┬────────────────────────────────┐
     │ SPI RX   │ Parse commands   │ QuadTree rebuild (Core 0)     │
-    │          │ Scan draw list → │ DMA prefetch PIO2 → SRAM cache│
+    │          │ Scan draw list → │ DMA prefetch QSPI → SRAM cache│
     │          │                  │ ^^^^^^^^^^^^^^^^^              │
     │          │                  │ (zero-CPU DMA, overlapped)     │
     └──────────┴──────────────────┴────────────────────────────────┘
@@ -456,11 +505,11 @@ prefetched incrementally as the rasterizer processes each screen-space tile.
     │ PglEncoder  │──────────────→│ Command Parser                       │
     │ PglDevice   │               │    ↓                                  │
     │             │               │ Scene State (Tier 0 SRAM)            │
-    │             │   I2C 0x3C    │    ↓                                  │
+    │             │ Bidir OctalSPI│    ↓                                  │
     │             │←─────────────→│ MemTierManager                       │
     └─────────────┘               │    ├── Tier 0: SRAM (direct)         │
-                                  │    ├── Tier 1: PIO2 External ← DMA  │
-                                  │    └── Tier 2: QSPI CS1 ← XIP       │
+                                  │    ├── Tier 1: QSPI-A ← PIO2 DMA    │
+                                  │    └── Tier 2: QSPI-B ← PIO2 DMA    │
                                   │    ↓                                  │
                                   │ Rasterizer (dual-core)               │
                                   │    ↓                                  │
@@ -474,36 +523,33 @@ All memory tier features are **disabled by default**. Enable via config flags:
 
 | Config | Default | Description |
 |---|---|---|
-| `PIO2_MEM_MODE` | `NONE` | PIO2 mode: `OPI_PSRAM`, `DUAL_QSPI_MRAM`, `SINGLE_QSPI_MRAM`, or `NONE` |
-| `QSPI_CS1_ENABLED` | `false` | Enable QMI CS1 auto-detection (probes for MRAM or PSRAM) |
-| `MEM_TIER_SRAM_CACHE_BUDGET` | 65536 | SRAM cache arena size for PIO2 staging |
+| `QSPI_VRAM_MODE` | `NONE` | External VRAM mode: `NONE`, `SINGLE_CHANNEL` (Tier 1 only), or `DUAL_CHANNEL` (Tier 1 + Tier 2) |
+| `QSPI_A_CHIP_COUNT` | 0 | Number of chips on Channel A (0, 1, or 2) |
+| `QSPI_B_CHIP_COUNT` | 0 | Number of chips on Channel B (0, 1, or 2) |
+| `MEM_TIER_SRAM_CACHE_BUDGET` | 65536 | SRAM cache arena size for QSPI staging |
 | `MEM_TIER_CACHE_LINE_SIZE` | 4096 | Cache line granularity |
 | `MEM_TIER_ALPHA_WEIGHT` | 3 | Priority formula: weight coefficient |
 | `MEM_TIER_BETA_SCORE` | 1 | Priority formula: score coefficient |
 | `MEM_TIER_DEMOTION_THRESHOLD` | 30 | Frames before unused resource demotes |
 | `MEM_TIER_PROMOTION_HYSTERESIS` | 50 | Min priority to trigger promotion |
 
-When `PIO2_MEM_MODE` is `NONE` and `QSPI_CS1_ENABLED` is `false`, the tier manager
-is compiled out (or operates as a no-op passthrough to SRAM), incurring zero overhead.
+When `QSPI_VRAM_MODE` is `NONE`, the tier manager is compiled out (or operates as a
+no-op passthrough to SRAM), incurring zero overhead. This is the default for RP2350A boards.
 
 ### 8.8 Hardware Requirements
 
-| Feature | Required Package | Availability |
-|---|---|---|
-| Tier 2 (QSPI XIP) | Any RP2350 QFN-60/80 + MR10Q010 MRAM or APS6408L PSRAM on QMI CS1 | Custom ProtoGL GPU board (MRAM needs dual-supply 3.3V/1.8V) |
-| Tier 1 — OPI PSRAM | RP2350 QFN-80 + APS6408L (GPIO 34–41) | Custom board (8 data GPIOs needed) |
-| Tier 1 — Dual QSPI MRAM | Any RP2350 + 2× MR10Q010 (GPIO 34–37 + CS0/CS1) | Custom board (4 data + 2 CS GPIOs) |
-| Tier 1 — Single QSPI MRAM | Any RP2350 + 1× MR10Q010 (GPIO 34–37 + CS0) | Custom board (4 data + 1 CS GPIO) |
-| Both tiers | RP2350 QFN-80 + PIO2 memory + QMI CS1 memory | Custom ProtoGL GPU board |
+| Feature | Required Package | Pin Budget | Availability |
+|---|---|---|---|
+| SRAM-only (no external VRAM) | RP2350A (QFN-60) or RP2350B | 0 GPIO | All boards |
+| Tier 1 — QSPI-A (1 chip) | RP2350B (QFN-80) | 6 GPIO (4 data + CLK + CS0) | Custom ProtoGL GPU board |
+| Tier 1 — QSPI-A (2 chips) | RP2350B (QFN-80) | 7 GPIO (4 data + CLK + CS0 + CS1) | Custom board |
+| Tier 1 + 2 — QSPI-A + QSPI-B (up to 4 chips) | RP2350B (QFN-80) | 14 GPIO (2× channel) | Full ProtoGL GPU board |
 
 The system gracefully degrades:
-- **No external memory:** Full SRAM-only mode (Phase 1 default). Same as M1–M7.
-- **PIO2 OPI PSRAM only:** 8 MB for large textures and cold meshes with DMA prefetch.
-- **PIO2 Dual QSPI MRAM only:** 256 KB persistent storage with no random-access penalty. Non-volatile → survives reboot.
-- **PIO2 Single QSPI MRAM only:** 128 KB persistent storage. Simplest wiring.
-- **QSPI XIP MRAM only:** 128 KB read-through XIP for LUTs, fonts, material params. Aggressive tier weights.
-- **QSPI XIP PSRAM only:** 8 MB XIP with conservative tier weights.
-- **PIO2 + QSPI XIP:** Maximum flexibility. Tier manager distributes resources optimally across both external tiers.
+- **RP2350A (no external memory):** Full SRAM-only mode (Phase 1 default). Same as M1–M7.
+- **RP2350B, single channel (1–2 chips):** Tier 1 only. Tier manager routes overflow to QSPI-A.
+- **RP2350B, dual channel (2–4 chips):** Full 3-tier system. Tier manager distributes resources
+  optimally across both channels based on chip type (MRAM vs PSRAM) and access pattern.
 
 ---
 
@@ -535,20 +581,24 @@ The GPU Memory Access API extends ProtoGL with **7 new SPI commands (0x30–0x3F
 │                     │          │                                  │
 │  PglEncoder::       │ OctalSPI │  Command Parser                  │
 │   MemWrite(T1,addr) ├─────────►│  case PGL_CMD_MEM_WRITE:         │
-│   MemAlloc(T0,4K)   │  64-80M  │    → OpiPsramDriver::Write()     │
-│   MemReadRequest()   │  Host→GPU│    → QspiPsramDriver::Write()    │
-│   FramebufferCapture │          │    → memcpy() (SRAM)             │
+│   MemAlloc(T0,4K)   │  64-80M  │    → QspiVramDriver::Write(ChA)   │
+│   MemReadRequest()   │  Host→GPU│    → QspiVramDriver::Write(ChB)   │
+│   FramebufferCapture │  (TX)   │    → memcpy() (SRAM)             │
 │                     │          │                                  │
-│  PglDevice::        │   I2C    │  I2C Slave Handler               │
-│   ReadMemTierInfo() ◄─────────►│  REG 0x0C → PglMemTierInfoResp  │
-│   ReadMemData()     │ 100-400k │  REG 0x0E → staging buffer[32B] │
-│   ReadAllocResult() │  Bidir   │  REG 0x0F → PglMemAllocResult   │
+│  PglDevice::        │ OctalSPI │  SPI Read Handler (PIO1 SM1)     │
+│   QueryStatus()     ◄──────────│  SPI_READ_STATUS → 8B resp       │
+│   ReadMemData()     │  64-80M  │  SPI_READ_MEM_DATA → staging buf │
+│   ReadAllocResult() │  GPU→Host│  SPI_READ_ALLOC_RESULT → 7B resp │
+│   SmwReadMailbox()  │  (RX)   │  SPI_READ_SMW → SMW region       │
+│                     │          │                                  │
+│        DIR pin ─────┼──────────│→ GPIO 10: bus direction control   │
+│        IRQ pin ◄────┼──────────│─ GPIO 13: async notification     │
 └─────────────────────┘          └──────────────────────────────────┘
 ```
 
-**Key constraint:** SPI is unidirectional (host → GPU). All data flowing *back* to the
-host must use the I2C bus, which is limited to 100–400 kHz (~12–50 KB/s). This makes
-readback suitable for **debug/profiling/screenshots** but not real-time streaming.
+**Key constraint:** The Octal SPI bus operates in half-duplex bidirectional mode.
+Host→GPU writes use the LCD_CAM peripheral; GPU→Host reads use SPI2 in Octal HD mode
+with a DIR pin turnaround. I2C is available as a fallback but is ~1000× slower.
 
 ### 9.3 SPI Command Reference
 
@@ -561,19 +611,19 @@ Write raw bytes to a specific GPU memory tier and address.
 
 | Field | Type | Offset | Description |
 |---|---|---|---|
-| tier | uint8_t | 0 | `PglMemTier` (0=SRAM, 1=OPI, 2=QSPI) |
+| tier | uint8_t | 0 | `PglMemTier` (0=SRAM, 1=QSPI-A, 2=QSPI-B) |
 | address | uint32_t | 1 | Byte offset within the tier's address space |
 | size | uint32_t | 5 | Number of data bytes that follow |
 | data[] | uint8_t[] | 9 | Raw bytes (variable length) |
 
 **Total wire size:** 3 (cmd hdr) + 9 (write hdr) + size (data)
 
-**Usage:** Bulk-upload textures to PIO2 external memory, write lookup tables to QSPI, fill custom
+**Usage:** Bulk-upload textures to QSPI external memory, write lookup tables, fill custom
 data regions in SRAM. For large transfers, the host can split across multiple frames.
 
 #### 9.3.2 CMD_MEM_READ_REQUEST (0x31)
 
-Request the GPU to stage a block of memory for I2C readback.
+Request the GPU to stage a block of memory for SPI readback (or I2C fallback).
 
 | Field | Type | Offset | Description |
 |---|---|---|---|
@@ -582,8 +632,8 @@ Request the GPU to stage a block of memory for I2C readback.
 | size | uint16_t | 5 | Bytes to stage (max 4096) |
 
 After processing, the GPU copies the requested range into its internal staging buffer.
-The host then reads the data via `PGL_REG_MEM_READ_DATA` (I2C register 0x0E) in 32-byte
-chunks. At 400 kHz I2C, reading 4096 bytes takes approximately 80 ms.
+The host reads the data via bidirectional Octal SPI (`SPI_READ_MEM_DATA`, 0xE4) at bus
+speed (~40 MB/s), or via I2C register 0x0E as fallback (~80 ms for 4096 bytes at 400 kHz).
 
 #### 9.3.3 CMD_MEM_SET_RESOURCE_TIER (0x32)
 
@@ -610,9 +660,9 @@ Allocate a region in a specific GPU memory tier.
 | size | uint32_t | 1 | Bytes to allocate |
 | tag | uint16_t | 5 | User-defined tag for debug/tracking |
 
-The allocation result is available via `PGL_REG_MEM_ALLOC_RESULT` (I2C register 0x0F).
-Returns a `PglMemHandle` that can be used with `CMD_MEM_WRITE`, `CMD_MEM_FREE`, and
-`CMD_MEM_COPY`.
+The allocation result is available via SPI read (`SPI_READ_ALLOC_RESULT`, 0xE5) or
+I2C register 0x0F as fallback. Returns a `PglMemHandle` that can be used with
+`CMD_MEM_WRITE`, `CMD_MEM_FREE`, and `CMD_MEM_COPY`.
 
 #### 9.3.5 CMD_MEM_FREE (0x34)
 
@@ -624,15 +674,16 @@ Free a previously allocated GPU memory region.
 
 #### 9.3.6 CMD_FRAMEBUFFER_CAPTURE (0x35)
 
-Snapshot the framebuffer for I2C readback.
+Snapshot the framebuffer for SPI readback (via SMW bulk staging).
 
 | Field | Type | Offset | Description |
 |---|---|---|---|
 | bufferSelect | uint8_t | 0 | 0=front (displayed), 1=back (in-progress) |
 | format | uint8_t | 1 | 0=RGB565 (native), 1=RGB888 (expanded) |
 
-After capture, the staging buffer contains the entire framebuffer. A 128×64 RGB565
-framebuffer (16,384 bytes) requires 512 I2C reads of 32 bytes each ≈ 0.33 s at 400 kHz.
+After capture, the staging buffer contains the entire framebuffer. Via bidirectional
+Octal SPI, a 128×64 RGB565 framebuffer (16,384 bytes) reads back in ~0.3 ms.
+(I2C fallback: 512 reads of 32 bytes each ≈ 0.33 s at 400 kHz.)
 
 #### 9.3.7 CMD_MEM_COPY (0x36)
 
@@ -647,8 +698,8 @@ GPU-internal copy between memory regions or tiers.
 | size | uint32_t | 10 | Bytes to copy |
 
 Executes entirely on-GPU. Same-tier SRAM copies use `memcpy`; cross-tier copies
-use DMA where available. Useful for promoting hot data from QSPI→SRAM or backing up
-SRAM resources to PSRAM.
+use DMA where available. Useful for promoting hot data from external VRAM→SRAM or
+backing up SRAM resources to external VRAM.
 
 ### 9.4 I2C Register Reference
 
@@ -665,15 +716,16 @@ SRAM resources to PSRAM.
 Offset  Size  Field               Description
 0       2     sramTotalKB         Total SRAM for GPU use
 2       2     sramFreeKB          Free SRAM
-4       2     opiTotalKB          PIO2 external memory total (0 if absent)
-6       2     opiFreeKB           PIO2 external memory free
-8       1     opiEnabled          1 if PIO2 driver active
-9       2     qspiTotalKB         QSPI MRAM total (0 if absent)
-11      2     qspiFreeKB          QSPI MRAM free
-13      1     qspiEnabled         1 if QSPI driver active
-14      2     cachedEntries       SRAM cache arena entries
-16      2     totalManagedAllocs  Total tracked allocations
-18      1     cacheHitRate        Rolling average 0-100%
+4       2     qspiATotalKB        QSPI Channel A total (0 if absent)
+6       2     qspiAFreeKB         QSPI Channel A free
+8       1     qspiAEnabled        1 if Channel A driver active
+9       1     qspiAChipCount      Number of chips on Channel A (0–2)
+10      2     qspiBTotalKB        QSPI Channel B total (0 if absent)
+12      2     qspiBFreeKB         QSPI Channel B free
+14      1     qspiBEnabled        1 if Channel B driver active
+15      1     qspiBChipCount      Number of chips on Channel B (0–2)
+16      2     cachedEntries       SRAM cache arena entries
+18      1     cacheHitRate        Rolling average 0–100%
 19      1     reserved            Padding
 ```
 
@@ -702,23 +754,23 @@ Offset  Size  Field     Description
 
 ### 9.5 Host-Side Usage Examples
 
-#### Upload Texture to PIO2 External Memory
+#### Upload Texture to QSPI External Memory
 
 ```cpp
-// 1. Allocate space in PIO2 external memory (enum covers OPI PSRAM / QSPI MRAM)
-encoder.MemAlloc(PGL_TIER_OPI_PSRAM, textureBytes, 0x0001);
+// 1. Allocate space in QSPI Channel A external memory
+encoder.MemAlloc(PGL_TIER_QSPI_A, textureBytes, 0x0001);
 // ... transfer frame, then read I2C for the result handle ...
 
 // 2. Write texture data in chunks across multiple frames
 for (uint32_t off = 0; off < textureBytes; off += CHUNK_SIZE) {
     uint32_t len = min(CHUNK_SIZE, textureBytes - off);
-    encoder.MemWrite(PGL_TIER_OPI_PSRAM, allocAddr + off,
+    encoder.MemWrite(PGL_TIER_QSPI_A, allocAddr + off,
                      textureData + off, len);
 }
 
-// 3. Pin the texture in PIO2 so tier manager doesn't demote it
+// 3. Pin the texture in QSPI-A so tier manager doesn't demote it
 encoder.SetResourceTier(PGL_RES_CLASS_TEXTURE, texId,
-                        PGL_TIER_OPI_PSRAM, /*pinned=*/true);
+                        PGL_TIER_QSPI_A, /*pinned=*/true);
 ```
 
 #### Capture Framebuffer Screenshot
@@ -727,15 +779,17 @@ encoder.SetResourceTier(PGL_RES_CLASS_TEXTURE, texId,
 // 1. Request capture
 encoder.FramebufferCapture(0, PGL_TEX_RGB565);  // front buffer, RGB565
 
-// 2. After frame is processed, read back via I2C
-PglMemTierInfoResponse info;
-device.ReadRegister(PGL_REG_MEM_TIER_INFO, &info, sizeof(info));
-
-// 3. Read framebuffer data in 32-byte chunks
+// 2. After frame is processed, read back via bidirectional Octal SPI
+//    GPU stages captured data into SMW bulk buffer, pulses IRQ
 uint8_t screenshot[16384];
-for (int i = 0; i < 512; i++) {
-    device.ReadRegister(PGL_REG_MEM_READ_DATA, &screenshot[i*32], 32);
+for (int chunk = 0; chunk < 5; chunk++) {   // 5 × 3840 = 19200 > 16384
+    encoder.SmwStageRead(fbBaseAddr + chunk * 3840,
+                         std::min(3840u, 16384u - chunk * 3840));
+    // Wait for IRQ or poll SmwGetSequence()
+    encoder.SmwReadBulk(&screenshot[chunk * 3840],
+                        std::min(3840u, 16384u - chunk * 3840));
 }
+// Total time: ~5 × 55 µs ≈ 0.3 ms (vs ~320 ms via I2C)
 ```
 
 #### Query Memory Pressure
@@ -745,9 +799,9 @@ PglMemTierInfoResponse info;
 device.ReadRegister(PGL_REG_MEM_TIER_INFO, &info, sizeof(info));
 
 if (info.sramFreeKB < 32) {
-    // Low SRAM — reduce mesh complexity or move textures to PSRAM
+    // Low SRAM — reduce mesh complexity or move textures to external VRAM
     encoder.SetResourceTier(PGL_RES_CLASS_TEXTURE, coldTexId,
-                            PGL_TIER_OPI_PSRAM);
+                            PGL_TIER_QSPI_A);
 }
 printf("Cache hit rate: %u%%\n", info.cacheHitRate);
 ```
@@ -757,8 +811,8 @@ printf("Cache hit rate: %u%%\n", info.cacheHitRate);
 | Decision | Rationale |
 |---|---|
 | Separate opcode range (0x30–0x3F) | Clean separation from resource commands; future-proof for more memory ops |
-| I2C for readback (not reverse SPI) | Octal SPI is unidirectional by hardware. I2C already wired. Phase 2 may add a reverse SPI channel. |
-| 32-byte I2C chunks | I2C transaction overhead dominates below ~32 bytes; larger chunks hit I2C buffer limits |
+| Bidirectional Octal SPI for readback | Half-duplex on same 8 data lines. DIR pin (GPIO 10) controls bus direction. Host uses SPI2 peripheral in Octal HD mode for reads. ~40 MB/s reverse bandwidth. |
+| 4 KB max SPI read | Keeps turnaround + DMA setup overhead amortised; larger reads split into SMW bulk chunks |
 | 4096-byte staging buffer | Balances SRAM cost (~4 KB) vs readback utility. Covers most diagnostic needs. |
 | PglMemHandle (uint16_t) | 65,534 possible handles; matches resource handle types for consistency |
 | `PGL_TIER_AUTO` hint | Lets host defer to tier manager intelligence while keeping explicit control available |
@@ -773,24 +827,90 @@ For developers familiar with Vulkan, the ProtoGL memory access API maps as follo
 | `CMD_MEM_ALLOC` | `vkAllocateMemory` |
 | `CMD_MEM_FREE` | `vkFreeMemory` |
 | `CMD_MEM_WRITE` | `vkMapMemory` + `memcpy` + `vkUnmapMemory` |
-| `CMD_MEM_READ_REQUEST` + I2C | `vkMapMemory` (read direction) |
+| `CMD_MEM_READ_REQUEST` + SPI read | `vkMapMemory` (read direction) |
 | `CMD_MEM_SET_RESOURCE_TIER` | `VkMemoryPropertyFlags` at bind time |
 | `CMD_MEM_COPY` | `vkCmdCopyBuffer` |
 | `PGL_REG_MEM_TIER_INFO` | `vkGetPhysicalDeviceMemoryProperties` |
 | `PGL_REG_MEM_ALLOC_RESULT` | `VkResult` from `vkAllocateMemory` |
 
-The key difference is that ProtoGL's read path is **asynchronous** (command → staging → I2C poll)
-rather than synchronous mapping, due to the one-directional SPI transport.
+The key difference is that ProtoGL's read path is **asynchronous** (command → staging → SPI read)
+rather than synchronous mapping, though bidirectional Octal SPI makes the readback nearly instant.
 
 ### 9.8 Limitations and Future Work
 
 | Limitation | Impact | Planned Resolution |
 |---|---|---|
-| I2C readback bandwidth (~50 KB/s) | Framebuffer readback takes 0.33 s for 16 KB | Phase 2: Reverse SPI channel (GPU→Host) |
+| ~~I2C readback bandwidth~~ | ~~Resolved~~ — Bidirectional Octal SPI provides ~40 MB/s reverse channel | ✅ Implemented: 16 KB framebuffer in ~0.3 ms |
 | 4 KB staging buffer | Large reads must be split into multiple requests | Increase to 8–16 KB if SRAM budget allows |
 | No scatter-gather writes | Multi-region uploads require separate commands | Possible CMD_MEM_WRITE_SG (0x37) in future |
 | Handle limit (65534) | Exceeding requires explicit free | More than sufficient for embedded use |
-| No GPU→Host notification of alloc completion | Host must poll I2C after sending alloc cmd | Phase 2: IRQ/GPIO signal on completion |
+| No GPU→Host notification of alloc completion | Host must poll via SPI read after sending alloc cmd | GPIO IRQ on completion (SMW mailbox notification) |
+
+### 9.9 Resource Persistence & Flash Writeback
+
+Large resources (textures, image sequences, font atlases) are always placed in external
+VRAM first (Tier 1/2). The persistence strategy adapts to the detected VRAM type:
+
+#### PSRAM (Volatile) → Flash Writeback
+
+When the detected external memory is PSRAM (`QspiChipType::PSRAM_APS6408L` or similar),
+data stored there is lost on power cycle. The host can request persistence via
+`CMD_PERSIST_RESOURCE` (0x46):
+
+1. GPU queues async writeback (max 4 pending, 4 KB/frame after `EndFrame`)
+2. DMA copies resource from external VRAM → 4 KB SRAM staging buffer → flash page-program
+3. Flash manifest updated with resource class, ID, offset, size, CRC-32
+4. Mailbox slot 9 + IRQ notifies host of completion
+5. On next boot: GPU checks manifest → auto-restores from flash → host skips upload
+
+**Flash budget:** 512 KB reserved at end of 4 MB flash. Max 64 persisted entries.
+Write throughput: ~200 KB/s (256-byte pages). 256 KB atlas persists in ~64 frames.
+
+#### MRAM (Non-Volatile) → Zero-Cost Persistence
+
+When the detected external memory is MRAM (`QspiChipType::MRAM_MR10Q010`), all data
+in Tier 1/2 is inherently persistent. The GPU:
+
+- Sets `PGL_CAP_NVRAM_VRAM` in capability flags at boot
+- Stores a manifest header at MRAM offset 0x0000
+- On reboot, rebuilds resource table from MRAM manifest — no DMA copy needed
+- `CMD_PERSIST_RESOURCE` returns `ALREADY_PERSISTENT` (status 0x04) immediately
+
+The host detects this via `QueryCapability()` and skips explicit persist calls.
+
+#### Weight Table Extension
+
+The per-resource-class weight table gains a `persist` column:
+
+| Resource Class | PSRAM Weight | MRAM Weight | Auto-Persist |
+|---|---|---|---|
+| TEXTURE_DATA (large) | 800 | 100 | No (host decides) |
+| IMAGE_SEQUENCE_ATLAS | 900 | 90 | No (host decides) |
+| FONT_ATLAS | 700 | 80 | Yes (if MRAM) |
+| SHADER_PROGRAM | 600 | 70 | Yes (if MRAM) |
+
+Auto-persist resources are automatically written to flash (PSRAM) or left in-place
+(MRAM) without requiring `CMD_PERSIST_RESOURCE`. The host can override with
+`CMD_MEM_SET_RESOURCE_TIER` flags.
+
+### 9.10 Direct Framebuffer Write
+
+`CMD_WRITE_FRAMEBUFFER` (0x45) allows the host to write raw RGB565 pixels directly
+into the GPU's back buffer or a compositing layer buffer. Key properties:
+
+- **Bypasses entire GPU pipeline** — no rasterizer, QuadTree, Z-buffer, shaders
+- **Writes to back buffer** — swapped to front on `EndFrame` as normal
+- **Layer-aware** — `layerId` selects main buffer (0xFF) or layer 0-7
+- **Clipped** — out-of-bounds pixels silently discarded
+- **Composable** — direct writes + GPU-rendered content on different layers
+
+**Use cases:**
+- Pre-rendered content from host (camera passthrough, decoded images)
+- Hybrid rendering (GPU 3D + host UI overlay)
+- Full host-side rendering bypass (Option B from Architecture_Split.md)
+
+Full wire format: see [ProtoGL_API_Spec.md](ProtoGL_API_Spec.md) §4.10.
+Full design: see [Memory_Management_API.md](Memory_Management_API.md) §8.4.
 
 ## 10. GPU Diagnostics, Thermal Management & Dynamic Clock
 
@@ -813,31 +933,34 @@ The host reads this register at a configurable interval (default: every 300 fram
 
 ### 10.2 VRAM Detection & Reporting
 
-At boot, the GPU firmware probes for external memory:
+At boot, the GPU firmware probes for external memory on each QSPI channel:
 
-1. **PIO2 External Memory**: Check `GpuConfig::PIO2_MEM_MODE` (OPI PSRAM / QSPI MRAM).
-   If mode ≠ `NONE`, initialize the appropriate PIO2 program and issue a read-ID command.
-   On success, set `PGL_CAP_OPI_VRAM` in capability flags and `PGL_VRAM_OPI_DETECTED`
-   in extended status `vramTierFlags`.
-2. **QSPI CS1** (auto-detect): Check `GpuConfig::QSPI_CS1_ENABLED`. `ProbeQspiCs1()` runs a
-   3-step auto-detect sequence:
+1. **QSPI Channel A (Tier 1):** Check `GpuConfig::QSPI_VRAM_MODE`. If mode ≠ `NONE`,
+   initialize PIO2 SM0+SM1. For each chip select (CS0, CS1 if `QSPI_A_CHIP_COUNT ≥ 2`),
+   run the RDID auto-detect sequence:
    - **Step 1 — MRAM RDID** (0x4B + mode byte 0xFF → read 5 bytes): Match against MR10Q010
      signature (0x076B111111). If matched, set profile to `PROFILE_MR10Q010`.
    - **Step 2 — PSRAM RDID** (0x9F → read 3 bytes): Check manufacturer byte
      (0x0D = AP Memory APS6408L, 0x5D = Espressif ESP-PSRAM). Set matching profile.
    - **Step 3 — Unknown fallback**: If RDID responded but ID is unrecognized, assign
      `UNKNOWN_DEVICE` type with conservative defaults.
-   On success, set `PGL_CAP_QSPI_VRAM` and `PGL_VRAM_QSPI_DETECTED`. The detected
-   `QspiChipProfile` drives driver init (MRAM vs PSRAM path) and `MemTierManager::BaseWeight()`
-   dual weight table selection. Extended status byte 31 (`qspiChipType`) reports the detected
-   chip type to the host as a `PglQspiChipType` value.
+   On success, set `PGL_CAP_QSPI_A_VRAM` in capability flags and `PGL_VRAM_QSPI_A_DETECTED`
+   in extended status `vramTierFlags`.
+2. **QSPI Channel B (Tier 2):** If `QSPI_VRAM_MODE == DUAL_CHANNEL`, initialize PIO2 SM2+SM3
+   and repeat the same RDID sequence for Channel B's CS0 and CS1 (if `QSPI_B_CHIP_COUNT ≥ 2`).
+   On success, set `PGL_CAP_QSPI_B_VRAM` and `PGL_VRAM_QSPI_B_DETECTED`.
+
+Per-chip profiles (chip type, capacity, volatile/non-volatile, random-access penalty) are
+stored in `QspiChannelInfo` structs and used by `MemTierManager::BaseWeight()` for
+chip-aware weight table selection. Extended status reports total/free KB per channel.
 
 The host calls `QueryCapability()` at startup and receives these flags. Convenience method
-`HasExternalVram()` checks both flags in one call. The extended status reports total/free KB
-per VRAM tier, allowing the host to monitor memory pressure during operation.
+`HasExternalVram()` checks both channel flags in one call. The extended status reports total/free KB
+per VRAM channel, allowing the host to monitor memory pressure during operation.
 
-**Graceful degradation**: If no external memory is detected, the GPU operates in SRAM-only mode.
-All VRAM fields read zero. No code path change — the M7 baseline path handles this transparently.
+**Graceful degradation**: If no external memory is detected (RP2350A or unpopulated board),
+the GPU operates in SRAM-only mode. All VRAM fields read zero. No code path change —
+the M7 baseline path handles this transparently.
 
 ### 10.3 On-Die Temperature Sensor
 
@@ -915,8 +1038,330 @@ uint8_t usage = controller.GetGpuUsagePercent(); // cached 0–100
 | Peripheral | Clock Source | Affected by `clk_sys` Change? | Mitigation |
 |---|---|---|---|
 | CPU cores | `clk_sys` | Yes — performance scales linearly | Expected (that's the point) |
-| PIO (HUB75, PIO2 External) | `clk_sys` | Yes — output frequency changes | `RecalculatePioClocks()` fixes dividers |
+| PIO (HUB75, QSPI VRAM) | `clk_sys` | Yes — output frequency changes | `RecalculatePioClocks()` fixes dividers |
 | I2C | `clk_peri` (USB PLL) | No | — |
 | ADC (temp sensor) | `clk_adc` (USB PLL) | No | — |
 | USB | `clk_usb` (USB PLL) | No | — |
 | Timers | `clk_ref` (XOSC) | No | — |
+
+---
+
+## 11. Unified Display Frontend
+
+> Full design: [Display_Frontend_Design.md](Display_Frontend_Design.md)
+
+### 11.1 Problem Statement
+
+Phase 1 hardcodes the display output to HUB75 (PIO0). As ProtoGL targets more display
+technologies — DVI-D (PIO TMDS encoding), SPI LCDs, QSPI LCDs, parallel-interface panels —
+the firmware needs a **unified display driver abstraction** so the rasterizer, shader pipeline,
+and frame lifecycle are completely decoupled from the physical display interface.
+
+### 11.2 Architecture Overview
+
+```
+                 ┌──────────────────────────┐
+                 │      Rasterizer          │
+                 │  (writes RGB565 to FB)   │
+                 └───────────┬──────────────┘
+                             │
+                      ┌──────▼──────┐
+                      │DisplayManager│
+                      │ (routes FB) │
+                      └──┬──────┬───┘
+           ┌─────────────┼──────┼─────────────┐
+     ┌─────▼─────┐ ┌────▼────┐ ┌──▼──────┐ ┌─▼────────┐
+     │Hub75Driver│ │DviDriver│ │SpiDriver│ │QspiDriver│
+     │(PIO0 BCM) │ │(PIO TMDS)│ │(SPI+DMA)│ │(PIO)     │
+     │HOST-BUF   │ │HOST-BUF │ │SELF-BUF│ │SELF-BUF │
+     └───────────┘ └─────────┘ └─────────┘ └──────────┘
+```
+
+**Key abstractions:**
+- `DisplayDriver` — abstract base class: `Init()`, `SwapBuffers()`, `SetBrightness()`, `GetTimingInfo()`
+- `DisplayManager` — singleton that manages 1–4 active drivers, framebuffer routing, format conversion
+- Each driver self-reports its `DisplayCaps` (resolution, color depth, refresh rate, PIO usage)
+- **Framebuffer Ownership:** `PGL_FB_HOST_OWNED` (HUB75, DVI-D) vs `PGL_FB_DISPLAY_OWNED` (SSD1306, SSD1331, SSD1351, ST7789, RM67162) — self-buffered displays use GDDRAM and only need dirty-rect push
+- **DMA Chunk-Fill:** `DmaFillEngine` detects large single-color regions and offloads to DMA constant-fill, freeing the CPU for rendering
+- **Chunk Skip:** Dirty-rect tracking skips unchanged scanlines during SPI push to GDDRAM displays
+
+### 11.3 PIO Resource Allocation
+
+| Driver | PIO Block | SMs Used | DMA Channels | Notes |
+|--------|-----------|----------|--------------|-------|
+| HUB75 | PIO0 | 2 SM | 2 | Current Phase 1 |
+| Octal SPI (bidir) | PIO1 | 2 SM | 2 | SM0 RX + SM1 TX (bidirectional, fixed) |
+| QSPI VRAM Ch-A | PIO2 | 2 SM | 2 | SM0 cmd/write + SM1 read (RP2350B only) |
+| QSPI VRAM Ch-B | PIO2 | 2 SM | 2 | SM2 cmd/write + SM3 read (RP2350B only) |
+| DVI-D | PIO0 | 3 SM | 3 | TMDS encoding (replaces HUB75) |
+| I2C HUD | I2C1 | — | — | Hardware I2C peripheral (SSD1306/SSD1309) |
+| SPI LCD | — | 0 SM | 1 | Hardware SPI peripheral |
+| QSPI LCD | PIO0 | 1 SM | 1 | Shares PIO0 with HUB75 or DVI |
+
+**Constraint:** PIO0 is shared — HUB75, DVI-D, and QSPI LCD cannot coexist.
+The `DisplayManager` validates PIO allocation at `Init()` and rejects conflicting drivers.
+
+**Constraint:** PIO2 is used by external VRAM (RP2350B). When DVI-D output is needed
+and PIO2 is occupied by VRAM channels, DVI must use PIO0 (replacing HUB75).
+
+### 11.4 Framebuffer Format Conversion
+
+The rasterizer always writes RGB565. Drivers that need different formats perform conversion
+during `SwapBuffers()`:
+- **HUB75**: RGB565 → split BCM bitplanes (existing PIO program)
+- **DVI-D**: RGB565 → RGB888 → TMDS 10b/8b encoding (PIO program)
+- **SPI LCD**: RGB565 pass-through (most SPI displays accept RGB565)
+- **QSPI LCD**: RGB565 pass-through or RGB666 expansion
+
+### 11.5 Host API Extensions
+
+New `PglDevice` methods for display configuration:
+
+| Method | I2C Register | Description |
+|--------|-------------|-------------|
+| `SetDisplayMode(mode)` | 0x15 | Select active display driver |
+| `QueryDisplayCaps()` | 0x16 | Get display capabilities |
+| `SetMultiDisplayRoute(...)` | 0x17 | Configure multi-display routing |
+
+New `PglEncoder` SPI commands:
+
+| Opcode | Command | Description |
+|--------|---------|-------------|
+| 0x90 | `CMD_DISPLAY_CONFIGURE` | Set resolution, refresh, color depth |
+| 0x91 | `CMD_DISPLAY_SET_REGION` | Define update region for partial refresh |
+| 0x92 | `CMD_DISPLAY_SYNC` | Synchronize multi-display frame timing |
+
+---
+
+## 12. 2D Graphics & Multi-Layer Compositing
+
+> Full design: [2D_Graphics_And_Compositing.md](2D_Graphics_And_Compositing.md)
+
+### 12.1 Problem Statement
+
+ProtoGL currently supports only 3D triangle rasterization. Many GUI/HUD elements —
+status bars, text overlays, 2D sprites, notification banners — require efficient 2D
+rendering without the overhead of the full 3D pipeline (transforms, QuadTree, Z-buffer).
+
+### 12.2 Layer Architecture
+
+```
+  Layer Stack (back to front):
+  ┌──────────────────────────────┐
+  │ Layer 0: 3D Scene (existing) │  ← Full raster pipeline
+  │ Layer 1: 2D Background       │  ← Rect/line/sprite
+  │ Layer 2: 2D HUD Overlay      │  ← Text/icons/bars
+  │ Layer 3: 2D Alert Banner     │  ← High-priority overlay
+  └──────────────────────────────┘
+         ↓ Compositor
+  ┌──────────────────────────────┐
+  │ Final Framebuffer → Display  │
+  └──────────────────────────────┘
+```
+
+**Properties per layer:**
+- Global opacity (0–255)
+- Blend mode (alpha, additive, multiply)
+- Viewport offset + clip rectangle
+- Visibility flag (enable/disable without destroying)
+- Z-order (sort key for compositing order)
+
+### 12.3 2D Draw Commands (Opcodes 0xA0–0xAE)
+
+| Opcode | Command | Parameters |
+|--------|---------|------------|
+| 0xA0 | `CMD_LAYER_CREATE` | id, width, height, format, blendMode, opacity |
+| 0xA1 | `CMD_LAYER_DESTROY` | id |
+| 0xA2 | `CMD_LAYER_SET_PROPS` | id, opacity, blendMode, offset, clipRect |
+| 0xA3 | `CMD_DRAW_RECT_2D` | layerId, x, y, w, h, color, filled |
+| 0xA4 | `CMD_DRAW_LINE_2D` | layerId, x0, y0, x1, y1, color |
+| 0xA5 | `CMD_DRAW_CIRCLE_2D` | layerId, cx, cy, r, color, filled |
+| 0xA6 | `CMD_DRAW_SPRITE` | layerId, x, y, textureId, flags |
+| 0xA7 | `CMD_DRAW_TEXT` | layerId, x, y, fontId, color, string |
+| 0xA8 | `CMD_DRAW_SPRITE_BATCH` | layerId, count, spriteArray[] |
+| 0xA9 | `CMD_LAYER_CLEAR` | layerId, color |
+| 0xAA | `CMD_DRAW_ROUNDED_RECT` | layerId, x, y, w, h, r, color, filled |
+| 0xAB | `CMD_DRAW_ARC` | layerId, cx, cy, r, startAngle, endAngle, color |
+| 0xAC | `CMD_DRAW_TRIANGLE_2D` | layerId, x0, y0, x1, y1, x2, y2, color |
+| 0xAD | `CMD_BILLBOARD_SPRITE` | cameraId, worldPos, textureId, size, flags |
+| 0xAE | `CMD_LAYER_SET_VISIBILITY`| layerId, visible |
+
+### 12.4 GPU-Side Pipeline Integration
+
+```
+Frame Pipeline (Extended):
+┌─────────────────────────────────────────────────────────────┐
+│ 1. Parse commands (Core 0)                                  │
+│ 2. Transform + Project + QuadTree (Core 0)                  │
+│ 3. Rasterize 3D into Layer 0 (Core 0 + Core 1)             │
+│ 4. Execute 2D draw lists into Layer 1..N (Core 0)           │
+│ 4.5 Per-layer PSB shaders (Core 1, NEW)                     │
+│    For layers with bound shader: run shader per-pixel        │
+│    on layer framebuffer (blur, glow, color grade, etc.)     │
+│ 5. Screen-space shaders per layer (optional)                │
+│ 6. ──── Layer Compositor (Core 0) ────                      │
+│     For each layer (back to front, by Z-order):             │
+│       BlendLayer(finalFB, layer, opacity, blendMode)        │
+│ 7. Swap framebuffers → Display                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**New in v0.7:** Step 4.5 runs programmable PSB shaders on individual 2D layers.
+Shaders are bound via `CMD_SET_LAYER_SHADER` (0xB0) with host-supplied parameters.
+This enables per-layer blur, glow, dissolve, scanline effects, etc. without re-issuing
+2D draw commands. See [2D_Graphics_And_Compositing.md §6.3](2D_Graphics_And_Compositing.md) for details.
+
+### 12.5 Memory Budget
+
+Each 2D layer at 128×64 RGB565 costs 16 KB. With the SRAM cache arena repurposed:
+- 1 layer (3D scene only): 0 KB extra (existing framebuffer)
+- 2 layers: +16 KB
+- 4 layers: +48 KB (max recommended for 520 KB SRAM budget)
+- 8 layers: +112 KB (requires external PSRAM for layer storage)
+
+---
+
+## 13. Refined Memory Management
+
+> Full design: [Memory_Management_API.md](Memory_Management_API.md)
+
+### 13.1 Enhancements Over §8–§9
+
+The §8 tiered model and §9 direct access API provide the foundation. The refined memory
+management API adds four new subsystems:
+
+| Subsystem | New Opcodes | Purpose |
+|-----------|-------------|---------|
+| **Memory Pools** | 0x38–0x3B | Pool-based allocation with fixed-size blocks for zero-fragmentation |
+| **Defragmentation** | 0x3C | Online compaction of free-list allocators |
+| **Streaming Upload** | 0x3D–0x3F | Multi-frame chunked upload with progress tracking |
+| **Resource Binding** | 0x40–0x41 | Explicit bind/unbind of memory handles to resource slots |
+
+### 13.2 Memory Pools
+
+Pools provide predictable, fragmentation-free allocation for fixed-size objects:
+
+```cpp
+// Host-side: create a pool of 64-byte blocks in QSPI-A VRAM
+encoder.MemPoolCreate(PGL_TIER_QSPI_A, /*blockSize=*/64, /*blockCount=*/256,
+                      /*tag=*/0x0010);
+// ... read I2C for pool handle ...
+
+// Allocate a block from the pool (O(1) — free-list pop)
+encoder.MemPoolAlloc(poolHandle, /*tag=*/0x0011);
+
+// Free a block back to the pool (O(1) — free-list push)
+encoder.MemPoolFree(poolHandle, blockHandle);
+```
+
+**Implementation:** Each pool is a contiguous allocation from the tier's free-list allocator.
+Internally, a singly-linked free list of fixed-size blocks provides O(1) alloc/free with
+zero fragmentation within the pool.
+
+### 13.3 Defragmentation
+
+The first-fit free-list allocators in Tier 0 and Tier 1 can fragment over time when
+resources are created and destroyed in arbitrary order. The defragmentation command
+compacts allocations:
+
+```
+GPU_CMD_MEM_DEFRAG (0x3C):
+  tier       uint8_t    Target tier (0=SRAM, 1=QSPI-A, 2=QSPI-B)
+  maxMoveKB  uint16_t   Max data to relocate (bounds CPU cost)
+  flags      uint8_t    bit0: urgent (block frame), bit1: incremental
+```
+
+- **Incremental mode** (default): Moves at most `maxMoveKB` per frame. Multiple frames
+  complete a full compaction. No frame stall.
+- **Urgent mode**: Blocks the frame pipeline until compaction finishes. Use only during
+  loading screens or initialization.
+
+### 13.4 Streaming Upload
+
+Large assets (textures > 16 KB, mesh banks) cannot fit in a single SPI frame. The streaming
+API provides a managed multi-frame upload with progress tracking:
+
+| Opcode | Command | Wire Fields |
+|--------|---------|-------------|
+| 0x3D | `CMD_STREAM_BEGIN` | streamId, tier, totalSize, tag |
+| 0x3E | `CMD_STREAM_DATA` | streamId, offset, chunkSize, data[] |
+| 0x3F | `CMD_STREAM_COMMIT` | streamId, resourceClass, resourceId |
+
+The GPU assembles chunks into a staging buffer (or directly into the target tier address)
+and signals completion via SPI read status (or I2C fallback). `CMD_STREAM_COMMIT` binds the fully-uploaded
+data to a resource handle, making it available for rendering.
+
+### 13.5 Resource Binding Model
+
+Inspired by Vulkan's `vkBindBufferMemory`:
+
+| Opcode | Command | Description |
+|--------|---------|-------------|
+| 0x40 | `CMD_MEM_BIND_RESOURCE` | Bind a memory handle to a resource (mesh, texture, material) |
+| 0x41 | `CMD_MEM_UNBIND_RESOURCE` | Release the binding (resource becomes unresolvable) |
+
+This separates allocation lifetime from resource lifetime — a texture can be destroyed
+and re-created without freeing the underlying memory. Useful for texture atlases and
+sprite sheet reuse.
+
+### 13.6 Shared Memory Window (Bidirectional Access)
+
+A 4 KB region in GPU SRAM at a fixed address serves as a **Shared Memory Window (SMW)**
+accessible by both the host (via bidirectional Octal SPI read/write) and the GPU
+(native SRAM access). The SMW is divided into:
+
+- **Host→GPU Mailbox** (64 bytes, 16 × `uint32_t` slots) — quick parameter passing
+- **GPU→Host Mailbox** (64 bytes, 16 × `uint32_t` slots) — status/FPS/temperature/free-SRAM
+- **Bulk Staging Buffer** (3840 bytes) — GPU stages data for host to read at SPI speed
+
+This provides **1000×+ speedup** over I2C for GPU→Host reads by using the same 8 data
+lines in half-duplex mode (DIR pin on GPIO 10 controls direction). The GPU notifies
+the host via a GPIO IRQ pulse when new data is available. A sequence counter ensures
+coherency (no torn reads). See [Memory_Management_API.md §9.5](Memory_Management_API.md)
+for details.
+
+New SPI commands: `CMD_MEM_SMW_WRITE` (0x42), `CMD_MEM_SMW_READ` (0x43),
+`CMD_MEM_STAGE_READ` (0x44). New SPI read commands: `SPI_READ_SMW` (0xEA) and
+the full SPI read command range (0xE0–0xEB) that replaces all I2C register reads.
+
+### 13.7 Diagnostic Register Access
+
+All diagnostic registers are accessible via **bidirectional Octal SPI read commands**
+(0xE0–0xE9 range, see [Communication_Protocol.md](Communication_Protocol.md)). I2C
+access is retained as an optional fallback for backward compatibility.
+
+| Register | I2C Addr | SPI Read Cmd | Size | Content |
+|----------|----------|-------------|------|---------|
+| `MEM_POOL_STATUS` | 0x18 | `0xE6` | 16 B | Per-pool: total/free blocks, largest consecutive run |
+| `MEM_DEFRAG_STATUS` | 0x19 | `0xE7` | 8 B | Defrag progress: moved/total KB, fragments remaining |
+| `MEM_STREAM_STATUS` | 0x1A | — | 12 B | Per-stream: received/total bytes, status code |
+| `MEM_BINDING_TABLE` | 0x1B | — | 32 B | Active resource↔memory bindings (paginated) |
+| `MEM_PERSIST_STATUS` | 0x1C | `0xEB` | 12 B | Persistence query result (per-resource or manifest summary) *(v0.7.1)* |
+
+### 13.8 Vulkan Parallels (Extended)
+
+| ProtoGL | Vulkan Equivalent |
+|---------|-------------------|
+| `CMD_MEM_POOL_CREATE` | `vkCreateDescriptorPool` (conceptually) |
+| `CMD_MEM_POOL_ALLOC` | Sub-allocation from `VkDeviceMemory` |
+| `CMD_MEM_DEFRAG` | `VMA` defragmentation pass |
+| `CMD_STREAM_BEGIN/DATA/COMMIT` | Staging buffer + `vkCmdCopyBufferToImage` |
+| `CMD_MEM_BIND_RESOURCE` | `vkBindBufferMemory` / `vkBindImageMemory` |
+| Shared Memory Window | `VkBuffer` with `HOST_VISIBLE` \| `HOST_COHERENT` |
+| `SmwReadMailbox` | `vkMapMemory` + read (fast coherent path) |
+| `SmwStageRead` | `vkCmdCopyBuffer` to host-visible staging |
+
+---
+
+## 14. Related Documents
+
+- [Architecture_Split.md](Architecture_Split.md) — High-level ESP32↔GPU split
+- [ProtoGL_API_Spec.md](ProtoGL_API_Spec.md) — Full wire-format specification and host API
+- [Communication_Protocol.md](Communication_Protocol.md) — Bidirectional Octal SPI protocol, I2C fallback register map
+- [Display_Frontend_Design.md](Display_Frontend_Design.md) — Unified display driver interface (§11 detail)
+- [2D_Graphics_And_Compositing.md](2D_Graphics_And_Compositing.md) — Multi-layer 2D graphics (§12 detail)
+- [Memory_Management_API.md](Memory_Management_API.md) — Refined memory management (§13 detail)
+- [Implementation_Plan.md](Implementation_Plan.md) — Phase-by-phase implementation milestones
+- [Project_Schedule.md](Project_Schedule.md) — Week-by-week schedule with exit criteria
+- [Shader_System_Design.md](Shader_System_Design.md) — PGLSL compiler and shader VM
+- [Shader_Backend_And_Scheduler_Design.md](Shader_Backend_And_Scheduler_Design.md) — Per-pixel shader backend math

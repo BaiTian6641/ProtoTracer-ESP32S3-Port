@@ -27,12 +27,15 @@ so that Phase 2 requires zero host-side changes — only a new GPU firmware buil
 | **M5** | 13–14 | 2 weeks | Dual-core rasterizer + profiling + optimization | 60 FPS on 128×64 panel, dual-core, measured end-to-end | 🔧 Code complete (HUB75 wait fix, time precision, DWT; HW profiling pending) |
 | **M6** | 15–16 | 2 weeks | Material system port (core → full) | All 12 material types rendering correctly | ✅ Code complete (12 material types, simplex noise, blend modes, texture sampling, face normals) |
 | **M7** | 17–18 | 2 weeks | Integration, pipelining, stress test, release candidate | `ProtogenHUB75Animation` running stably for 24 h, docs updated | ✅ Code complete (HW stress tests + docs pending) |
-| **M8** | 19–21 | 3 weeks | Tiered external memory (PIO2 multi-mode + QSPI auto-detect) | External textures render correctly; SRAM-only path unaffected; zero raster-speed regression | ✅ Code complete (all drivers + tier manager implemented; benchmarks + HW regression pending) |
+| **M8** | 19–21 | 3 weeks | Tiered external memory (dual-channel QSPI VRAM + per-chip auto-detect) | External textures render correctly; SRAM-only path unaffected; zero raster-speed regression | ✅ Code complete (all drivers + tier manager implemented; benchmarks + HW regression pending) |
 | **M9** | 22–24 | 3 weeks | Programmable shader system (PGLSL + bytecode VM) | PGLSL source → compile → upload → render pipeline working; 8+ library shaders; built-in effects unaffected; VM < 0.05 ms for 40-insn shader | ✅ Code complete (VM + compiler + encoder + 8 library shaders; HW benchmarks pending) |
 | **M10** | 25–26 | 2 weeks | Backend abstraction + job scheduler | PglShaderBackend routes all GPU math; PglJobScheduler abstracts dual-core dispatch; zero regression on existing effects | ✅ Code complete (backend + scheduler + wiring; HW validation pending) |
 | **M10a** | 27 | 1 week | Tile-based dynamic scheduler | PglTileScheduler: 32×16×16 tiles, lock-free work-stealing, Morton Z-order, per-tile QuadTree caching, DispatchPair for shaders | ✅ Code complete (tile scheduler + RasterizeTile + gpu_core wiring; HW validation pending) |
+| **M11** | 28–30 | 3 weeks | Display abstraction + memory pools | DisplayDriver ABC extracted, Hub75Driver refactored, SpiLcdDriver functional, DisplayManager singleton, MemPool allocator with O(1) alloc/free | 🔧 Planned |
+| **M12** | 31–33 | 3 weeks | DVI-D + 2D primitives + defrag + persistence + direct FB write | DviDriver (PIO TMDS), QspiLcdDriver, Rasterizer2D (6 primitives), single-layer compositing, MemDefrag (incremental + urgent), **flash persistence/writeback**, **direct framebuffer write** | 🔧 Planned |
+| **M13** | 34–36 | 3 weeks | Multi-display + compositing + streaming | Multi-display routing, 8-layer compositor, sprite batcher, text renderer, streaming upload, resource binding model | 🔧 Planned |
 
-Total: **24 weeks** from start to release candidate (18 weeks core + 3 weeks memory + 3 weeks shaders).
+Total: **36 weeks** from start to full feature completion (27 weeks Phase 1 + 9 weeks Phase 2 enhancements).
 
 ---
 
@@ -378,7 +381,7 @@ Total: **24 weeks** from start to release candidate (18 weeks core + 3 weeks mem
 
 **Remaining limitations (known, not regressions):**
 - UV upload path in `GPUDriverController` still passes `hasUV=false` (`FindOrCreateMesh`), so textured materials depend on future UV pipeline completion.
-- M8 memory access commands/registers are parsed and documented but still stubbed until PIO2/QSPI tier drivers are implemented.
+- M8 memory access commands/registers are parsed and documented but still stubbed until QSPI VRAM tier drivers are implemented.
 
 ### Cortex-M33 DSP Acceleration Plan (post-M6)
 
@@ -448,7 +451,7 @@ Goal: use ARMv8-M DSP extension instructions where they provide net gains withou
 | Day | Task | Deliverable | Status |
 |---|---|---|---|
 | Mon | Extended GPU diagnostics: `PglExtendedStatusResponse` (32 bytes) — GPU usage, per-core load, die temperature (Q8.8), clock MHz, SRAM/VRAM free, frame timing breakdown, VRAM tier flags. | `PglTypes.h` struct + `PGL_REG_EXTENDED_STATUS (0x11)` I2C register | ✅ |
-| Mon | VRAM detection at boot: `ProbePio2Memory()` + `ProbeQspiCs1()` stubs in `i2c_slave.cpp`. Reports presence via `PGL_CAP_OPI_VRAM` / `PGL_CAP_QSPI_VRAM` capability flags and `PglVramTierFlags` in extended status. | Host sees VRAM availability at `Initialize()` via `HasExternalVram()` | ✅ |
+| Mon | VRAM detection at boot: `ProbeQspiVram()` stubs in `i2c_slave.cpp`. Reports presence via `PGL_CAP_QSPI_A_VRAM` / `PGL_CAP_QSPI_B_VRAM` capability flags and `PglVramTierFlags` in extended status. | Host sees VRAM availability at `Initialize()` via `HasExternalVram()` | ✅ |
 | Mon | Dynamic clock manager: `gpu_clock.h/.cpp` — 5 pre-validated profiles (150/200/250/266/300 MHz), `SetFrequency()` with voltage-first pattern, PIO SM divider recalculation, 3-tier thermal throttling (80°C throttle, 65°C recover, 95°C emergency). | `GpuClock::SetFrequency()` + `ThermalCheck()` | ✅ |
 | Mon | Host-side clock/status APIs: `PglDevice::QueryExtendedStatus()`, `SetClockFrequency()`, `HasExternalVram()`. `GPUDriverController::QueryGpuHealth()`, `SetGpuClock()`, enhanced periodic diagnostics in `Display()`. | Full host-to-GPU diagnostic + clock control pipeline | ✅ |
 | Mon | On-die temperature sensor init: ADC channel `ADC_TEMPERATURE_CHANNEL_NUM`, `ReadTemperature()` with RP2350 formula: `27.0 - (V - 0.706) / 0.001721`. | `I2CSlave::ReadTemperature()` returns °C float | ✅ |
@@ -462,7 +465,7 @@ Goal: use ARMv8-M DSP extension instructions where they provide net gains withou
 
 ---
 
-## M8: Tiered External Memory — PIO2 Multi-Mode + QSPI Auto-Detect (Week 19–21)
+## M8: Tiered External Memory — Dual-Channel QSPI VRAM + Per-Chip Auto-Detect (Week 19–21)
 
 > **Prerequisite:** M7 complete. The SRAM-only render path must be stable before adding
 > external memory. M8 **adds capacity**, never degrades existing performance.
@@ -474,8 +477,8 @@ implemented and ready for M8 driver integration:
 
 | Component | File(s) | Description |
 |---|---|---|
-| VRAM detection stubs | `i2c_slave.cpp` — `ProbePio2Memory()`, `ProbeQspiCs1()`, `ProbeExternalVram()` | Boot-time probe: PIO2 uses `GpuConfig::PIO2_MEM_MODE` switch — OPI_PSRAM checks CS0 pin, DUAL_QSPI_MRAM checks CS0+CS1 (falls back to single), SINGLE_QSPI_MRAM checks CS0. QSPI CS1 uses **3-step auto-detect**: (1) MRAM RDID 0x4B → MR10Q010, (2) PSRAM RDID 0x9F → APS6408L/ESP-PSRAM, (3) unknown fallback. Detected `QspiChipProfile` drives driver init + tier weight selection. M8 Week 19 provides actual PIO2/QMI implementation. |
-| Capability reporting | `PglTypes.h` — `PGL_CAP_OPI_VRAM`, `PGL_CAP_QSPI_VRAM` flags in `PglCapabilityFlags`, `PglPio2MemMode` enum | Host discovers VRAM presence at `Initialize()` via `QueryCapability()`. PIO2 mode reported in extended status. |
+| VRAM detection stubs | `i2c_slave.cpp` — `ProbeQspiVram()`, `ProbeExternalVram()` | Boot-time probe: uses `GpuConfig::QSPI_VRAM_MODE` switch — DUAL_CHANNEL probes Channel A (CS0+CS1) and Channel B (CS0+CS1), SINGLE_CHANNEL probes Channel A only, NONE skips. Per-chip **3-step auto-detect**: (1) MRAM RDID 0x4B → MR10Q010, (2) PSRAM RDID 0x9F → APS6408L/ESP-PSRAM, (3) unknown fallback. Detected `QspiChipProfile` per chip drives driver init + tier weight selection. M8 Week 19 provides actual PIO2 QSPI implementation. |
+| Capability reporting | `PglTypes.h` — `PGL_CAP_QSPI_A_VRAM`, `PGL_CAP_QSPI_B_VRAM` flags in `PglCapabilityFlags`, `PglQspiVramMode` enum | Host discovers VRAM presence at `Initialize()` via `QueryCapability()`. QSPI VRAM mode reported in extended status. |
 | Extended status | `PglTypes.h` — `PglExtendedStatusResponse` (32 bytes) | Reports VRAM total/free KB, `vramTierFlags` (detected + initialised bits), `qspiChipType` (auto-detected chip enum), GPU usage, temperature, clock. |
 | Dynamic clock | `gpu_clock.h/.cpp` — `GpuClock` namespace | 5 profiles (150–300 MHz), thermal throttling, PIO SM divider recalculation. Host controls via `PGL_REG_SET_CLOCK_FREQ` / `PglClockRequest`. |
 | Host-side API | `PglDevice.h` — `QueryExtendedStatus()`, `SetClockFrequency()`, `HasExternalVram()` | ESP32-S3 host queries GPU health and VRAM status. |
@@ -483,117 +486,115 @@ implemented and ready for M8 driver integration:
 
 **M8 TODO (remaining):** Bandwidth benchmarks (W19 Fri) and regression/stress tests (W21 Thu-Fri) require hardware.
 All driver and tier manager code is implemented. VRAM detection probes in `i2c_slave.cpp` are wired to
-real QMI direct-mode SPI sequences. `MemTierManager::Initialize()` receives chip-aware config from
-`gpu_core.cpp` including `pio2IsMram`, `pio2HasRandomAccessPenalty`, `qspiHasRandomAccessPenalty`,
-and `qspiIsNonVolatile` flags derived from detected PIO2 mode and `QspiChipProfile`.
+All driver and tier manager code is implemented. VRAM detection probes in `i2c_slave.cpp` are wired to
+real PIO2 QSPI sequences. `MemTierManager::Initialize()` receives chip-aware config from
+`gpu_core.cpp` including `qspiAIsMram`, `qspiAHasRandomAccessPenalty`, `qspiBIsMram`, `qspiBHasRandomAccessPenalty`,
+and `qspiIsNonVolatile` flags derived from detected QSPI VRAM mode and per-chip `QspiChipProfile`.
 
 ### Design Summary
 
 - **Tier 0 — Internal SRAM**: Framebuffer, Z-buffer, QuadTree, active mesh/material/texture working set. Single-cycle access. **Always the default.**
-- **Tier 1 — PIO2 External (3 modes)**:
-  - *OPI PSRAM* (`OPI_PSRAM`): APS6408L, 8 MB, 8-bit DQ, 75 MHz DDR, ~150 MB/s burst. QFN-80 only (GPIO 34–41).
-  - *Dual QSPI MRAM* (`DUAL_QSPI_MRAM`): 2× MR10Q010, 256 KB total, 4-bit DQ + CS1 on GPIO 38, 104 MHz, non-volatile, no random-access penalty.
-  - *Single QSPI MRAM* (`SINGLE_QSPI_MRAM`): 1× MR10Q010, 128 KB, 4-bit DQ, 104 MHz, non-volatile, no random-access penalty.
-  Accessed via DMA into a SRAM cache arena (64 KB, 4 KB cache lines).
-- **Tier 2 — QSPI CS1 (auto-detected)**: At boot `ProbeQspiCs1()` identifies MRAM (MR10Q010, 128 KB, no random-access penalty, non-volatile) or PSRAM (APS6408L, 8 MB, row-buffer miss penalty, volatile). XIP memory-mapped at `0x11000000`. QMI HW cache (4 KB, 2-way, ~2 cycle hit). The detected chip's `hasRandomAccessPenalty` flag selects dual weight tables in `BaseWeight()`: MRAM weights aggressively demote random-access resources (LUTs, materials, textures) from SRAM to QSPI; PSRAM weights are conservative, keeping random-access data in SRAM.
+- **Tier 1 — QSPI Channel A (PIO2 SM0+SM1)**:
+  QSPI 4-bit, GPIO 34–37 (data) + GPIO 38 (CS1) + GPIO 12 (CLK) + GPIO 11 (CS0). Up to 2 chips (CS0 + CS1). Per-chip auto-detect: MRAM (MR10Q010, 128 KB, 104 MHz, non-volatile, no random-access penalty) or PSRAM (APS6408L, 8 MB, ~52 MB/s per chip, row-buffer miss penalty, volatile). All access indirect via PIO2 DMA (no XIP). RP2350B (QFN-80) only.
+- **Tier 2 — QSPI Channel B (PIO2 SM2+SM3)**:
+  QSPI 4-bit, GPIO 39–42 (data) + GPIO 43 (CLK) + GPIO 44 (CS0) + GPIO 45 (CS1). Up to 2 chips (CS0 + CS1). Same per-chip auto-detect as Channel A. All access indirect via PIO2 DMA (no XIP). RP2350B (QFN-80) only. The detected chip's `hasRandomAccessPenalty` flag selects dual weight tables in `BaseWeight()`: MRAM weights aggressively demote random-access resources (LUTs, materials, textures) from SRAM to QSPI; PSRAM weights are conservative, keeping random-access data in SRAM.
 
 Placement policy: `priority = α × weight + β × score`. See `memory/mem_tier.h` for full API.
 
-### Week 19: PIO2 External Memory Driver
+### Week 19: QSPI VRAM Driver (Dual-Channel PIO2)
 | Day | Task | Deliverable | Status |
 |---|---|---|---|
-| Mon | Write `pio2_mem.pio` — two PIO2 programs: (1) OPI 8-bit for APS6408L protocol (cmd → addr → latency → data), (2) QSPI 4-bit for MR10Q010 protocol (opcode → addr → dummy → data). Both: SM0 cmd/write, SM1 read. Mode selected by `Pio2MemMode`. | PIO programs assemble; `pio_add_program()` succeeds for both modes | ✅ (inline instruction arrays in mem_opi_psram.cpp; 4 programs: opi_write, opi_read, qspi_write, qspi_read) |
-| Tue | Implement `OpiPsramDriver::Initialize()` — switch on `PIO2_MEM_MODE`: OPI path configures SM0+SM1 8-bit, GPIO 11/12/34–41. QSPI MRAM path configures SM0+SM1 4-bit, GPIO 11/12/34–37 (+38 as CS1 for dual). Claim 2 DMA channels. Issue RDID to verify chip. | Chip responds to read-ID (OPI: 0x9F, MRAM: 0x4B) | ✅ (mode switch, pin config, PIO setup, DMA claim all implemented; RDID deferred to QSPI driver) |
-| Wed | Implement `OpiPsramDriver::ReadSync()` / `WriteSync()` — OPI: DMA blocking, 75 MHz. MRAM: WREN+Quad Write, Quad Read, chip select via address bit 17 for dual mode. Validate with test pattern (write 0xAA55… → read back). | Read-back matches. Error rate = 0 for all configured modes. | ✅ (dual-path OPI+MRAM, cross-chip boundary handling, WREN; HW test pattern pending) |
-| Thu | Implement `OpiPsramDriver::ReadAsync()` / `WriteAsync()` with DMA completion callback. Implement `Prefetch()` (async read into caller-provided SRAM buffer). For MRAM dual mode, chain DMA across both chips if transfer spans the boundary. | Async read completes in background; main thread not blocked | ✅ (polling-based completion, dual-chip async limited to single chip per call) |
-| Fri | Benchmark PIO2 bandwidth: sequential read, sequential write, random 4 KB read. OPI: 75/100/133 MHz. MRAM: 104 MHz single vs dual. Compare MRAM non-volatile persistence (power cycle → data retained). | Bandwidth table (MB/s per operation at each config) | ⬜ (needs hardware) |
+| Mon | Write PIO2 QSPI programs — 4 inline PIO programs: qspi_a_write, qspi_a_read (Channel A: SM0+SM1, GPIO 34–37/38/11/12), qspi_b_write, qspi_b_read (Channel B: SM2+SM3, GPIO 39–42/43/44/45). QSPI 4-bit protocol for both MRAM (MR10Q010) and PSRAM (APS6408L). Mode selected by `QspiVramMode`. | PIO programs assemble; `pio_add_program()` succeeds for both channels | ✅ (inline instruction arrays in mem_qspi_vram.cpp; 4 programs: qspi_a_write, qspi_a_read, qspi_b_write, qspi_b_read) |
+| Tue | Implement `QspiVramDriver::Initialize()` — switch on `QSPI_VRAM_MODE`: SINGLE_CHANNEL configures Channel A (SM0+SM1, GPIO 11/12/34–37, +38 as CS1). DUAL_CHANNEL also configures Channel B (SM2+SM3, GPIO 39–42/43/44/45). Per-chip auto-detect via RDID: MRAM (0x4B) or PSRAM (0x9F). Claim 2 DMA channels per active channel. | Each chip responds to read-ID (MRAM: 0x4B, PSRAM: 0x9F) | ✅ (mode switch, pin config, PIO setup, DMA claim all implemented; per-chip RDID verification) |
+| Wed | Implement `QspiVramDriver::ReadSync()` / `WriteSync()` — QSPI 4-bit DMA blocking, per-chip: MRAM uses WREN+Quad Write, Quad Read; PSRAM uses standard QSPI protocol. CS select via channel+chip index. Validate with test pattern (write 0xAA55… → read back) on each detected chip. | Read-back matches. Error rate = 0 for all detected chips. | ✅ (per-chip QSPI paths, cross-chip boundary handling, WREN; HW test pattern pending) |
+| Thu | Implement `QspiVramDriver::ReadAsync()` / `WriteAsync()` with DMA completion callback. Implement `Prefetch()` (async read into caller-provided SRAM buffer). For dual-chip channels, chain DMA across both chips if transfer spans the boundary. | Async read completes in background; main thread not blocked | ✅ (polling-based completion, dual-chip async limited to single chip per call) |
+| Fri | Benchmark QSPI VRAM bandwidth: sequential read, sequential write, random 4 KB read. Per-chip: MRAM 104 MHz, PSRAM ~52 MB/s. Compare single-channel vs dual-channel aggregate. Compare MRAM non-volatile persistence (power cycle → data retained). | Bandwidth table (MB/s per chip, per channel, aggregate) | ⬜ (needs hardware) |
 
-### Week 20: QSPI MRAM QMI + Memory Tier Manager
+### Week 20: Per-Chip Init + Memory Tier Manager
 | Day | Task | Deliverable | Status |
 |---|---|---|---|
-| Mon | Implement `QspiPsramDriver::Initialize()` — configure QMI CS1 based on auto-detected `QspiChipProfile`. **MRAM path:** WAKE (0xAB) → EQPI → WREN (0x06) → verify RDID (0x4B). **PSRAM path:** Reset (0x66/0x99) → QPI enable → verify RDID (0x9F). Both: configure `QMI_M1_TIMING` / `QMI_M1_RFMT` / `QMI_M1_WFMT`, enable XIP at `0x11000000`. | `*(volatile uint32_t*)0x11000000` reads back test data written via QMI direct mode | ✅ (full MRAM + PSRAM init paths, QMI timing/format config, RDID verification, XIP enabled) |
-| Tue | Implement `QspiPsramDriver::Map<T>()` / `MapWritable<T>()` — return typed pointers into XIP address space. Implement bump allocator (128 KB address space). | Read a struct directly from XIP pointer; `Write()` then `Map<T>()` round-trips correctly | ✅ (template XIP pointer access + bump allocator with alignment) |
-| Wed | Implement `MemTierManager::Initialize()` — detect available tiers (PIO2 mode? QSPI CS1 present? which chip?), read `QspiChipProfile` + `Pio2IsMram()` to set `config_.qspiHasRandomAccessPenalty` / `config_.pio2IsMram`, allocate SRAM cache arena (configurable, default 64 KB), initialize LRU tracking. | Manager reports tier availability + chip-aware weight table selection; cache arena allocated; graceful fallback if no external memory | ✅ (tier detect, dual weight tables, cache arena, LRU tracking, graceful null-driver fallback) |
-| Thu | Implement `MemTierManager::Register()` / `Unregister()` — assign MemRecord with base weight from ResClass, initial tier placement based on priority formula. Wire into `SceneState::AllocMesh()` / `AllocMaterial()` / `AllocTexture()`. | `CreateMesh` command → MemTierManager assigns tier; small mesh → SRAM, large → PIO2 | ✅ (base weight, priority, initial placement; wired through command_parser.cpp HandleMemSetResourceTier) |
+| Mon | Implement per-chip initialization for each detected chip on Channel A and Channel B. **MRAM path:** WAKE (0xAB) → EQPI → WREN (0x06) → verify RDID (0x4B). **PSRAM path:** Reset (0x66/0x99) → QPI enable → verify RDID (0x9F). Configure PIO2 timing per chip type. All access indirect via PIO2 DMA (no XIP). | Test data round-trips correctly through PIO2 DMA for each detected chip | ✅ (full MRAM + PSRAM init paths per chip, PIO2 timing config, RDID verification, DMA access) |
+| Tue | Implement `QspiVramDriver::Alloc()` / `Free()` — free-list allocator per channel (first-fit, max 64 blocks, alignment). Implement bump allocator fallback. Each channel tracks capacity from detected chips. | Alloc/free cycle round-trips correctly; capacity reflects detected chips | ✅ (free-list allocator with alignment + per-channel capacity tracking) |
+| Wed | Implement `MemTierManager::Initialize()` — detect available tiers (QSPI VRAM mode? which channels? which chips?), read per-chip `QspiChipProfile` + `QspiChipIsMram()` to set per-channel `config_.qspiAHasRandomAccessPenalty` / `config_.qspiAIsMram` / `config_.qspiBHasRandomAccessPenalty` / `config_.qspiBIsMram`, allocate SRAM cache arena (configurable, default 64 KB), initialize LRU tracking. | Manager reports tier availability + chip-aware weight table selection; cache arena allocated; graceful fallback if no external memory | ✅ (tier detect, dual weight tables, cache arena, LRU tracking, graceful null-driver fallback) |
+| Thu | Implement `MemTierManager::Register()` / `Unregister()` — assign MemRecord with base weight from ResClass, initial tier placement based on priority formula. Wire into `SceneState::AllocMesh()` / `AllocMaterial()` / `AllocTexture()`. | `CreateMesh` command → MemTierManager assigns tier; small mesh → SRAM, large → QSPI-A | ✅ (base weight, priority, initial placement; wired through command_parser.cpp HandleMemSetResourceTier) |
 | Fri | Implement `MemTierManager::RecordAccess()` + `BeginFrame()` + `EndFrame()` — per-frame score decay, `framesSinceAccess` tracking, automatic weight recalculation for dynamic resources. | Score decays correctly; unused resources see `framesSinceAccess` climb | ✅ (score decay ×7/8, framesSinceAccess, demotion/promotion thresholds, dirty cache flush in EndFrame) |
 
 ### Week 21: Prefetch Pipeline + Validation + Regression
 | Day | Task | Deliverable | Status |
 |---|---|---|---|
-| Mon | Implement `MemTierManager::PrefetchForDrawList()` — scan draw list, issue DMA prefetch for PIO2-resident textures/meshes needed this frame. Overlap with QuadTree rebuild on Core 0. | DMA prefetch completes before rasterizer starts; UART log shows prefetch hit rate | ✅ (draw list scan, DMA prefetch, wired into gpu_core.cpp render loop) |
-| Tue | Implement `MemTierManager::Promote()` / `Demote()` — move resources between tiers based on priority. Promote: PIO2→SRAM (DMA copy) or QSPI→SRAM (memcpy). Demote: SRAM→PIO2 (DMA write) or SRAM→QSPI (write-through). Handle dirty flag. | Resources migrate correctly; data integrity preserved after round-trip | ✅ (Demote has full data writeback; Promote loads data via cache line DMA/memcpy) |
-| Wed | Implement SRAM cache eviction: LRU with dirty write-back. When cache is full and new prefetch needed, evict oldest clean line (or write-back oldest dirty line). | Cache cycling works under memory pressure; no data loss | ✅ (LRU eviction with dirty write-back for OPI + QSPI tiers) |
-| Thu | **Regression test (CRITICAL):** Run `ProtogenHUB75Animation` with `PIO2_MEM_MODE=NONE` and `QSPI_CS1_ENABLED=false`. FPS must be ≥ M7 result (zero regression). Then enable each PIO2 mode and QSPI tier individually and measure: FPS must be ≥ same threshold. | SRAM-only FPS = M7 baseline ± 1%. Tiered FPS ≥ baseline. | ⬜ (needs hardware) |
-| Fri | Stress test: 50 textures (exceeds SRAM budget) → tier system spills to PIO2/QSPI. Rapid material swaps. Verify no visual glitches, no stalls, no memory leaks. Update docs + gpu_config.h comments. | All textures render correctly; promotion/demotion cycle measured; docs updated | ⬜ (needs hardware) |
+| Mon | Implement `MemTierManager::PrefetchForDrawList()` — scan draw list, issue DMA prefetch for QSPI-A/B-resident textures/meshes needed this frame. Overlap with QuadTree rebuild on Core 0. | DMA prefetch completes before rasterizer starts; UART log shows prefetch hit rate | ✅ (draw list scan, DMA prefetch, wired into gpu_core.cpp render loop) |
+| Tue | Implement `MemTierManager::Promote()` / `Demote()` — move resources between tiers based on priority. Promote: QSPI-A/B→SRAM (DMA copy). Demote: SRAM→QSPI-A/B (DMA write). Handle dirty flag. | Resources migrate correctly; data integrity preserved after round-trip | ✅ (Demote has full data writeback; Promote loads data via cache line DMA) |
+| Wed | Implement SRAM cache eviction: LRU with dirty write-back. When cache is full and new prefetch needed, evict oldest clean line (or write-back oldest dirty line). | Cache cycling works under memory pressure; no data loss | ✅ (LRU eviction with dirty write-back for QSPI-A + QSPI-B tiers) |
+| Thu | **Regression test (CRITICAL):** Run `ProtogenHUB75Animation` with `QSPI_VRAM_MODE=NONE`. FPS must be ≥ M7 result (zero regression). Then enable SINGLE_CHANNEL and DUAL_CHANNEL modes individually and measure: FPS must be ≥ same threshold. | SRAM-only FPS = M7 baseline ± 1%. Tiered FPS ≥ baseline. | ⬜ (needs hardware) |
+| Fri | Stress test: 50 textures (exceeds SRAM budget) → tier system spills to QSPI-A/B. Rapid material swaps. Verify no visual glitches, no stalls, no memory leaks. Update docs + gpu_config.h comments. | All textures render correctly; promotion/demotion cycle measured; docs updated | ⬜ (needs hardware) |
 
 **Exit criteria:**
-- PIO2 external memory (all 3 modes) and QSPI CS1 both functional and benchmarked.
+- QSPI VRAM (both channels, all detected chips) functional and benchmarked.
 - Tier system correctly places resources and migrates them based on score + weight.
 - SRAM-only path has **zero performance regression** vs M7 baseline.
 - External memory adds capacity (more textures/meshes) without reducing FPS.
-- Graceful degradation: firmware runs on boards with no external memory, QSPI MRAM only, OPI only, or both.
+- Graceful degradation: firmware runs on boards with no external memory, single-channel QSPI only, or dual-channel QSPI.
 
 **Dependencies:**
-- RP2350 QFN-80 package required for OPI PSRAM mode (GPIO 34–41). QFN-60 (Pico 2) supports QSPI MRAM on PIO2 (GPIO 34–37) and QSPI CS1.
-- APS6408L-OBQ (or compatible OPI PSRAM) for Tier 1 OPI testing.
-- 1× or 2× Everspin MR10Q010 MRAM (128 KB each, QSPI, dual-supply 3.0–3.6V / 1.7–1.9V) for Tier 1 MRAM testing.
-- Tier 2 testing: MR10Q010 MRAM or APS6408L PSRAM on QMI CS1. Auto-detect probes both.
+- RP2350B (QFN-80, 48 GPIO) required for external QSPI VRAM (GPIO 34–45). RP2350A (QFN-60, 30 GPIO) has no external VRAM — SRAM-only.
+- 1–4× APS6408L PSRAM (8 MB each, QSPI) and/or MR10Q010 MRAM (128 KB each, QSPI, dual-supply 3.0–3.6V / 1.7–1.9V) for VRAM testing.
+- Channel A testing: up to 2 chips on CS0 + CS1. Channel B testing: up to 2 chips on CS0 + CS1. Auto-detect probes all populated slots.
 
 **Existing implementation (fully coded):**
-- `memory/mem_tier.h` + `mem_tier.cpp` — MemTierManager class (~634 lines), MemRecord, ResClass weights, SRAM cache arena, LRU eviction with dirty write-back, `pio2IsMram` / `pio2HasRandomAccessPenalty` fields, dual weight tables
-- `memory/mem_opi_psram.h` + `mem_opi_psram.cpp` — `OpiPsramDriver` (~580 lines), 3 PIO2 modes (OPI 8-bit, QSPI dual MRAM, QSPI single MRAM), inline PIO programs, DMA Read/WriteSync+Async, Prefetch, bump allocator
-- `memory/mem_qspi_psram.h` + `mem_qspi_psram.cpp` — QspiPsramDriver (~290 lines), QMI CS1 XIP, MRAM/PSRAM auto-init, Map<T> templates, bump allocator, cache invalidation
-- `gpu_config.h` — `Pio2MemMode` enum, `PIO2_MEM_MODE` master switch, per-mode pin/clock/capacity constants, derived `Pio2MemCapacity()`/`Pio2DataPinCount()`/`Pio2IsMram()`. `QspiChipType` enum, `QspiChipProfile`, built-in profiles, `QSPI_CS1_ENABLED`, `MEM_TIER_*` config + legacy OPI aliases (all disabled by default)
+- `memory/mem_tier.h` + `mem_tier.cpp` — MemTierManager class (~634 lines), MemRecord, ResClass weights, SRAM cache arena, LRU eviction with dirty write-back, `qspiAIsMram` / `qspiAHasRandomAccessPenalty` / `qspiBIsMram` / `qspiBHasRandomAccessPenalty` fields, dual weight tables
+- `memory/mem_qspi_vram.h` + `mem_qspi_vram.cpp` — `QspiVramDriver` (~580 lines), dual-channel QSPI (Channel A: SM0+SM1, Channel B: SM2+SM3), per-chip auto-detect (MRAM/PSRAM), inline PIO programs, DMA Read/WriteSync+Async, Prefetch, free-list allocator
+- (removed: `memory/mem_qspi_psram.h` + `mem_qspi_psram.cpp` — old QMI CS1 XIP driver merged into QspiVramDriver)
+- `gpu_config.h` — `QspiVramMode` enum, `QSPI_VRAM_MODE` master switch, per-channel pin/clock/capacity constants, derived `QspiVramCapacity()`/`QspiVramPinCount()`/`QspiChipIsMram()`. `QspiChipType` enum, `QspiChipProfile`, built-in profiles, `MEM_TIER_*` config
 - `command_parser.cpp` — All 7 memory opcode handlers (0x30–0x3F) fully implemented with tier-routed I/O
 - `gpu_core.cpp` — MemTierManager initialized with chip-aware config, wired into render loop (BeginFrame/Prefetch/EndFrame)
-- `i2c_slave.cpp` — Real QMI direct-mode VRAM probes (RDID 0x4B/0x9F), VRAM status reporting
+- `i2c_slave.cpp` — Real PIO2 QSPI VRAM probes (RDID 0x4B/0x9F per chip), VRAM status reporting
 
 **GPU Memory Access API (fully implemented):**
 - 7 new SPI commands (0x30–0x3F) in `PglOpcodes.h`: `CMD_MEM_WRITE`, `CMD_MEM_READ_REQUEST`, `CMD_MEM_SET_RESOURCE_TIER`, `CMD_MEM_ALLOC`, `CMD_MEM_FREE`, `CMD_FRAMEBUFFER_CAPTURE`, `CMD_MEM_COPY`
 - 4 new I2C registers (0x0C–0x0F): `MEM_TIER_INFO`, `MEM_READ_ADDR`, `MEM_READ_DATA`, `MEM_ALLOC_RESULT`
 - Host-side encoder methods in `PglEncoder.h`, GPU-side handlers fully implemented in `command_parser.cpp`
 - Scene state expanded with `lastAllocResult`, `memTierInfo`, and 4 KB staging buffer for I2C readback
-- All 7 handler implementations use PIO2/QSPI drivers and `MemTierManager` with tier-routed I/O
+- All 7 handler implementations use QSPI VRAM drivers and `MemTierManager` with tier-routed I/O
 - See `GPU_API_Design.md` §9, `ProtoGL_API_Spec.md` §4.4–4.5, `Communication_Protocol.md`
 
 ### M8 Audit Notes
 
 **All M8 code deliverables verified:**
-- 4 inline PIO programs in `mem_opi_psram.cpp`: opi_write (3 insns), opi_read (2 insns), qspi_write (3 insns), qspi_read (2 insns) ✅
-- `OpiPsramDriver::Initialize()` — mode switch, pin config, PIO SM setup, DMA claim via `dma_claim_unused_channel()` ✅
-- `OpiPsramDriver::ReadSync()`/`WriteSync()` — dual-path OPI+MRAM, cross-chip boundary handling, WREN before MRAM writes ✅
-- `OpiPsramDriver::ReadAsync()`/`WriteAsync()`/`Prefetch()` — polling-based completion (GetDmaStatus/WaitDma) ✅
-- `QspiPsramDriver::Initialize()` — MRAM (WAKE→EQPI→WREN, RDID 0x4B) and PSRAM (Reset→QPI, RDID 0x9F) paths, QMI timing/format config ✅
-- `QspiPsramDriver::Map<T>()`/`MapWritable<T>()` — XIP pointer templates, bump allocator with alignment ✅
+- 4 inline PIO programs in `mem_qspi_vram.cpp`: qspi_a_write (3 insns), qspi_a_read (2 insns), qspi_b_write (3 insns), qspi_b_read (2 insns) ✅
+- `QspiVramDriver::Initialize()` — mode switch, per-channel pin config, PIO SM setup, DMA claim via `dma_claim_unused_channel()` ✅
+- `QspiVramDriver::ReadSync()`/`WriteSync()` — per-chip QSPI paths, cross-chip boundary handling, WREN before MRAM writes ✅
+- `QspiVramDriver::ReadAsync()`/`WriteAsync()`/`Prefetch()` — polling-based completion (GetDmaStatus/WaitDma) ✅
+- Per-chip initialization — MRAM (WAKE→EQPI→WREN, RDID 0x4B) and PSRAM (Reset→QPI, RDID 0x9F) paths per chip, PIO2 timing config ✅
+- `QspiVramDriver::Alloc()`/`Free()` — free-list allocator per channel, per-chip capacity tracking ✅
 - `MemTierManager::Initialize()` — tier detection, dual weight tables (PSRAM vs MRAM), SRAM cache arena, LRU tracking ✅
 - `MemTierManager::Register()`/`Unregister()` — base weight, priority formula, initial placement, wired via command parser ✅
 - `MemTierManager::RecordAccess()`/`BeginFrame()`/`EndFrame()` — score decay (×7/8), framesSinceAccess, dirty cache flush ✅
 - `MemTierManager::PrefetchForDrawList()` — draw list scan, DMA prefetch, wired into gpu_core.cpp render loop ✅
-- `MemTierManager::Promote()` — loads data via DMA (OPI) or memcpy (QSPI) into SRAM cache line ✅
-- `MemTierManager::Demote()` — writes back data to OPI (WriteSync) or QSPI (Write), handles allocation ✅
-- SRAM cache eviction — LRU with dirty write-back for both OPI and QSPI tiers ✅
+- `MemTierManager::Promote()` — loads data via DMA (QSPI-A/B) into SRAM cache line ✅
+- `MemTierManager::Demote()` — writes back data to QSPI-A/B (WriteSync), handles allocation ✅
+- SRAM cache eviction — LRU with dirty write-back for both QSPI-A and QSPI-B tiers ✅
 - All 7 memory opcode handlers (0x30–0x3F) fully implemented with tier-routed I/O ✅
 - `gpu_core.cpp` integration — BeginFrame/PrefetchForDrawList/EndFrame in render loop, chip-aware config ✅
-- CMakeLists.txt — all 3 `.cpp` memory sources listed ✅
+- CMakeLists.txt — all memory `.cpp` sources listed ✅
 
 **Bugs fixed (this audit):**
-- **Promote() data loading gap** — Previously only updated tier metadata without loading data from external memory. Fixed: now allocates SRAM cache line and performs DMA copy (OPI) or memcpy (QSPI XIP) to bring data into SRAM.
-- **QSPI eviction write-back gap** — LRU eviction only wrote back dirty OPI-backed cache lines. Fixed: eviction now also writes back QSPI-backed dirty cache lines via `qspi_->Write()`.
+- **Promote() data loading gap** — Previously only updated tier metadata without loading data from external memory. Fixed: now allocates SRAM cache line and performs DMA copy from QSPI VRAM to bring data into SRAM.
+- **QSPI-B eviction write-back gap** — LRU eviction only wrote back dirty QSPI-A-backed cache lines. Fixed: eviction now also writes back QSPI-B-backed dirty cache lines via `qspiVram_->WriteSync()`.
 
 **Known limitations (acceptable):**
 - **No bandwidth benchmarks** (W19 Fri) — requires hardware for meaningful measurements
 
 **Improvements implemented (post-audit):**
 
-1. **RDID verification added to OPI PIO2 driver** (`mem_opi_psram.cpp` `VerifyChipId()`):
-   - OPI PSRAM: sends 0x9F via PIO, reads manufacturer ID (expects 0x0D for AP Memory APS6408L)
-   - QSPI MRAM: sends 0x9F via PIO to each chip, reads MFR+device (expects 0x07 for Everspin MR10Q010)
-   - Called during `Initialize()` — logs result, sets `rdidVerified_` flag. Non-fatal on failure (driver proceeds with warning).
+1. **RDID verification added to QSPI VRAM driver** (`mem_qspi_vram.cpp` `VerifyChipId()`):
+   - PSRAM: sends 0x9F via PIO, reads manufacturer ID (expects 0x0D for AP Memory APS6408L)
+   - MRAM: sends 0x9F via PIO to each chip, reads MFR+device (expects 0x07 for Everspin MR10Q010)
+   - Called during `Initialize()` per chip — logs result, sets `rdidVerified_` flag. Non-fatal on failure (driver proceeds with warning).
 
 2. **DMA IRQ callback mechanism** (`SetupDmaIrq()`, `DmaIrqHandler()`, `SetDmaCallback()`):
    - Claims DMA_IRQ_0 (falls back to DMA_IRQ_1 if taken)
    - Static IRQ handler via `s_irqInstance_` singleton trampoline
-   - On RX/TX DMA completion: stops PIO SM, deasserts CS, invokes user callback (`OpiDmaCallback`)
+   - On RX/TX DMA completion: stops PIO SM, deasserts CS, invokes user callback (`QspiDmaCallback`)
    - Async transfers still work via polling (`WaitDma()`) — IRQ callback is opt-in
    - Proper cleanup in `Shutdown()` (disable channels, remove handler)
 
@@ -603,17 +604,17 @@ Placement policy: `priority = α × weight + β × score`. See `memory/mem_tier.
    - `WaitDma()` updated: after waiting for first chip, starts pending chip-1 read synchronously and waits again
    - Both IRQ-driven and polling paths handle the two-phase transfer correctly
 
-4. **Free-list allocator replaces bump allocator** (both OPI and QSPI drivers):
+4. **Free-list allocator replaces bump allocator** (QSPI VRAM driver, both channels):
    - `FreeBlock` array (max 64 entries) with first-fit search and alignment support
    - `Alloc()`: first-fit with padding/split, returns aligned address
    - `Free()`: infers allocation size from gap between free blocks, inserts freed block, coalesces
    - `CoalesceFreeList()`: insertion-sort by address + adjacent block merging
    - `FreeAll()`: resets to single free block covering full capacity
    - `Available()`: sums all free block sizes
-   - `MemTierManager::Unregister()` now calls `opi_->Free()` / `qspi_->Free()` for individual resource deallocation
+   - `MemTierManager::Unregister()` now calls `qspiVram_->Free()` for individual resource deallocation
 
 **Remaining (needs hardware):**
-- W19 Fri: PIO2 bandwidth benchmarks (sequential/random read+write at various clock speeds)
+- W19 Fri: QSPI VRAM bandwidth benchmarks (sequential/random read+write at various clock speeds)
 - W21 Thu: Regression test (SRAM-only FPS vs tiered FPS)
 - W21 Fri: Stress test (50+ textures, rapid material swaps, memory pressure)
 
@@ -825,6 +826,164 @@ The tile scheduler solves this with:
 
 ---
 
+## M11: Display Abstraction + Memory Pools (Week 28–30)
+
+> **Goal:** Extract a unified `DisplayDriver` interface from the existing HUB75 driver,
+> implement a second display driver (SPI LCD) to validate the abstraction, and add
+> pool-based memory allocation for zero-fragmentation resource management.
+>
+> Design docs: [Display_Frontend_Design.md](Display_Frontend_Design.md),
+> [Memory_Management_API.md](Memory_Management_API.md)
+
+### Week 28: DisplayDriver Interface Extraction
+
+| Day | Task | Deliverable | Status |
+|---|---|---|---|
+| Mon | Define `DisplayDriver` abstract base class: `Init()`, `SwapBuffers()`, `SetBrightness()`, `GetTimingInfo()`, `GetCaps()` | `display/display_driver.h` header | ⬜ |
+| Tue | Define `DisplayCaps` struct and `DisplayManager` singleton interface | `display/display_manager.h` header | ⬜ |
+| Wed | Refactor `hub75_driver.cpp` to implement `DisplayDriver`: move PIO/DMA init into `Init()`, BCM conversion into `SwapBuffers()` | `Hub75Driver : DisplayDriver` compiles | ⬜ |
+| Thu | Implement `DisplayManager::Init()`, `SelectDriver()`, PIO allocation validation | DisplayManager routes frames through Hub75Driver | ⬜ |
+| Fri | Wire `gpu_core.cpp` to use `DisplayManager::SwapBuffers()` instead of direct HUB75 calls | Existing HUB75 output unchanged (regression pass) | ⬜ |
+
+### Week 29: SPI LCD Driver + Display Commands
+
+| Day | Task | Deliverable | Status |
+|---|---|---|---|
+| Mon | Implement `SpiLcdDriver::Init()` — hardware SPI + DMA configuration for ST7789/ILI9341 | SPI LCD initializes with correct register sequence | ⬜ |
+| Tue | Implement `SpiLcdDriver::SwapBuffers()` — RGB565 DMA transfer with window addressing | Test pattern on SPI LCD at ≥30 FPS | ⬜ |
+| Wed | Implement `SpiLcdDriver::SetRegion()` for partial updates | Partial-refresh writes only changed region | ⬜ |
+| Thu | Add `CMD_DISPLAY_CONFIGURE` (0x90) and `CMD_DISPLAY_SET_REGION` (0x91) to command parser | Commands accepted and configure active driver | ⬜ |
+| Fri | Add I2C registers: `DISPLAY_MODE` (0x15), `DISPLAY_CAPS` (0x16). Host `PglDevice` methods. | Host can query display capabilities and switch modes | ⬜ |
+
+### Week 30: Memory Pools + Host Integration
+
+| Day | Task | Deliverable | Status |
+|---|---|---|---|
+| Mon | Implement `MemPool` allocator in `mem_tier.cpp`: fixed-size block pool with free-list | Pool create/alloc/free/destroy functional | ⬜ |
+| Tue | Add `CMD_MEM_POOL_CREATE` (0x38), `CMD_MEM_POOL_ALLOC` (0x39), `CMD_MEM_POOL_FREE` (0x3A), `CMD_MEM_POOL_DESTROY` (0x3B) to parser | Pool commands round-trip through SPI | ⬜ |
+| Wed | Add `MEM_POOL_STATUS` (0x18) I2C register. Host-side `PglEncoder` pool methods. | Host can create/query pools | ⬜ |
+| Thu | Stress test: 1000× alloc/free cycle, verify zero fragmentation, measure overhead | Benchmark log: pool alloc < 1 µs, zero fragmentation | ⬜ |
+| Fri | Integration test: SPI LCD + pool allocation + 3D rendering. Update docs. | M11 exit criteria met | ⬜ |
+
+### M11 Exit Criteria
+- `DisplayDriver` ABC fully extracted; `Hub75Driver` implements it
+- `SpiLcdDriver` renders 3D scene at ≥30 FPS on SPI LCD
+- `DisplayManager` validates PIO allocation (conflicting drivers rejected)
+- Memory pool alloc/free cycle 1000× with zero fragmentation
+- Pool alloc latency < 1 µs (O(1) free-list pop)
+- `CMD_DISPLAY_CONFIGURE`, `CMD_MEM_POOL_CREATE` round-trip functional
+- HUB75 output unchanged (regression test)
+- All new code compiles with `QSPI_VRAM_MODE=NONE` (SRAM-only path)
+
+---
+
+## M12: DVI-D + 2D Primitives + Defragmentation (Week 31–33)
+
+> **Goal:** Add DVI-D display output, implement core 2D drawing primitives with
+> single-layer compositing, and add memory defragmentation.
+>
+> Design docs: [Display_Frontend_Design.md](Display_Frontend_Design.md),
+> [2D_Graphics_And_Compositing.md](2D_Graphics_And_Compositing.md),
+> [Memory_Management_API.md](Memory_Management_API.md)
+
+### Week 31: DVI-D Display Driver
+
+| Day | Task | Deliverable | Status |
+|---|---|---|---|
+| Mon | Research PIO TMDS encoding: 3 SM × 10b/8b serializers, timing for 640×480@60 Hz | TMDS PIO program drafted | ⬜ |
+| Tue | Implement `DviDriver::Init()` — configure 3 PIO SMs + 3 DMA channels for TMDS | PIO programs load and clock correctly | ⬜ |
+| Wed | Implement RGB565→RGB888→TMDS conversion in `DviDriver::SwapBuffers()` | TMDS signal on scope matches DVI-D spec | ⬜ |
+| Thu | Test on PicoVision or custom DVI-D board: verify stable 640×480 output | Color bars visible on DVI-D monitor | ⬜ |
+| Fri | Implement `QspiLcdDriver` skeleton (PIO-driven 4-bit bus) | QSPI LCD init functional | ⬜ |
+
+### Week 32: 2D Drawing Primitives
+
+| Day | Task | Deliverable | Status |
+|---|---|---|---|
+| Mon | Create `Rasterizer2D` namespace: `DrawRect()` (filled + outline), `DrawLine()` (Bresenham) | Rect and line render to layer buffer | ⬜ |
+| Tue | `DrawCircle()` (midpoint algorithm), `DrawRoundedRect()` (rect + quarter-circle corners) | Circles and rounded rects render correctly | ⬜ |
+| Wed | `DrawTriangle2D()` (barycentric fill), `DrawArc()` (incremental arc) | All 6 primitives functional | ⬜ |
+| Thu | Implement `Layer` resource: create/destroy, framebuffer allocation, properties (opacity, blend, clip) | `CMD_LAYER_CREATE` (0xA0) through `CMD_LAYER_SET_PROPS` (0xA2) in parser | ⬜ |
+| Fri | Add drawing commands to parser: `CMD_DRAW_RECT_2D` (0xA3) through `CMD_DRAW_CIRCLE_2D` (0xA5) | 2D commands render to layer buffer | ⬜ |
+
+### Week 33: Compositing + Defragmentation + Persistence + Direct FB Write
+
+| Day | Task | Deliverable | Status |
+|---|---|---|---|
+| Mon | Implement simple compositor: blend Layer 1 (2D) over Layer 0 (3D) after rasterization. Add remaining 2D commands: `CMD_DRAW_SPRITE` (0xA6), `CMD_LAYER_CLEAR` (0xA9), visibility. | 2D overlay visible on 3D scene; sprites and layer clear functional | ⬜ |
+| Tue | Implement `Defragment()` in `mem_tier.cpp`: walk allocations, compact, update pointers. Add `CMD_MEM_DEFRAG` (0x3C) to parser, `MEM_DEFRAG_STATUS` (0x19) I2C register. | Incremental defrag reduces fragmentation by ≥50%; host can trigger and monitor defrag | ⬜ |
+| Wed | **Resource Persistence — flash manifest + writeback queue:** Implement `PglFlashManifestHeader` / `PglFlashManifestEntry` in firmware (512 KB reserved at `PGL_FLASH_MANIFEST_ADDR = 0x10380000`, max 64 entries, CRC-32 per entry). Implement background writeback queue: 4 KB staging buffer, incremental 4 KB/frame copy from VRAM→flash via `flash_range_program()`. Add QSPI chip type detection to persistence decision tree (MRAM = non-volatile, zero-cost persistence; PSRAM = volatile, requires flash writeback). | Flash manifest struct compiled; writeback queue functional on synthetic test; MRAM bypass path implemented | ⬜ |
+| Thu | **Persistence commands + boot restore:** Implement `CMD_PERSIST_RESOURCE` (0x46), `CMD_RESTORE_RESOURCE` (0x47), `CMD_QUERY_PERSISTENCE` (0x48) in command parser. Add `MEM_PERSIST_STATUS` (0x1C) I2C register + `SPI_READ_PERSIST_STATUS` (0xEB). Implement boot-time auto-restore: scan flash manifest at startup → re-allocate resources → update `MemTierManager` records. Add `PGL_MBOX_GPU_PERSIST_STATUS` (Slot 9) mailbox notification on writeback completion. Host-side encoder methods: `PersistResource()`, `RestoreResource()`, `QueryPersistence()`, `ErasePersisted()`. | All 3 persistence commands round-trip via SPI; boot restore recovers resources after power cycle; MRAM path skips flash writeback; host encoder methods compile | ⬜ |
+| Fri | **Direct framebuffer write + integration test:** Implement `CMD_WRITE_FRAMEBUFFER` (0x45) in command parser — direct `memcpy` to back buffer with x/y/w/h region + optional `layerId` targeting. When layerId=0xFF, writes to default output FB; otherwise writes to compositor layer buffer. Host-side `WriteFramebuffer()` encoder method. Integration test: DVI-D + 2D overlay + defrag + persistence (PSRAM writeback + MRAM zero-cost path) + direct FB write. Update all docs. | Direct FB write functional; integration test passes; M12 exit criteria met | ⬜ |
+
+### M12 Exit Criteria
+- DVI-D output at 640×480@60 Hz on compatible display
+- QSPI LCD driver skeleton functional
+- All 6 2D primitives render correctly (rect, line, circle, rounded rect, triangle, arc)
+- Single-layer compositing: 3D scene + 2D overlay at ≥45 FPS (128×64)
+- Defrag reduces fragmentation by ≥50% on synthetic workload
+- No 3D performance regression (rasterizer + shaders unaffected)
+- **Flash manifest correctly stores/restores up to 64 resource entries across power cycles**
+- **PSRAM→flash writeback completes in background without frame-time spikes (≤0.5 ms/frame for 4 KB staging)**
+- **MRAM resources persist without flash writeback (zero-cost path verified)**
+- **`CMD_PERSIST_RESOURCE`, `CMD_RESTORE_RESOURCE`, `CMD_QUERY_PERSISTENCE` round-trip correctly via SPI**
+- **`CMD_WRITE_FRAMEBUFFER` writes pixel data to output FB or compositor layer at correct coordinates**
+- **Boot-time auto-restore recovers persisted resources from flash manifest within 100 ms**
+
+---
+
+## M13: Multi-Display + Full Compositing + Streaming (Week 34–36)
+
+> **Goal:** Complete the multi-display routing, full 8-layer compositing engine,
+> sprite/text rendering, and streaming upload with resource binding.
+>
+> Design docs: All three new design documents.
+
+### Week 34: Multi-Display + Sprite/Text
+
+| Day | Task | Deliverable | Status |
+|---|---|---|---|
+| Mon | Extend `DisplayManager` for 2+ simultaneous drivers: per-display framebuffer routing | 2 displays render independently | ⬜ |
+| Tue | Implement `CMD_DISPLAY_SYNC` (0x92) and `MULTI_DISPLAY_ROUTE` (0x17) I2C register | Synchronized frame swap across 2 displays | ⬜ |
+| Wed | Implement `CMD_DRAW_TEXT` (0xA7): font atlas texture lookup, glyph rendering | Text renders on 2D layer | ⬜ |
+| Thu | Implement `CMD_DRAW_SPRITE_BATCH` (0xA8): batched sprite submission with color key | Sprite batch renders ≥64 sprites in one command | ⬜ |
+| Fri | Implement `CMD_BILLBOARD_SPRITE` (0xAD): world-space → screen projection + depth test | Billboard sprites visible through 3D camera | ⬜ |
+
+### Week 35: Full 8-Layer Compositing
+
+| Day | Task | Deliverable | Status |
+|---|---|---|---|
+| Mon | Extend compositor to 8 layers: Z-order sorting, per-layer blend mode, clip rectangles | 4+ layers composite correctly | ⬜ |
+| Tue | Optimize compositor: skip transparent layers, early-out on full-opacity top layer | Compositor overhead < 0.5 ms for 4 layers at 128×64 | ⬜ |
+| Wed | Layer visibility toggle (`CMD_LAYER_SET_VISIBILITY`), dynamic Z-order changes | Layers can be shown/hidden and reordered at runtime | ⬜ |
+| Thu | Memory management for layers: automatic tier placement, QSPI VRAM spill for >4 layers | 8 layers render with QSPI VRAM backing | ⬜ |
+| Fri | Host-side `PglEncoder` integration: all 15 new 2D/layer methods functional | Full 2D API available from host | ⬜ |
+
+### Week 36: Streaming Upload + Resource Binding + Release
+
+| Day | Task | Deliverable | Status |
+|---|---|---|---|
+| Mon | Implement streaming state machine: `CMD_STREAM_BEGIN` (0x3D), `CMD_STREAM_DATA` (0x3E), `CMD_STREAM_COMMIT` (0x3F) | 64 KB texture streams across 4 frames correctly | ⬜ |
+| Tue | Implement `CMD_MEM_BIND_RESOURCE` (0x40), `CMD_MEM_UNBIND_RESOURCE` (0x41) | Resource bind/unbind preserves allocation across resource lifecycle | ⬜ |
+| Wed | Add I2C registers: `MEM_STREAM_STATUS` (0x1A), `MEM_BINDING_TABLE` (0x1B) | Host can monitor stream progress and active bindings | ⬜ |
+| Thu | Full integration test: 3D + 2D HUD + sprite overlay + I2C OLED status display + streaming texture | All subsystems functional simultaneously | ⬜ |
+| Fri | Final documentation update: all spec versions, schedule status, rollout plan | M13 exit criteria met; ProtoGL v0.7 feature-complete | ⬜ |
+
+### M13 Exit Criteria
+- 2 simultaneous displays render independently at ≥30 FPS each
+- Synchronized frame swap (`CMD_DISPLAY_SYNC`) verified with 2 displays
+- 4-layer compositing (3D + 3 UI layers) at ≥45 FPS on 128×64
+- 8-layer compositing functional with QSPI PSRAM VRAM backing
+- Text rendering with font atlas textures
+- Sprite batch: ≥64 sprites per command
+- Billboard sprites render through 3D projection
+- Streaming upload: 64 KB texture across 4 frames with correct result
+- Resource bind/unbind preserves allocation across resource destroy/recreate
+- ProtoGL_API_Spec.md updated to v0.7
+- All new I2C registers (0x15–0x1B) functional
+
+---
+
 ## Phase 2: Future GPU Targets (Post-Release)
 
 Phase 2 reuses the **identical ProtoGL host-side library** (`lib/ProtoGL/`) and `GPUDriverController`.
@@ -845,12 +1004,20 @@ Only the GPU firmware changes. The I2C capability query (0x09) lets the host aut
 |---|---|---|---|---|
 | R1 | Octal SPI signal integrity at 80 MHz on breadboard | High | Medium | Start at 40 MHz in M1/Week 4. Use series termination resistors (33 Ω). Keep traces < 10 cm. 64 MHz is safe fallback. |
 | R2 | RP2350 520 KB SRAM insufficient for complex scenes | Medium | Low | Budget shows 328 KB used / 520 KB total (37 % headroom). Implement `CMD_EVICT_MESH` if needed. Reduce `PGL_MAX_VERTICES` as last resort. |
-| R3 | PIO HUB75 + PIO Octal SPI + PIO2 external memory compete for state machines (RP2350 has 12 total: 3 PIO blocks × 4 SM) | Medium | Low | HUB75 needs 2 SM + 2 DMA. Octal SPI needs 1 SM + 1 DMA. PIO2 memory needs 2 SM + 2 DMA. Total: 5/12 SM, 5/12 DMA. Still ample headroom. |
+| R3 | PIO HUB75 + PIO Octal SPI + PIO2 QSPI VRAM compete for state machines (RP2350 has 12 total: 3 PIO blocks × 4 SM) | Medium | Low | HUB75 needs 2 SM + 2 DMA. Octal SPI needs 1 SM + 1 DMA. QSPI VRAM needs up to 4 SM + 4 DMA (2 per channel). Total: 7/12 SM, 7/12 DMA for dual-channel. Still headroom for DVI-D or other peripherals. |
 | R4 | Material system too large for RP2350 flash (4 MB) | Low | Low | ProtoTracer materials are small (no large lookup tables). Complex materials (TextEngine) stay on ESP32 as pre-rendered textures. |
 | R5 | QuadTree rebuild too slow for 60 FPS | Medium | Low | O(N log N) for N triangles. Typical scenes: < 500 triangles. Profiling in M4/Week 11 will confirm. Fallback: reduce maxDepth. |
 | R6 | Dual-core sync overhead reduces rasterization speedup | Low | Medium | Multicore FIFO is 1 cycle. Barrier is a single atomic flag. Measured in M5/Week 13. |
 | R7 | ESP32-S3 PSRAM latency slows encoder | Low | Low | Encoder writes sequentially into PSRAM buffer — no random access. DMA reads are sequential too. No cache-miss penalty. |
-| R8 | PIO2 signal integrity at high clock speeds (OPI 150 MHz / MRAM 104 MHz) over GPIO 34–41 | Medium | Medium | OPI: start at 75 MHz (safe), add 33 Ω series on DQ, traces < 5 cm, 100 MHz fallback. MRAM QSPI: start at 80 MHz, traces < 3 cm, 104 MHz target. QFN-80 has better SI than breakout boards. |
-| R9 | SRAM cache arena (64 KB) reduces headroom for core subsystems | Medium | Low | Budget shows 68 KB free with cache. Cache size is configurable (`MEM_TIER_SRAM_CACHE_BUDGET`). Can reduce to 32 KB or disable. SRAM-only path unaffected when `PIO2_MEM_MODE` is `NONE` and `QSPI_CS1_ENABLED` is `false`. |
+| R8 | PIO2 QSPI signal integrity at 104 MHz over GPIO 34–45 | Medium | Medium | QSPI: start at 80 MHz (safe), add 33 Ω series on DQ lines, traces < 3 cm, 104 MHz target. RP2350B QFN-80 has better SI than breakout boards. Channel B uses GPIO 39–45 (shorter internal traces). |
+| R9 | SRAM cache arena (64 KB) reduces headroom for core subsystems | Medium | Low | Budget shows 68 KB free with cache. Cache size is configurable (`MEM_TIER_SRAM_CACHE_BUDGET`). Can reduce to 32 KB or disable. SRAM-only path unaffected when `QSPI_VRAM_MODE` is `NONE`. |
 | R10 | Memory tier promotion/demotion causes frame-time spikes | Medium | Medium | Limit promotions to 1–2 per frame. DMA prefetch overlaps with QuadTree rebuild (zero CPU). Evict only clean cache lines when possible (deferred dirty write-back). Profile in M8/Week 21. |
-| R11 | QFN-80 RP2350 package not available / hard to solder | Low | Medium | QSPI MRAM on PIO2 (Tier 1, DUAL/SINGLE modes) works on all RP2350 packages including QFN-60, only needs GPIO 34–37 (+38 for dual CS1). QSPI CS1 memory (Tier 2) also works on any package. Only OPI PSRAM mode requires QFN-80. System degrades gracefully. |
+| R11 | RP2350B (QFN-80) package not available / hard to solder | Low | Medium | RP2350A (QFN-60, 30 GPIO) has no external VRAM — firmware runs in SRAM-only mode. RP2350B (QFN-80, 48 GPIO) supports up to 2×2 QSPI external VRAM. System degrades gracefully: no external memory on QFN-60, single-channel on partial population, dual-channel on full population. |
+| R12 | DVI-D PIO TMDS requires 3 SMs on PIO0 — conflicts with HUB75 | Medium | Low | DVI-D and HUB75 are mutually exclusive by design. `DisplayManager` validates PIO allocation at `Init()` and rejects conflicting combinations. User selects display type via I2C `DISPLAY_MODE` register. |
+| R13 | 8-layer compositing exceeds SRAM budget (128 KB for 8×16 KB layers) | Medium | Medium | Limit SRAM layers to 4 (64 KB). Additional layers spill to QSPI VRAM via DMA prefetch. Layer count auto-limited based on `sramFreeKB` from `MEM_TIER_INFO`. |
+| R14 | 2D drawing primitives add latency to the frame pipeline | Low | Low | 2D draw lists execute on Core 0 after 3D rasterization. Typical 2D workload (20 rects + 5 sprites) < 0.2 ms on CM33 @ 150 MHz. No impact on 3D pipeline. |
+| R15 | Streaming upload stalls frame pipeline during `CMD_STREAM_DATA` parsing | Medium | Low | Stream data is written directly to target tier address — no intermediate copy for QSPI VRAM tiers (DMA). Parsing overhead is O(chunkSize) memcpy only. Chunk size limited to 4 KB per command. |
+| R16 | Defragmentation moves live data, causing visual artifacts | Medium | Medium | Incremental mode moves at most `maxMoveKB` per frame. All resource pointers use an indirection table — no dangling references after relocation. Defrag runs between frames (after EndFrame, before BeginFrame). |
+| R17 | Flash writeback stalls frame pipeline during `flash_range_program()` | Medium | Medium | Writeback uses 4 KB staging buffer, incremental 4 KB/frame. `flash_range_program()` briefly disables XIP (2–5 ms per 4 KB sector). Run writeback between frames (post-EndFrame). Limit to 1 sector per frame to cap worst-case spike at ~5 ms. If unacceptable, defer writeback to idle frames (no draw list). |
+| R18 | Flash wear from frequent resource persistence | Low | Low | Typical NOR flash endurance: 100K program/erase cycles. With 512 KB reserved and wear levelling across 128 sectors, each sector sees `total_writes / 128` cycles. At 10 persists/day, each sector: ~29 writes/year → decades of lifetime. Add wear counter in manifest header for monitoring. |
+| R19 | Direct framebuffer write conflicts with active 3D rasterization | Low | Low | `CMD_WRITE_FRAMEBUFFER` executes during command parse phase (before rasterization). If both DrawObject and WriteFramebuffer in same frame, 3D renders first, then direct-write regions overwrite. When targeting a compositor layer, compositor blends normally at EndFrame. No race condition — sequential by design. |
