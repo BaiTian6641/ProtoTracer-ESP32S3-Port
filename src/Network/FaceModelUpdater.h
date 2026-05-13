@@ -6,12 +6,11 @@ struct FaceUpdateConfig
 {
     const char *download_ssid;
     const char *download_password;
-    const char *face_json_url;
-    const char *face_checksum_url;
-    const char *face_path;
-    const char *auth_token;     // Optional Bearer token for private repos (e.g., Gitee)
-    const char *accept_header;  // Optional Accept header (e.g., "application/vnd.github.v3.raw")
+    const char *base_url;
+    const char *auth_token;
+    const char *accept_header;
+    const char *auth_scheme;
 };
 
-// Ensure the face JSON is present and up to date; downloads if missing or outdated.
-bool EnsureUniversalFaceJson(const FaceUpdateConfig &config, M5UnitGLASS2 &display, bool verbose);
+// Ensure a device-specific or fallback universal face JSON is present and up to date.
+bool EnsureFaceModelJson(const FaceUpdateConfig &config, const String &deviceId, M5UnitGLASS2 &display, bool verbose);

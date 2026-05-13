@@ -189,9 +189,115 @@ private:
         return jsonFaceLoaded && jsonFace.Loaded() ? jsonFace.GetTransform() : nullptr;
     }
 
-    uint16_t GetMorphId(const char *name)
+    const char *ResolveMorphAlias(const char *name) const
     {
+        if (!name)
+        {
+            return nullptr;
+        }
+
+        String morphName = name;
+        if (morphName.equalsIgnoreCase("vrc_v_uh"))
+        {
+            return "vrc_v_dd";
+        }
+        if (morphName.equalsIgnoreCase("vrc_v_dd"))
+        {
+            return "vrc_v_uh";
+        }
+
+        return nullptr;
+    }
+
+    bool MorphNameEqualsIgnoreCase(const std::string &name, const char *candidate) const
+    {
+        return candidate && String(name.c_str()).equalsIgnoreCase(candidate);
+    }
+
+    int FindMorphIndex(const char *name) const
+    {
+        if (!(jsonFaceLoaded && jsonFace.Loaded()) || !name || !*name)
+        {
+            return -1;
+        }
+
         int idx = jsonFace.FindMorphIndexByName(name);
+        if (idx >= 0)
+        {
+            return idx;
+        }
+
+        const auto &names = jsonFace.GetMorphNames();
+        for (size_t i = 0; i < names.size(); ++i)
+        {
+            if (MorphNameEqualsIgnoreCase(names[i], name))
+            {
+                return static_cast<int>(i);
+            }
+        }
+
+        const char *alias = ResolveMorphAlias(name);
+        if (!alias)
+        {
+            return -1;
+        }
+
+        idx = jsonFace.FindMorphIndexByName(alias);
+        if (idx >= 0)
+        {
+            return idx;
+        }
+
+        for (size_t i = 0; i < names.size(); ++i)
+        {
+            if (MorphNameEqualsIgnoreCase(names[i], alias))
+            {
+                return static_cast<int>(i);
+            }
+        }
+
+        return -1;
+    }
+
+    bool IsFastVisemeMorph(const std::string &name) const
+    {
+        return name.rfind("vrc_v_", 0) == 0;
+    }
+
+    bool TryGetAutoLinkOverride(uint16_t morphId, AutoLinkSpec &specOut) const
+    {
+        for (const auto &spec : autoLinkSpecs)
+        {
+            if (GetMorphId(spec.name.c_str()) == morphId)
+            {
+                specOut = spec;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool IsFlippedMorph(uint16_t morphId, const char *name) const
+    {
+        for (const auto &fm : flippedMorphs)
+        {
+            if (fm.equalsIgnoreCase(name))
+            {
+                return true;
+            }
+            if (GetMorphId(fm.c_str()) == morphId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    uint16_t GetMorphId(const char *name) const
+    {
+        int idx = FindMorphIndex(name);
         return idx >= 0 ? static_cast<uint16_t>(idx) : 0xFFFF;
     }
 
@@ -199,10 +305,10 @@ private:
     {
         if (jsonFaceLoaded && jsonFace.Loaded())
         {
-            float *weight = jsonFace.GetMorphWeightReferenceByName(name);
-            if (weight != nullptr)
+            int idx = FindMorphIndex(name);
+            if (idx >= 0)
             {
-                return weight;
+                return jsonFace.GetMorphWeightReferenceByIndex(static_cast<size_t>(idx));
             }
         }
 
@@ -213,7 +319,15 @@ private:
     {
         if (jsonFaceLoaded && jsonFace.Loaded())
         {
-            jsonFace.SetMorphWeightByName(name, weight);
+            int idx = FindMorphIndex(name);
+            if (idx >= 0)
+            {
+                float *weightRef = jsonFace.GetMorphWeightReferenceByIndex(static_cast<size_t>(idx));
+                if (weightRef)
+                {
+                    *weightRef = weight;
+                }
+            }
         }
     }
 
@@ -233,6 +347,21 @@ private:
         }
     }
 
+    bool TryLoadFaceFromPath(const String &path)
+    {
+        if (!LittleFS.exists(path))
+        {
+            return false;
+        }
+
+        jsonFaceLoaded = jsonFace.Load(LittleFS, path.c_str());
+        if (jsonFaceLoaded)
+        {
+            Serial.printf("[INFO] Loaded face model from %s\n", path.c_str());
+        }
+        return jsonFaceLoaded;
+    }
+
     void ChangeInterpolationMethods()
     {
         eEA.SetInterpolationMethod(GetMorphId("vrc_v_ee"), EasyEaseInterpolation::Linear);
@@ -248,6 +377,9 @@ private:
 
     void LoadJsonFaceBlocking()
     {
+        const String preferredFacePath = deviceId.length() > 0 ? "/" + deviceId + String("_face.json") : String();
+        const String fallbackFacePath = "/universal_face.json";
+
         // Block until LittleFS mounts and the face json is successfully loaded.
         while (USE_JSON_FACE_MODEL && !jsonFaceLoaded)
         {
@@ -258,19 +390,41 @@ private:
                 continue;
             }
 
-            if (!LittleFS.exists("/universal_face.json"))
+            bool preferredExists = !preferredFacePath.isEmpty() && LittleFS.exists(preferredFacePath);
+            bool fallbackExists = LittleFS.exists(fallbackFacePath);
+
+            if (preferredExists && TryLoadFaceFromPath(preferredFacePath))
             {
-                Serial.println("[WARN] universal_face.json not found; waiting for file...");
-                delay(500);
-                continue;
+                return;
             }
 
-            jsonFaceLoaded = jsonFace.Load(LittleFS, "/universal_face.json");
-            if (!jsonFaceLoaded)
+            if (fallbackExists && TryLoadFaceFromPath(fallbackFacePath))
             {
-                Serial.println("[WARN] universal_face.json failed to load; retrying...");
-                delay(500);
+                return;
             }
+
+            if (preferredExists)
+            {
+                Serial.printf("[WARN] %s failed to load; retrying...\n", preferredFacePath.c_str());
+            }
+
+            if (fallbackExists)
+            {
+                Serial.printf("[WARN] %s failed to load; retrying...\n", fallbackFacePath.c_str());
+            }
+            else if (!preferredExists)
+            {
+                if (!preferredFacePath.isEmpty())
+                {
+                    Serial.printf("[WARN] Face model not found (%s or %s); waiting for file...\n", preferredFacePath.c_str(), fallbackFacePath.c_str());
+                }
+                else
+                {
+                    Serial.printf("[WARN] %s not found; waiting for file...\n", fallbackFacePath.c_str());
+                }
+            }
+
+            delay(500);
         }
     }
 
@@ -282,57 +436,26 @@ private:
         }
 
         const auto &names = jsonFace.GetMorphNames();
-        bool useCustom = !autoLinkSpecs.empty();
 
-        if (useCustom)
+        for (size_t i = 0; i < names.size(); ++i)
         {
-            for (const auto &spec : autoLinkSpecs)
+            float *ptr = jsonFace.GetMorphWeightReferenceByIndex(i);
+            if (!ptr)
             {
-                int idx = jsonFace.FindMorphIndexByName(spec.name.c_str());
-                if (idx < 0)
-                {
-                    continue;
-                }
-                float *ptr = jsonFace.GetMorphWeightReferenceByIndex(static_cast<size_t>(idx));
-                if (!ptr)
-                {
-                    continue;
-                }
-                bool flip = false;
-                for (const auto &fm : flippedMorphs)
-                {
-                    if (fm.equalsIgnoreCase(spec.name))
-                    {
-                        flip = true;
-                        break;
-                    }
-                }
-                float b = flip ? spec.goal : spec.basis;
-                float g = flip ? spec.basis : spec.goal;
-                eEA.AddParameter(ptr, static_cast<uint16_t>(idx), spec.frames, b, g);
+                continue;
             }
-        }
-        else
-        {
-            for (size_t i = 0; i < names.size(); ++i)
-            {
-                float *ptr = jsonFace.GetMorphWeightReferenceByIndex(i);
-                if (ptr != nullptr)
-                {
-                    bool flip = false;
-                    for (const auto &fm : flippedMorphs)
-                    {
-                        if (fm.equalsIgnoreCase(names[i].c_str()))
-                        {
-                            flip = true;
-                            break;
-                        }
-                    }
-                    float b = flip ? goal : basis;
-                    float g = flip ? basis : goal;
-                    eEA.AddParameter(ptr, static_cast<uint16_t>(i), frames, b, g);
-                }
-            }
+
+            const uint16_t morphId = static_cast<uint16_t>(i);
+            AutoLinkSpec spec;
+            bool hasOverride = TryGetAutoLinkOverride(morphId, spec);
+            uint16_t morphFrames = hasOverride ? spec.frames : (IsFastVisemeMorph(names[i]) ? 2 : frames);
+            float morphBasis = hasOverride ? spec.basis : basis;
+            float morphGoal = hasOverride ? spec.goal : goal;
+
+            bool flip = IsFlippedMorph(morphId, names[i].c_str());
+            float b = flip ? morphGoal : morphBasis;
+            float g = flip ? morphBasis : morphGoal;
+            eEA.AddParameter(ptr, morphId, morphFrames, b, g);
         }
 
         eEA.AddParameter(&offsetFace, kOffsetFaceInd, 40, 0.0f, 1.0f);
@@ -369,8 +492,29 @@ private:
         return ProtoRGBColor(obj["R"] | fallback.R, obj["G"] | fallback.G, obj["B"] | fallback.B);
     }
 
+    void ResetMaterialPalettes()
+    {
+        gradientSpectrum[0] = ProtoRGBColor(User_R, User_G, User_B);
+        gradientSpectrum[1] = ProtoRGBColor(User_R, User_G, User_B);
+        gradientSpectrum[2] = ProtoRGBColor(User_R, User_G, User_B);
+
+        rainbowSpectrum[0] = ProtoRGBColor(255, 0, 0);
+        rainbowSpectrum[1] = ProtoRGBColor(255, 255, 0);
+        rainbowSpectrum[2] = ProtoRGBColor(0, 255, 0);
+        rainbowSpectrum[3] = ProtoRGBColor(0, 255, 255);
+        rainbowSpectrum[4] = ProtoRGBColor(0, 0, 255);
+        rainbowSpectrum[5] = ProtoRGBColor(255, 0, 255);
+
+        backgroundSpectrum[0] = ProtoRGBColor(0, 0, 0);
+
+        gradientMat = GradientMaterial<3>(gradientSpectrum, 200.0f, false);
+        rainbowMat = GradientMaterial<6>(rainbowSpectrum, 200.0f, false);
+        backgroundMat = GradientMaterial<1>(backgroundSpectrum, 350.0f, false);
+    }
+
     void RegisterDefaultMaterials()
     {
+        ResetMaterialPalettes();
         materialRegistry.clear();
 
         // Base + stock palette materials
@@ -1029,12 +1173,8 @@ public:
 
     bool Initialize(const UserConfig &config, const char *githubAnimBase = nullptr, const char *giteeAnimBase = nullptr, const char *githubToken = nullptr, const char *giteeToken = nullptr, M5UnitGLASS2 *downloadDisplay = nullptr, bool verboseDownload = true)
     {
-        gradientSpectrum[0] = ProtoRGBColor(User_R, User_G, User_B);
-        gradientSpectrum[1] = ProtoRGBColor(User_R, User_G, User_B);
-        gradientSpectrum[2] = ProtoRGBColor(User_R, User_G, User_B);
-        gradientMat = GradientMaterial<3>(gradientSpectrum, 200.0f, false);
-
         Serial.begin(115200);
+        deviceId = config.device_id;
 
         LoadJsonFaceBlocking();
 
@@ -1044,9 +1184,6 @@ public:
             scene.AddObject(faceObject);
         }
         scene.AddObject(background.GetObject());
-
-        AutoLinkMorphs();
-        LinkParameters();
         RegisterDefaultMaterials();
 
         if (faceObject)
@@ -1061,6 +1198,8 @@ public:
         AnimationDownloader::Download(dlCfg, animFilename);
 
         LoadAnimationConfig(config);
+        AutoLinkMorphs();
+        LinkParameters();
 
         if (resetState.reset)
         {

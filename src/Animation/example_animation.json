@@ -26,9 +26,11 @@
         {"name": "MouthEnd", "frames": 10, "basis": 0.0, "goal": 0.8},
         {"name": "vrc_v_ee", "frames": 2, "basis": 0.0, "goal": 1.0},
         {"name": "vrc_v_ih", "frames": 2, "basis": 0.0, "goal": 1.0},
+        {"name": "vrc_v_dd", "frames": 2, "basis": 0.0, "goal": 1.0},
+        {"name": "vrc_v_rr", "frames": 2, "basis": 0.0, "goal": 1.0},
+        {"name": "vrc_v_ch", "frames": 2, "basis": 0.0, "goal": 1.0},
         {"name": "vrc_v_oh", "frames": 2, "basis": 0.0, "goal": 1.0},
         {"name": "vrc_v_aa", "frames": 2, "basis": 0.0, "goal": 1.0},
-        {"name": "vrc_v_uh", "frames": 2, "basis": 0.0, "goal": 1.0},
         {"name": "vrc_v_ss", "frames": 2, "basis": 0.0, "goal": 1.0}
     ],
     "Mat_register": {

@@ -178,7 +178,8 @@ void setup()
   {
     const char *markerPath = "/factory_blink_done";
 
-    bool faceExists = LittleFS.exists("/universal_face.json");
+    String deviceFacePath = "/" + userConfig.device_id + String("_face.json");
+    bool faceExists = LittleFS.exists(deviceFacePath) || LittleFS.exists("/universal_face.json");
 
     String animFilename = userConfig.user_animation.length() > 0 ? userConfig.user_animation : (userConfig.device_id + String("_animation.json"));
     String animPath = "/" + animFilename;
@@ -333,24 +334,24 @@ void setup()
   User_G = userConfig.user_g;
   User_B = userConfig.user_b;
 
-  FaceUpdateConfig githubFaceConfig = {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(), face_json_url, face_checksum_url, "/universal_face.json", "", ""};
-  FaceUpdateConfig giteeFaceConfig = {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(), face_gitee_json_url, face_gitee_checksum_url, "/universal_face.json", face_repo_token, gitee_accept_header};
+  FaceUpdateConfig githubFaceConfig = {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(), user_config_base_url, user_config_github_token, "", "token "};
+  FaceUpdateConfig giteeFaceConfig = {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(), user_config_gitee_base_url, user_config_gitee_token, gitee_accept_header, "Bearer "};
 
   // Ensure face model is present before animation startup (GitHub first, Gitee fallback)
-  bool faceReady = EnsureUniversalFaceJson(githubFaceConfig, display, kVerboseStartup);
-  if (!faceReady && face_gitee_json_url != nullptr && face_gitee_json_url[0] != '\0')
+  bool faceReady = EnsureFaceModelJson(githubFaceConfig, userConfig.device_id, display, kVerboseStartup);
+  if (!faceReady && user_config_gitee_base_url != nullptr && user_config_gitee_base_url[0] != '\0')
   {
     Serial.println("[WARN] GitHub face download failed; trying Gitee fallback");
-    faceReady = EnsureUniversalFaceJson(giteeFaceConfig, display, kVerboseStartup);
+    faceReady = EnsureFaceModelJson(giteeFaceConfig, userConfig.device_id, display, kVerboseStartup);
   }
 
   if (faceReady)
   {
-    Serial.println("[INFO] universal_face.json is ready");
+    Serial.println("[INFO] face model is ready");
   }
   else
   {
-    Serial.println("[WARN] universal_face.json is not available; animation may fail");
+    Serial.println("[WARN] face model is not available; animation may fail");
     delay(10);
     ESP.restart();
   }
