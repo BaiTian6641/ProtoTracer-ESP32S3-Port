@@ -37,6 +37,44 @@ namespace
         return static_cast<uint8_t>(v);
     }
 
+    bool ConnectAndStabilizeWifi(const String &ssid,
+                                 const String &password,
+                                 unsigned long connectTimeoutMs,
+                                 IPAddress *resolvedIp = nullptr)
+    {
+        if (ssid.isEmpty())
+        {
+            return false;
+        }
+
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(ssid.c_str(), password.c_str());
+
+        const uint32_t startMs = millis();
+        while ((millis() - startMs) < connectTimeoutMs)
+        {
+            if (WiFi.status() == WL_CONNECTED)
+            {
+                IPAddress ip = WiFi.localIP();
+                if (ip != IPAddress((uint32_t)0))
+                {
+                    if (resolvedIp)
+                    {
+                        *resolvedIp = ip;
+                    }
+
+                    // Give the STA interface a short settling window before immediate HTTP operations.
+                    delay(250);
+                    return true;
+                }
+            }
+
+            delay(100);
+        }
+
+        return false;
+    }
+
     RemoteFileSource BuildRemoteSource(const char *baseUrl,
                                        const char *token,
                                        const char *authScheme,
@@ -242,9 +280,11 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
     wizard.setStrategy(NetWizardStrategy::BLOCKING);
     wizard.setConnectTimeout(connectTimeoutMs);
     wizard.setHostname(config.device_id.c_str());
+    const unsigned long portalReconnectTimeoutMs = connectTimeoutMs < 10000 ? 10000 : connectTimeoutMs;
 
     // Try stored credentials up to three times before offering the portal.
     bool connected = false;
+    IPAddress connectedIp;
     if (!config.wifi_ssid.isEmpty())
     {
         for (int attempt = 1; attempt <= 1 && !connected; ++attempt)
@@ -259,16 +299,7 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
                 display->display();
             }
 
-            WiFi.mode(WIFI_STA);
-            WiFi.begin(config.wifi_ssid.c_str(), config.wifi_password.c_str());
-
-            uint32_t start = millis();
-            while (WiFi.status() != WL_CONNECTED && (millis() - start) < connectTimeoutMs)
-            {
-                delay(100);
-            }
-
-            connected = (WiFi.status() == WL_CONNECTED);
+            connected = ConnectAndStabilizeWifi(config.wifi_ssid, config.wifi_password, connectTimeoutMs, &connectedIp);
             if (connected)
             {
                 if (display)
@@ -276,7 +307,7 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
                     display->clearDisplay();
                     display->setCursor(0, 0);
                     display->println(TXT("WiFi connected", "WiFi已连接"));
-                    display->println(WiFi.localIP().toString());
+                    display->println(connectedIp.toString());
                     display->display();
                 }
             }
@@ -362,11 +393,10 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
             const char *apSsid = config.username.isEmpty() ? config.device_id.c_str() : config.username.c_str();
             wizard.autoConnect(apSsid, config.ota_password.c_str());
 
-            bool connectedPortal = (WiFi.status() == WL_CONNECTED);
-
             // Mirror resolved credentials back into config and persist.
             config.wifi_ssid = wizard.getSSID();
             config.wifi_password = wizard.getPassword();
+            bool connectedPortal = ConnectAndStabilizeWifi(config.wifi_ssid, config.wifi_password, portalReconnectTimeoutMs, &connectedIp);
             SaveUserConfig(config);
 
             if (display)
@@ -376,9 +406,14 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
                 display->println(connectedPortal ? TXT("WiFi connected", "WiFi已连接") : TXT("WiFi setup done", "WiFi设置完成"));
                 if (connectedPortal)
                 {
-                    display->println(WiFi.localIP().toString());
+                    display->println(connectedIp.toString());
                 }
                 display->display();
+            }
+
+            if (!connectedPortal)
+            {
+                Serial.printf("[WARN] Portal WiFi handoff did not stabilize for SSID %s\n", config.wifi_ssid.c_str());
             }
 
             return connectedPortal;
@@ -399,11 +434,10 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
     const char *apSsid = config.username.isEmpty() ? config.device_id.c_str() : config.username.c_str();
     wizard.autoConnect(apSsid, config.ota_password.c_str());
 
-    connected = (WiFi.status() == WL_CONNECTED);
-
     // Mirror resolved credentials back into config and persist.
     config.wifi_ssid = wizard.getSSID();
     config.wifi_password = wizard.getPassword();
+    connected = ConnectAndStabilizeWifi(config.wifi_ssid, config.wifi_password, portalReconnectTimeoutMs, &connectedIp);
     SaveUserConfig(config);
 
     if (display)
@@ -413,9 +447,14 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
         display->println(connected ? TXT("WiFi connected", "WiFi已连接") : TXT("WiFi setup done", "WiFi设置完成"));
         if (connected)
         {
-            display->println(WiFi.localIP().toString());
+            display->println(connectedIp.toString());
         }
         display->display();
+    }
+
+    if (!connected)
+    {
+        Serial.printf("[WARN] Portal WiFi handoff did not stabilize for SSID %s\n", config.wifi_ssid.c_str());
     }
 
     return connected;
@@ -438,4 +477,44 @@ bool DownloadUserConfigFromGitee(const char *baseUrl, UserConfig &config, bool v
                                         config,
                                         verbose,
                                         display);
+}
+
+bool DownloadUserConfigFromSources(const RemoteFileSource *sources,
+                                   size_t sourceCount,
+                                   UserConfig &config,
+                                   bool verbose,
+                                   M5UnitGLASS2 *display)
+{
+    if (sources == nullptr || sourceCount == 0)
+    {
+        return false;
+    }
+
+    if (!EnsureFsMounted())
+    {
+        return false;
+    }
+
+    const String prevWifiSsid = config.wifi_ssid;
+    const String prevWifiPassword = config.wifi_password;
+
+    if (display)
+    {
+        display->clearDisplay();
+        display->setCursor(0, 0);
+        display->println(TXT("Checking config...", "检查配置中..."));
+        display->display();
+    }
+
+    const String remoteFilename = config.device_id + String(".json");
+    if (!RemoteFileSync::SyncAny(sources,
+                                 sourceCount,
+                                 remoteFilename,
+                                 kUserConfigPath,
+                                 BuildUserConfigSyncOptions(display, verbose)))
+    {
+        return false;
+    }
+
+    return ReloadDownloadedConfigPreservingWifi(config, prevWifiSsid, prevWifiPassword);
 }

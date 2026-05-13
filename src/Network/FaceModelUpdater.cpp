@@ -16,6 +16,8 @@
 
 namespace
 {
+    constexpr size_t kMaxFaceSources = 4;
+
     RemoteFileSource BuildSource(const FaceUpdateConfig &config)
     {
         RemoteFileSource source;
@@ -23,6 +25,7 @@ namespace
         source.token = config.auth_token;
         source.authScheme = config.auth_scheme;
         source.acceptHeader = config.accept_header;
+        source.name = config.name;
         return source;
     }
 
@@ -44,21 +47,45 @@ namespace
         return options;
     }
 
-    bool EnsureFaceCandidate(const FaceUpdateConfig &config,
+    bool EnsureFaceCandidate(const FaceUpdateConfig *configs,
+                             size_t sourceCount,
                              const String &remoteFilename,
                              M5UnitGLASS2 &display,
                              bool verbose)
     {
         RemoteFileSyncOptions options = BuildFaceSyncOptions(display, verbose);
-        return RemoteFileSync::Sync(BuildSource(config), remoteFilename, "/" + remoteFilename, options);
+        RemoteFileSource sources[kMaxFaceSources];
+        size_t configuredCount = 0;
+        for (size_t i = 0; i < sourceCount && configuredCount < kMaxFaceSources; ++i)
+        {
+            if (configs[i].base_url == nullptr || configs[i].base_url[0] == '\0')
+            {
+                continue;
+            }
+
+            sources[configuredCount] = BuildSource(configs[i]);
+            ++configuredCount;
+        }
+
+        return RemoteFileSync::SyncAny(sources, configuredCount, remoteFilename, "/" + remoteFilename, options);
     }
 }
 
 bool EnsureFaceModelJson(const FaceUpdateConfig &config, const String &deviceId, M5UnitGLASS2 &display, bool verbose)
 {
+    return EnsureFaceModelJson(&config, 1, deviceId, display, verbose);
+}
+
+bool EnsureFaceModelJson(const FaceUpdateConfig *configs, size_t sourceCount, const String &deviceId, M5UnitGLASS2 &display, bool verbose)
+{
+    if (configs == nullptr || sourceCount == 0)
+    {
+        return false;
+    }
+
     WiFi.mode(WIFI_AP_STA);
     WiFi.disconnect(true, true);
-    WiFi.begin(config.download_ssid, config.download_password);
+    WiFi.begin(configs[0].download_ssid, configs[0].download_password);
 
     const unsigned long connectTimeoutMs = 15000;
     unsigned long start = millis();
@@ -94,7 +121,7 @@ bool EnsureFaceModelJson(const FaceUpdateConfig &config, const String &deviceId,
     if (!deviceFaceFilename.isEmpty())
     {
         Serial.printf("[INFO] Trying device face model %s\n", deviceFaceFilename.c_str());
-        if (EnsureFaceCandidate(config, deviceFaceFilename, display, verbose))
+        if (EnsureFaceCandidate(configs, sourceCount, deviceFaceFilename, display, verbose))
         {
             return true;
         }
@@ -102,5 +129,5 @@ bool EnsureFaceModelJson(const FaceUpdateConfig &config, const String &deviceId,
         Serial.printf("[WARN] Device face %s unavailable; falling back to universal_face.json\n", deviceFaceFilename.c_str());
     }
 
-    return EnsureFaceCandidate(config, "universal_face.json", display, verbose);
+    return EnsureFaceCandidate(configs, sourceCount, "universal_face.json", display, verbose);
 }

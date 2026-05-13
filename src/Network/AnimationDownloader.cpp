@@ -4,7 +4,7 @@
 
 #include <M5UnitGLASS2.h>
 
-bool AnimationDownloader::DownloadFrom(const char *baseUrl, const char *token, const String &filename, M5UnitGLASS2 *display, bool verbose)
+bool AnimationDownloader::Download(const AnimationDownloadConfig &cfg, const String &filename)
 {
     if (!RemoteFileSync::EnsureFsMounted())
     {
@@ -12,44 +12,40 @@ bool AnimationDownloader::DownloadFrom(const char *baseUrl, const char *token, c
         return false;
     }
 
-    RemoteFileSource source;
-    source.baseUrl = baseUrl;
-    source.token = token;
-    source.authScheme = (baseUrl != nullptr && String(baseUrl).indexOf("gitee") >= 0) ? "Bearer " : "token ";
-    source.acceptHeader = (baseUrl != nullptr && String(baseUrl).indexOf("gitee") >= 0) ? "application/vnd.github.v3.raw" : nullptr;
+    RemoteFileSource sources[2];
+    sources[0].baseUrl = cfg.giteeBase;
+    sources[0].token = cfg.giteeToken;
+    sources[0].authScheme = "Bearer ";
+    sources[0].acceptHeader = "application/vnd.github.v3.raw";
+    sources[0].name = "Gitee";
+
+    sources[1].baseUrl = cfg.githubBase;
+    sources[1].token = cfg.githubToken;
+    sources[1].authScheme = "token ";
+    sources[1].acceptHeader = nullptr;
+    sources[1].name = "GitHub";
 
     RemoteFileSyncOptions options;
-    options.display = display;
-    options.verbose = verbose;
+    options.display = cfg.progressDisplay;
+    options.verbose = cfg.verbose;
     options.keepExistingWhenRemoteMd5Unavailable = false;
     options.ui.checkingMd5 = "Checking MD5...";
     options.ui.upToDate = "Animation up-to-date";
     options.ui.md5Mismatch = "MD5 mismatch, redownloading...";
-    options.ui.downloading = verbose ? "Downloading animation..." : "Downloading anim...";
+    options.ui.downloading = cfg.verbose ? "Downloading animation..." : "Downloading anim...";
     options.ui.success = "Animation OK";
     options.ui.httpBeginFail = "HTTP begin failed";
     options.ui.httpGetFail = "HTTP GET failed";
     options.ui.md5VerifyFail = "Animation checksum failed";
 
-    return RemoteFileSync::Sync(source, filename, "/" + filename, options);
-}
+    int usedSourceIndex = -1;
+    if (RemoteFileSync::SyncAny(sources, 2, filename, "/" + filename, options, &usedSourceIndex))
+    {
+        const char *sourceName = (usedSourceIndex >= 0 && usedSourceIndex < 2) ? sources[usedSourceIndex].name : "remote";
+        Serial.printf("[INFO] Animation sync succeeded via %s for %s\n", sourceName, filename.c_str());
+        return true;
+    }
 
-bool AnimationDownloader::Download(const AnimationDownloadConfig &cfg, const String &filename)
-{
-    if (DownloadFrom(cfg.giteeBase, cfg.giteeToken, filename, cfg.progressDisplay, cfg.verbose))
-    {
-        Serial.printf("[INFO] Animation sync succeeded via Gitee for %s\n", filename.c_str());
-        return true;
-    }
-    if (cfg.giteeBase != nullptr && cfg.giteeBase[0] != '\0')
-    {
-        Serial.printf("[WARN] Gitee animation sync failed for %s; trying GitHub fallback\n", filename.c_str());
-    }
-    if (DownloadFrom(cfg.githubBase, cfg.githubToken, filename, cfg.progressDisplay, cfg.verbose))
-    {
-        Serial.printf("[INFO] Animation sync succeeded via GitHub for %s\n", filename.c_str());
-        return true;
-    }
     Serial.printf("[WARN] Animation sync failed for %s on all configured remotes\n", filename.c_str());
     return false;
 }

@@ -4,6 +4,8 @@
 #include <ESPAsyncWebServer.h>
 #include <M5UnitGLASS2.h>
 
+struct RemoteFileSource;
+
 struct UserConfig
 {
     String device_id;
@@ -42,3 +44,6 @@ bool DownloadUserConfigFromGithub(const char *baseUrl, UserConfig &config, bool 
 // Download user_config.json from a Gitee base URL using device_id as filename (<base>/<device_id>.json).
 // Provide a personal access token for private repos via the Authorization header (Bearer).
 bool DownloadUserConfigFromGitee(const char *baseUrl, UserConfig &config, bool verbose = false, M5UnitGLASS2 *display = nullptr, const char *giteeToken = nullptr);
+
+// Probe the configured remotes and download user_config.json from the lower-latency source first.
+bool DownloadUserConfigFromSources(const RemoteFileSource *sources, size_t sourceCount, UserConfig &config, bool verbose = false, M5UnitGLASS2 *display = nullptr);

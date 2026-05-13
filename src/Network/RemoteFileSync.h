@@ -10,6 +10,7 @@ struct RemoteFileSource
     const char *token = nullptr;
     const char *authScheme = nullptr;
     const char *acceptHeader = nullptr;
+    const char *name = "remote";
 };
 
 struct RemoteFileUiText
@@ -33,13 +34,33 @@ struct RemoteFileSyncOptions
     RemoteFileUiText ui;
 };
 
+struct RemoteFileSourceSelection
+{
+    const RemoteFileSource *source = nullptr;
+    int sourceIndex = -1;
+    uint32_t latencyMs = 0;
+    bool latencyKnown = false;
+};
+
 class RemoteFileSync
 {
 public:
     static bool EnsureFsMounted();
+    static bool IsSourceConfigured(const RemoteFileSource &source);
+    static size_t SelectSourcesByLatency(const RemoteFileSource *sources,
+                                         size_t sourceCount,
+                                         const String &probeFilename,
+                                         RemoteFileSourceSelection *orderedSelections,
+                                         size_t selectionCapacity);
     static String ComputeFileMd5(const String &path);
     static bool Sync(const RemoteFileSource &source,
                      const String &remoteFilename,
                      const String &localPath,
                      const RemoteFileSyncOptions &options);
+    static bool SyncAny(const RemoteFileSource *sources,
+                        size_t sourceCount,
+                        const String &remoteFilename,
+                        const String &localPath,
+                        const RemoteFileSyncOptions &options,
+                        int *usedSourceIndex = nullptr);
 };

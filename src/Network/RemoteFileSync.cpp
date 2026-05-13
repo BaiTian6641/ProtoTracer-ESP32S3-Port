@@ -9,9 +9,17 @@
 
 namespace
 {
+    constexpr uint32_t kHttpProbeConnectTimeoutMs = 2500;
+    constexpr uint32_t kHttpProbeRequestTimeoutMs = 4000;
     constexpr uint32_t kHttpConnectTimeoutMs = 8000;
     constexpr uint32_t kHttpRequestTimeoutMs = 12000;
     constexpr uint32_t kHttpIdleTimeoutMs = 5000;
+    constexpr size_t kMaxSelectableSourceCount = 4;
+
+    const char *SourceName(const RemoteFileSource &source)
+    {
+        return (source.name != nullptr && source.name[0] != '\0') ? source.name : "remote";
+    }
 
     String BuildUrl(const char *baseUrl, const String &filename)
     {
@@ -98,6 +106,35 @@ namespace
         return body;
     }
 
+    bool ProbeSourceLatency(const RemoteFileSource &source,
+                            const String &probeFilename,
+                            uint32_t &latencyMs)
+    {
+        if (!RemoteFileSync::IsSourceConfigured(source))
+        {
+            return false;
+        }
+
+        HTTPClient http;
+        const String url = BuildUrl(source.baseUrl, probeFilename);
+        http.setConnectTimeout(kHttpProbeConnectTimeoutMs);
+        http.setTimeout(kHttpProbeRequestTimeoutMs);
+
+        const uint32_t startMs = millis();
+        if (!http.begin(url))
+        {
+            return false;
+        }
+
+        ApplyHeaders(http, source);
+
+        const int code = http.GET();
+        latencyMs = millis() - startMs;
+        http.end();
+
+        return code == HTTP_CODE_OK;
+    }
+
     bool ReplaceFileAtomically(const String &tempPath, const String &finalPath)
     {
         if (LittleFS.exists(finalPath))
@@ -162,6 +199,110 @@ bool RemoteFileSync::EnsureFsMounted()
     }
 
     return mounted;
+}
+
+bool RemoteFileSync::IsSourceConfigured(const RemoteFileSource &source)
+{
+    return source.baseUrl != nullptr && source.baseUrl[0] != '\0';
+}
+
+size_t RemoteFileSync::SelectSourcesByLatency(const RemoteFileSource *sources,
+                                              size_t sourceCount,
+                                              const String &probeFilename,
+                                              RemoteFileSourceSelection *orderedSelections,
+                                              size_t selectionCapacity)
+{
+    if (sources == nullptr || orderedSelections == nullptr || selectionCapacity == 0)
+    {
+        return 0;
+    }
+
+    size_t count = 0;
+    for (size_t i = 0; i < sourceCount && count < selectionCapacity; ++i)
+    {
+        if (!IsSourceConfigured(sources[i]))
+        {
+            continue;
+        }
+
+        orderedSelections[count].source = &sources[i];
+        orderedSelections[count].sourceIndex = static_cast<int>(i);
+        orderedSelections[count].latencyMs = 0;
+        orderedSelections[count].latencyKnown = false;
+        ++count;
+    }
+
+    if (count <= 1 || probeFilename.isEmpty())
+    {
+        return count;
+    }
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        uint32_t latencyMs = 0;
+        if (ProbeSourceLatency(*orderedSelections[i].source, probeFilename, latencyMs))
+        {
+            orderedSelections[i].latencyMs = latencyMs;
+            orderedSelections[i].latencyKnown = true;
+            Serial.printf("[INFO] %s latency probe for %s: %lu ms\n",
+                          SourceName(*orderedSelections[i].source),
+                          probeFilename.c_str(),
+                          static_cast<unsigned long>(latencyMs));
+        }
+        else
+        {
+            Serial.printf("[WARN] %s latency probe failed for %s\n",
+                          SourceName(*orderedSelections[i].source),
+                          probeFilename.c_str());
+        }
+    }
+
+    for (size_t i = 0; i + 1 < count; ++i)
+    {
+        for (size_t j = i + 1; j < count; ++j)
+        {
+            const bool leftKnown = orderedSelections[i].latencyKnown;
+            const bool rightKnown = orderedSelections[j].latencyKnown;
+
+            bool shouldSwap = false;
+            if (!leftKnown && rightKnown)
+            {
+                shouldSwap = true;
+            }
+            else if (leftKnown && rightKnown && orderedSelections[j].latencyMs < orderedSelections[i].latencyMs)
+            {
+                shouldSwap = true;
+            }
+
+            if (shouldSwap)
+            {
+                RemoteFileSourceSelection temp = orderedSelections[i];
+                orderedSelections[i] = orderedSelections[j];
+                orderedSelections[j] = temp;
+            }
+        }
+    }
+
+    if (count > 1)
+    {
+        if (orderedSelections[0].latencyKnown && orderedSelections[1].latencyKnown)
+        {
+            Serial.printf("[INFO] Selecting %s before %s for %s based on latency (%lu ms vs %lu ms)\n",
+                          SourceName(*orderedSelections[0].source),
+                          SourceName(*orderedSelections[1].source),
+                          probeFilename.c_str(),
+                          static_cast<unsigned long>(orderedSelections[0].latencyMs),
+                          static_cast<unsigned long>(orderedSelections[1].latencyMs));
+        }
+        else if (orderedSelections[0].latencyKnown)
+        {
+            Serial.printf("[INFO] Selecting %s first for %s; alternate latency probe failed\n",
+                          SourceName(*orderedSelections[0].source),
+                          probeFilename.c_str());
+        }
+    }
+
+    return count;
 }
 
 String RemoteFileSync::ComputeFileMd5(const String &path)
@@ -369,4 +510,52 @@ bool RemoteFileSync::Sync(const RemoteFileSource &source,
     }
 
     return true;
+}
+
+bool RemoteFileSync::SyncAny(const RemoteFileSource *sources,
+                            size_t sourceCount,
+                            const String &remoteFilename,
+                            const String &localPath,
+                            const RemoteFileSyncOptions &options,
+                            int *usedSourceIndex)
+{
+    if (usedSourceIndex)
+    {
+        *usedSourceIndex = -1;
+    }
+
+    if (sources == nullptr || sourceCount == 0)
+    {
+        return false;
+    }
+
+    RemoteFileSourceSelection orderedSelections[kMaxSelectableSourceCount];
+    const size_t cappedSourceCount = sourceCount > kMaxSelectableSourceCount ? kMaxSelectableSourceCount : sourceCount;
+    const size_t orderedCount = SelectSourcesByLatency(sources,
+                                                       cappedSourceCount,
+                                                       remoteFilename,
+                                                       orderedSelections,
+                                                       kMaxSelectableSourceCount);
+
+    for (size_t i = 0; i < orderedCount; ++i)
+    {
+        const RemoteFileSource &source = *orderedSelections[i].source;
+        if (Sync(source, remoteFilename, localPath, options))
+        {
+            if (usedSourceIndex)
+            {
+                *usedSourceIndex = orderedSelections[i].sourceIndex;
+            }
+            return true;
+        }
+
+        if (i + 1 < orderedCount)
+        {
+            Serial.printf("[WARN] %s sync failed for %s; trying next remote\n",
+                          SourceName(source),
+                          remoteFilename.c_str());
+        }
+    }
+
+    return false;
 }

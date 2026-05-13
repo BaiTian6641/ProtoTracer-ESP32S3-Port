@@ -17,9 +17,6 @@ struct AnimationDownloadConfig
 class AnimationDownloader
 {
 public:
-    // Try Gitee first, then GitHub. Returns true if any download succeeded.
+    // Probe the configured remotes and prefer the lower-latency source first.
     static bool Download(const AnimationDownloadConfig &cfg, const String &filename);
-
-private:
-    static bool DownloadFrom(const char *baseUrl, const char *token, const String &filename, M5UnitGLASS2 *display, bool verbose);
 };

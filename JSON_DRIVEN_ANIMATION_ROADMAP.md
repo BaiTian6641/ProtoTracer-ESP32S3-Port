@@ -6,7 +6,8 @@ This document tracks the JsonDrivenProtogenAnimation migration work for ProtoTra
 
 ## Current Validation State
 
-- Remote asset priority is now Gitee first, then GitHub fallback, for user config, face model, and animation JSON.
+- Remote asset selection now probes Gitee and GitHub and prefers the lower-latency healthy remote for user config, face model, and animation JSON.
+- Auto firmware update now has a first milestone implementation: manifest-driven OTA checks use the same latency-based Gitee/GitHub selection and stream the application binary through the ESP32 OTA slot.
 - `esp32s3-RELEASE` builds successfully after aligning the async stack on `ESP32Async/AsyncTCP@3.4.10` and `ESP32Async/ESPAsyncWebServer@3.11.0`.
 - `esp32s3` also builds successfully after removing the duplicate standard `ElegantOTA` dependency so only `ElegantOTAPro` is linked.
 - The remaining ESP32-S3 risk is now runtime validation on hardware rather than a current compile or link blocker.
@@ -16,12 +17,12 @@ This document tracks the JsonDrivenProtogenAnimation migration work for ProtoTra
 | Item | Status | Notes |
 | --- | --- | --- |
 | 1. User RGB color drift | Local fix applied, build validated | Palette state is now reset before default material registration so repeated JSON loads do not inherit mutated colors. |
-| 2. Slow visemes | Fixed in current branch, build validated | auto_link now applies after JSON load, acts as per-morph overrides, and old vrc_v_uh configs are accepted through aliasing. |
+| 2. Slow visemes | Solved | auto_link now applies after JSON load, acts as per-morph overrides, and old vrc_v_uh configs are accepted through aliasing. |
 | 3. Image sequence custom material | Planned | Existing ImageSequence support is compile-time only. |
 | 4. Unified remote file pull path | Implemented, build validated | `RemoteFileSync` now handles user config, face model, and animation sync with shared auth, MD5, temp-file replacement, and progress UI. |
 | 5. Device-specific face model | Implemented, build validated | Face download and face load now prefer `<device_id>_face.json` and fall back to `universal_face.json`. |
-| 6. Auto firmware update via GitHub/Gitee | Planned | ElegantOTA Pro is currently used only as a manual OTA portal. |
-| 7. Harden JSON animation path | In progress, build validated | Startup diagnostics now report remote animation sync source plus local animation fallback/load path; unknown-key and bad-reference reporting still remain. |
+| 6. Auto firmware update via GitHub/Gitee | In progress, build validated | FirmwareUpdater now probes the manifest on both remotes, tries the lower-latency healthy source first, compares versions, and applies OTA from the app binary. |
+| 7. Harden JSON animation path | In progress, mostly complete | Startup diagnostics now report remote animation sync source plus local animation fallback/load path; most config flow is solid, with remaining work mostly around reference warnings. |
 | 8. Standardize animation JSON | Draft started here | Current supported keys are documented below. |
 | 9. ESP32-S3 validation pass | In progress | Both `esp32s3` and `esp32s3-RELEASE` now build cleanly; hardware, network-fallback, and large-asset tests remain. |
 
@@ -60,12 +61,46 @@ Main files:
 Remaining check:
 - Hardware validation with live microphone input on ESP32-S3.
 
+### Item 6: Auto firmware update milestone
+
+Current fix:
+- Added `src/Network/FirmwareUpdater.h` and `src/Network/FirmwareUpdater.cpp`.
+- Startup now checks firmware metadata before face and animation sync so a newer firmware can be applied and rebooted early in boot.
+- Firmware update source order now matches the rest of startup: probe both remotes, prefer the lower-latency healthy source, then fall back if the update check fails.
+- The updater uses the application OTA binary (`firmware.bin` target content), not the merged serial-flash image.
+- ElegantOTA Pro now reports the same firmware version string used by the auto-update check instead of a separate hardcoded portal version.
+
+Current manifest contract:
+- Default manifest name for ESP32-S3 builds: `esp32s3.json`
+- Default manifest name for ESP32-P4 builds: `esp32p4.json`
+- Required JSON keys:
+  - `version`
+  - `file` (or `filename`, `bin`, `url`)
+- Optional JSON keys:
+  - `md5`
+
+Example manifest:
+```json
+{
+  "version": "1.0.1",
+  "file": "firmware.bin",
+  "md5": "0123456789abcdef0123456789abcdef"
+}
+```
+
+Remaining check:
+- Publish the manifest and application binary in the remote repo layout actually used by devices.
+- Verify a full on-device upgrade from an older build to a newer build.
+- Verify failed downloads continue normal startup without corrupting the running app.
+- Decide whether future releases should override the default manifest filename per environment, for example `esp32s3-release.json`.
+
 ### Items 4 and 5: Shared remote sync and device-specific face model
 
 Current fix:
 - Added `src/Network/RemoteFileSync.h` and `src/Network/RemoteFileSync.cpp` to centralize:
   - base URL path construction
   - GitHub and Gitee auth headers
+  - latency probing and remote ordering
   - remote `.md5` fetch
   - local MD5 compare
   - temp-file download and replace
@@ -74,7 +109,7 @@ Current fix:
 - `src/Network/AnimationDownloader.cpp` now uses `RemoteFileSync`.
 - `src/Network/FaceModelUpdater.cpp` now uses `RemoteFileSync` and tries `<device_id>_face.json` before `universal_face.json`.
 - `src/Animation/JsonDrivenProtogenAnimation.h` now loads `/<device_id>_face.json` first and falls back to `/universal_face.json`.
-- `src/main.cpp` now wires config, face, and animation sync through the same GitHub and Gitee base URLs and prefers Gitee before GitHub fallback.
+- `src/main.cpp` now wires config, face, and animation sync through the same GitHub and Gitee base URLs and prefers the lower-latency healthy remote before fallback.
 
 Build validation:
 - `esp32s3-RELEASE` passes after pinning the async web stack and aligning `ElegantOTAPro` onto the same `ESP32Async` dependency family.
@@ -135,11 +170,11 @@ Current code paths:
 - `src/main.cpp`
 
 Current state:
-- User config, animation, and face model now share `RemoteFileSync` for auth, MD5, download, and atomic replace behavior.
-- Startup now prefers Gitee first and uses GitHub only as fallback.
+- User config, animation, and face model now share `RemoteFileSync` for auth, MD5, download, atomic replace behavior, and latency-based source ordering.
+- Startup now probes both remotes and prefers the lower-latency healthy source while keeping the other as fallback.
 
 Smallest safe slice:
-- Validate the Gitee-first order on hardware with GitHub intentionally blocked.
+- Validate latency-based source choice on hardware with one remote intentionally slowed or blocked.
 - Confirm config, face, and animation all remain bootable from cached local files when remote sync fails.
 
 ESP32-S3 notes:
@@ -175,17 +210,18 @@ Current code paths:
 - `src/Auth/TassAuthToken.h`
 
 Current state:
-- ElegantOTA Pro currently exposes portal features such as `begin()`, `setTitle()`, `setID()`, `setFWVersion()`, callbacks, and reboot handling.
-- There is no built-in remote release checker or automatic pull-from-repo updater in the local library wrapper.
+- ElegantOTA Pro still provides the local upload portal and now shares the same firmware version string as the auto-update path.
+- A first `FirmwareUpdater` implementation now checks a remote manifest and applies OTA directly through the ESP32 update API.
+- The current milestone assumes the manifest and firmware binary live under the same Gitee/GitHub base URLs already used for config and animation assets.
 
 Smallest safe slice:
-- Add a dedicated `FirmwareUpdater` class.
-- Fetch latest firmware metadata from GitHub first, then Gitee.
-- Compare a current firmware version string with the remote version.
-- Use the ESP32 update path directly, while keeping ElegantOTA Pro as the local portal and status surface.
+- Validate the end-to-end upgrade path on hardware using a published manifest and `firmware.bin`.
+- Add version/channel overrides when you want separate debug/release or per-target manifests.
+- Consider adding a cached cooldown or last-failed version record if repeated failed update attempts become noisy on boot.
 
 ESP32-S3 notes:
-- Confirm partition layout supports OTA firmware replacement safely.
+- The current `default_8MB.csv` layout already has `otadata`, `app0`, and `app1`, so OTA app replacement is supported.
+- Remote auto-update should target the application binary, not `firmware_merged.bin`, because the merged image is only for serial flashing at offset `0x0`.
 - Network timeout and partial download handling matter more here than on JSON assets.
 
 ### 7. Refine the JSON animation path so it is as solid as TasSimpleProtogenHUB75Animation, but more flexible
@@ -289,8 +325,8 @@ Validation checklist:
 ## Recommended Implementation Order
 
 1. Validate items 1, 2, 4, and 5 on real ESP32-S3 hardware.
-2. Continue hardening item 7 with warnings for unknown morphs, materials, and effect references.
-3. Implement item 3 once the JSON schema surface is stable enough to extend safely.
-4. Split out the formal schema document for item 8.
-5. Implement item 6 after the downloader and validation infrastructure are already stable.
+2. Validate the new auto-update milestone on hardware with a real published manifest and app binary.
+3. Continue hardening item 7 with warnings for unknown morphs, materials, and effect references.
+4. Implement item 3 once the JSON schema surface is stable enough to extend safely.
+5. Split out the formal schema document for item 8.
 6. Run the remaining hardware-heavy validation from item 9.

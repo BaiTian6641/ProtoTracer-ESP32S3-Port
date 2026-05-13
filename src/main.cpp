@@ -47,6 +47,7 @@ uint8_t maxAccentBrightness = 100;
 #include <Wire.h>
 #include <LittleFS.h>
 #include "Network/FaceModelUpdater.h"
+#include "Network/FirmwareUpdater.h"
 #include "Network/UserConfigManager.h"
 
 #ifdef LANG_CN
@@ -77,6 +78,21 @@ constexpr bool kVerboseStartup = true;
 #else
 constexpr bool kVerboseStartup = false;
 #endif
+
+#ifndef PROTOTRACER_FW_VERSION
+#define PROTOTRACER_FW_VERSION "1.0.1"
+#endif
+
+#ifndef PROTOTRACER_FW_MANIFEST
+  #if defined(TASESP32P4)
+    #define PROTOTRACER_FW_MANIFEST "esp32p4.json"
+  #else
+    #define PROTOTRACER_FW_MANIFEST "esp32s3.json"
+  #endif
+#endif
+
+constexpr const char *kFirmwareVersion = PROTOTRACER_FW_VERSION;
+constexpr const char *kFirmwareManifest = PROTOTRACER_FW_MANIFEST;
 
 #ifdef TASESP32S3
 extern VirtualMatrixPanel *virtualDisp;
@@ -282,7 +298,7 @@ void setup()
     ElegantOTA.setTitle("Ruby Protogen Studio OTA Portal"); // Set OTA Webpage Title
 
     ElegantOTA.setID(userConfig.device_id.c_str()); // Set Hardware ID
-    ElegantOTA.setFWVersion("1.0.0");               // Set Firmware Version
+    ElegantOTA.setFWVersion(kFirmwareVersion);       // Set Firmware Version
 
     ElegantOTA.begin(&server); // Start ElegantOTA
 #elif defined(USING_ELEGANTOTA)
@@ -318,16 +334,51 @@ void setup()
     display.display();
   }
 
-  // Attempt to pull remote user_config.json named by device_id (Gitee first, GitHub fallback).
-  bool userConfigFetched = false;
-  if (user_config_gitee_base_url != nullptr && user_config_gitee_base_url[0] != '\0')
+  // Attempt to pull remote user_config.json named by device_id, preferring the lower-latency remote.
+  RemoteFileSource userConfigSources[2];
+  userConfigSources[0].baseUrl = user_config_gitee_base_url;
+  userConfigSources[0].token = user_config_gitee_token;
+  userConfigSources[0].authScheme = "Bearer ";
+  userConfigSources[0].acceptHeader = gitee_accept_header;
+  userConfigSources[0].name = "Gitee";
+  userConfigSources[1].baseUrl = user_config_base_url;
+  userConfigSources[1].token = user_config_github_token;
+  userConfigSources[1].authScheme = "token ";
+  userConfigSources[1].acceptHeader = nullptr;
+  userConfigSources[1].name = "GitHub";
+
+  bool userConfigFetched = DownloadUserConfigFromSources(userConfigSources,
+                                                         2,
+                                                         userConfig,
+                                                         kVerboseStartup ? true : false,
+                                                         &display);
+  if (!userConfigFetched)
   {
-    userConfigFetched = DownloadUserConfigFromGitee(user_config_gitee_base_url, userConfig, kVerboseStartup ? true : false, &display, user_config_gitee_token);
+    Serial.println("[WARN] user_config.json download failed on all configured remotes");
   }
-  if (!userConfigFetched && user_config_base_url != nullptr && user_config_base_url[0] != '\0')
+
+  FirmwareUpdateConfig firmwareUpdateConfig;
+  firmwareUpdateConfig.primarySource.baseUrl = user_config_gitee_base_url;
+  firmwareUpdateConfig.primarySource.token = user_config_gitee_token;
+  firmwareUpdateConfig.primarySource.authScheme = "Bearer ";
+  firmwareUpdateConfig.primarySource.acceptHeader = gitee_accept_header;
+  firmwareUpdateConfig.primarySource.name = "Gitee";
+  firmwareUpdateConfig.primaryName = "Gitee";
+  firmwareUpdateConfig.fallbackSource.baseUrl = user_config_base_url;
+  firmwareUpdateConfig.fallbackSource.token = user_config_github_token;
+  firmwareUpdateConfig.fallbackSource.authScheme = "token ";
+  firmwareUpdateConfig.fallbackSource.acceptHeader = nullptr;
+  firmwareUpdateConfig.fallbackSource.name = "GitHub";
+  firmwareUpdateConfig.fallbackName = "GitHub";
+  firmwareUpdateConfig.manifestFilename = kFirmwareManifest;
+  firmwareUpdateConfig.currentVersion = kFirmwareVersion;
+  firmwareUpdateConfig.display = &display;
+  firmwareUpdateConfig.verbose = kVerboseStartup;
+
+  const FirmwareUpdateResult firmwareUpdateResult = FirmwareUpdater::CheckAndUpdate(firmwareUpdateConfig);
+  if (firmwareUpdateResult == FirmwareUpdateResult::Failed)
   {
-    Serial.println("[WARN] Gitee user_config.json download failed; trying GitHub fallback");
-    userConfigFetched = DownloadUserConfigFromGithub(user_config_base_url, userConfig, kVerboseStartup ? true : false, &display, user_config_github_token);
+    Serial.println("[WARN] Auto firmware update check failed; continuing startup");
   }
 
   user_name = userConfig.username.c_str();
@@ -338,20 +389,13 @@ void setup()
   User_G = userConfig.user_g;
   User_B = userConfig.user_b;
 
-  FaceUpdateConfig githubFaceConfig = {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(), user_config_base_url, user_config_github_token, "", "token "};
-  FaceUpdateConfig giteeFaceConfig = {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(), user_config_gitee_base_url, user_config_gitee_token, gitee_accept_header, "Bearer "};
+  FaceUpdateConfig faceConfigs[2] = {
+    {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(), user_config_gitee_base_url, user_config_gitee_token, gitee_accept_header, "Bearer ", "Gitee"},
+    {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(), user_config_base_url, user_config_github_token, nullptr, "token ", "GitHub"}
+  };
 
-  // Ensure face model is present before animation startup (Gitee first, GitHub fallback)
-  bool faceReady = false;
-  if (user_config_gitee_base_url != nullptr && user_config_gitee_base_url[0] != '\0')
-  {
-    faceReady = EnsureFaceModelJson(giteeFaceConfig, userConfig.device_id, display, kVerboseStartup);
-  }
-  if (!faceReady && user_config_base_url != nullptr && user_config_base_url[0] != '\0')
-  {
-    Serial.println("[WARN] Gitee face download failed; trying GitHub fallback");
-    faceReady = EnsureFaceModelJson(githubFaceConfig, userConfig.device_id, display, kVerboseStartup);
-  }
+  // Ensure face model is present before animation startup, preferring the lower-latency remote.
+  bool faceReady = EnsureFaceModelJson(faceConfigs, 2, userConfig.device_id, display, kVerboseStartup);
 
   if (faceReady)
   {
