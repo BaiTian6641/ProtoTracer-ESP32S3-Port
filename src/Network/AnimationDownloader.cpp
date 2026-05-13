@@ -36,13 +36,20 @@ bool AnimationDownloader::DownloadFrom(const char *baseUrl, const char *token, c
 
 bool AnimationDownloader::Download(const AnimationDownloadConfig &cfg, const String &filename)
 {
-    if (DownloadFrom(cfg.githubBase, cfg.githubToken, filename, cfg.progressDisplay, cfg.verbose))
-    {
-        return true;
-    }
     if (DownloadFrom(cfg.giteeBase, cfg.giteeToken, filename, cfg.progressDisplay, cfg.verbose))
     {
+        Serial.printf("[INFO] Animation sync succeeded via Gitee for %s\n", filename.c_str());
         return true;
     }
+    if (cfg.giteeBase != nullptr && cfg.giteeBase[0] != '\0')
+    {
+        Serial.printf("[WARN] Gitee animation sync failed for %s; trying GitHub fallback\n", filename.c_str());
+    }
+    if (DownloadFrom(cfg.githubBase, cfg.githubToken, filename, cfg.progressDisplay, cfg.verbose))
+    {
+        Serial.printf("[INFO] Animation sync succeeded via GitHub for %s\n", filename.c_str());
+        return true;
+    }
+    Serial.printf("[WARN] Animation sync failed for %s on all configured remotes\n", filename.c_str());
     return false;
 }

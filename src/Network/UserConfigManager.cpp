@@ -1,13 +1,13 @@
 #include "UserConfigManager.h"
 
+#include "RemoteFileSync.h"
+
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <NetWizard.h>
 #include <WiFi.h>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
-#include <HTTPClient.h>
-#include <MD5Builder.h>
 
 // Optional display feedback is guarded at the call site.
 
@@ -25,16 +25,7 @@ namespace
 
     bool EnsureFsMounted()
     {
-        static bool mounted = false;
-        if (mounted)
-        {
-            return true;
-        }
-        if (LittleFS.begin(false) || LittleFS.begin(true))
-        {
-            mounted = true;
-        }
-        return mounted;
+        return RemoteFileSync::EnsureFsMounted();
     }
 
     uint8_t ClampByte(long v)
@@ -46,70 +37,78 @@ namespace
         return static_cast<uint8_t>(v);
     }
 
-    String ComputeFileMd5(const String &path)
+    RemoteFileSource BuildRemoteSource(const char *baseUrl,
+                                       const char *token,
+                                       const char *authScheme,
+                                       const char *acceptHeader)
     {
-        File f = LittleFS.open(path, "r");
-        if (!f)
-        {
-            return String();
-        }
-
-        MD5Builder md5;
-        md5.begin();
-        uint8_t buffer[512];
-        while (f.available())
-        {
-            size_t n = f.read(buffer, sizeof(buffer));
-            if (n > 0)
-            {
-                md5.add(buffer, n);
-            }
-        }
-        f.close();
-        md5.calculate();
-        return md5.toString();
+        RemoteFileSource source;
+        source.baseUrl = baseUrl;
+        source.token = token;
+        source.authScheme = authScheme;
+        source.acceptHeader = acceptHeader;
+        return source;
     }
 
-    String FetchRemoteMd5(const String &baseUrl, const String &filename, const char *authHeader, const String &authValue, const char *acceptHeader)
+    RemoteFileSyncOptions BuildUserConfigSyncOptions(M5UnitGLASS2 *display, bool verbose)
     {
-        if (baseUrl.isEmpty())
+        RemoteFileSyncOptions options;
+        options.display = display;
+        options.verbose = verbose;
+        options.keepExistingWhenRemoteMd5Unavailable = false;
+        options.ui.checkingMd5 = TXT("Checking config...", "检查配置中...");
+        options.ui.upToDate = TXT("Config up-to-date", "配置已最新");
+        options.ui.md5Mismatch = TXT("Config changed, redownloading...", "配置已变更，重新下载");
+        options.ui.downloading = TXT("Downloading config...", "正在下载配置...");
+        options.ui.success = TXT("Config updated", "配置已更新");
+        options.ui.httpBeginFail = TXT("Config connect fail", "配置连接失败");
+        options.ui.httpGetFail = TXT("Config fetch failed", "配置获取失败");
+        options.ui.md5VerifyFail = TXT("Config verify failed", "配置校验失败");
+        return options;
+    }
+
+    bool ReloadDownloadedConfigPreservingWifi(UserConfig &config,
+                                              const String &prevWifiSsid,
+                                              const String &prevWifiPassword)
+    {
+        if (!EnsureUserConfig(config))
         {
-            return String();
+            return false;
         }
 
-        String url = baseUrl;
-        if (!url.endsWith("/"))
-        {
-            url += '/';
-        }
-        url += filename; // expected to already end with .md5
+        config.wifi_ssid = prevWifiSsid;
+        config.wifi_password = prevWifiPassword;
+        return SaveUserConfig(config);
+    }
 
-        HTTPClient http;
-        if (!http.begin(url))
+    bool DownloadUserConfigFromSource(const RemoteFileSource &source,
+                                      UserConfig &config,
+                                      bool verbose,
+                                      M5UnitGLASS2 *display)
+    {
+        if (!EnsureFsMounted())
         {
-            return String();
-        }
-
-        if (authHeader && authHeader[0] != '\0' && authValue.length() > 0)
-        {
-            http.addHeader(authHeader, authValue);
-        }
-        if (acceptHeader && acceptHeader[0] != '\0')
-        {
-            http.addHeader("Accept", acceptHeader);
+            return false;
         }
 
-        int code = http.GET();
-        if (code != HTTP_CODE_OK)
+        const String prevWifiSsid = config.wifi_ssid;
+        const String prevWifiPassword = config.wifi_password;
+
+        if (display)
         {
-            http.end();
-            return String();
+            display->clearDisplay();
+            display->setCursor(0, 0);
+            display->println(TXT("Checking config...", "检查配置中..."));
+            display->display();
         }
 
-        String body = http.getString();
-        body.trim();
-        http.end();
-        return body;
+        const String remoteFilename = config.device_id + String(".json");
+        if (!RemoteFileSync::Sync(source, remoteFilename, kUserConfigPath, BuildUserConfigSyncOptions(display, verbose)))
+        {
+            return false;
+        }
+
+        return ReloadDownloadedConfigPreservingWifi(config, prevWifiSsid, prevWifiPassword);
     }
 
     UserConfig DefaultUserConfig()
@@ -424,384 +423,19 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
 
 bool DownloadUserConfigFromGithub(const char *baseUrl, UserConfig &config, bool verbose, M5UnitGLASS2 *display, const char *githubToken)
 {
-    if (!EnsureFsMounted())
-    {
-        return false;
-    }
-
-    // Preserve local Wi-Fi credentials; remote file should not override them to avoid config loops.
-    String prevWifiSsid = config.wifi_ssid;
-    String prevWifiPassword = config.wifi_password;
-
-    // MD5 guard: compare local file hash to remote <device_id>.md5 to avoid redundant downloads.
-    String md5Filename = config.device_id + String(".md5");
-    String localMd5;
-    if (LittleFS.exists(kUserConfigPath))
-    {
-        localMd5 = ComputeFileMd5(kUserConfigPath);
-    }
-
-    String url = baseUrl;
-    if (!url.endsWith("/"))
-    {
-        url += '/';
-    }
-    url += config.device_id;
-    url += ".json";
-
-    String remoteMd5 = FetchRemoteMd5(String(baseUrl), md5Filename, (githubToken && githubToken[0] != '\0') ? "Authorization" : "", (githubToken && githubToken[0] != '\0') ? String("token ") + githubToken : String(""), "");
-
-    if (!remoteMd5.isEmpty() && !localMd5.isEmpty())
-    {
-        if (display)
-        {
-            display->clearDisplay();
-            display->setCursor(0, 0);
-            display->println(TXT("Checking MD5...", "校验MD5..."));
-            display->display();
-            delay(100);
-        }
-
-        if (remoteMd5.equalsIgnoreCase(localMd5))
-        {
-            if (display && verbose)
-            {
-                display->clearDisplay();
-                display->setCursor(0, 0);
-                display->println(TXT("Config up-to-date", "配置已最新"));
-                display->display();
-            }
-            return true; // skip download
-        }
-        else if (display)
-        {
-            display->clearDisplay();
-            display->setCursor(0, 0);
-            display->println(TXT("MD5 mismatch, redownloading...", "MD5不一致，重新下载"));
-            display->display();
-            delay(100);
-        }
-    }
-
-    HTTPClient http;
-    if (!http.begin(url))
-    {
-        return false;
-    }
-
-    // Add Authorization header when a token is provided (for private repos).
-    if (githubToken != nullptr && githubToken[0] != '\0')
-    {
-        http.addHeader("Authorization", String("token ") + githubToken);
-    }
-
-    int code = http.GET();
-    if (code != HTTP_CODE_OK)
-    {
-        // If file is not found on the server, show device ID so user can register it.
-        if (code == HTTP_CODE_NOT_FOUND || code == 404)
-        {
-            display->clearDisplay();
-            display->setCursor(0, 0);
-            display->println(TXT("Device not registered!", "设备未注册！"));
-            display->println(String(TXT("Device ID: ", "设备ID: ")) + config.device_id);
-            display->display();
-            while (true)
-            {
-                /* code */
-                delay(1); //Do nothing loop, unless reset
-            }
-            
-        }
-        http.end();
-        return false;
-    }
-
-    File f = LittleFS.open(kUserConfigPath, "w");
-    if (!f)
-    {
-        http.end();
-        return false;
-    }
-
-    WiFiClient *stream = http.getStreamPtr();
-    uint8_t buffer[512];
-    int32_t remaining = http.getSize();
-    int32_t totalSize = remaining; // -1 when unknown
-    int32_t downloaded = 0;
-    uint32_t lastUpdateMs = millis();
-
-    while (http.connected() && (remaining > 0 || remaining == -1))
-    {
-        size_t available = stream->available();
-        if (available)
-        {
-            int toRead = available;
-            if (toRead > (int)sizeof(buffer))
-                toRead = sizeof(buffer);
-
-            int readCount = stream->readBytes(buffer, toRead);
-            if (readCount > 0)
-            {
-                f.write(buffer, readCount);
-                downloaded += readCount;
-                if (remaining > 0)
-                {
-                    remaining -= readCount;
-                }
-
-                // Update on-screen progress occasionally when a display is provided.
-                if (verbose && display != nullptr)
-                {
-                    uint32_t now = millis();
-                    if (now - lastUpdateMs > 150)
-                    {
-                        lastUpdateMs = now;
-                        display->clearDisplay();
-                        display->setCursor(0, 0);
-                        display->println(TXT("Downloading config...", "正在下载配置..."));
-                        if (totalSize > 0)
-                        {
-                            int percent = (downloaded * 100) / totalSize;
-                            display->println(String(percent) + "%");
-                        }
-                        else
-                        {
-                            display->println(String(downloaded / 1024) + TXT(" KB", " KB"));
-                        }
-                        display->display();
-                    }
-                }
-            }
-        }
-        delay(1);
-    }
-
-    f.close();
-    http.end();
-
-    if (!remoteMd5.isEmpty())
-    {
-        String downloadedMd5 = ComputeFileMd5(kUserConfigPath);
-        if (!downloadedMd5.equalsIgnoreCase(remoteMd5))
-        {
-            if (display && verbose)
-            {
-                display->clearDisplay();
-                display->setCursor(0, 0);
-                display->println(TXT("MD5 verify failed", "MD5校验失败"));
-                display->display();
-            }
-            return false;
-        }
-    }
-
-    if (verbose && display != nullptr)
-    {
-        display->clearDisplay();
-        display->setCursor(0, 0);
-        display->println(TXT("Config updated", "配置已更新"));
-        display->display();
-    }
-
-    // Reload config from freshly downloaded file.
-    bool ok = EnsureUserConfig(config);
-    if (ok)
-    {
-        config.wifi_ssid = prevWifiSsid;
-        config.wifi_password = prevWifiPassword;
-        SaveUserConfig(config);
-    }
-    return ok;
+    return DownloadUserConfigFromSource(BuildRemoteSource(baseUrl, githubToken, "token ", nullptr),
+                                        config,
+                                        verbose,
+                                        display);
 }
 
 bool DownloadUserConfigFromGitee(const char *baseUrl, UserConfig &config, bool verbose, M5UnitGLASS2 *display, const char *giteeToken)
 {
-    if (!EnsureFsMounted())
-    {
-        return false;
-    }
-
-    // Preserve local Wi-Fi credentials; remote file should not override them to avoid config loops.
-    String prevWifiSsid = config.wifi_ssid;
-    String prevWifiPassword = config.wifi_password;
-
-    // MD5 guard: compare local file hash to remote <device_id>.md5 to avoid redundant downloads.
-    String md5Filename = config.device_id + String(".md5");
-    String localMd5;
-    if (LittleFS.exists(kUserConfigPath))
-    {
-        localMd5 = ComputeFileMd5(kUserConfigPath);
-    }
-
-    String url = baseUrl;
-    if (!url.endsWith("/"))
-    {
-        url += '/';
-    }
-    url += config.device_id;
-    url += ".json";
-
-    String remoteMd5 = FetchRemoteMd5(String(baseUrl), md5Filename, (giteeToken && giteeToken[0] != '\0') ? "Authorization" : "", (giteeToken && giteeToken[0] != '\0') ? String("Bearer ") + giteeToken : String(""), "application/vnd.github.v3.raw");
-
-    if (!remoteMd5.isEmpty() && !localMd5.isEmpty())
-    {
-        if (display)
-        {
-            display->clearDisplay();
-            display->setCursor(0, 0);
-            display->println(TXT("Checking MD5...", "校验MD5..."));
-            display->display();
-            delay(100);
-        }
-
-        if (remoteMd5.equalsIgnoreCase(localMd5))
-        {
-            if (display && verbose)
-            {
-                display->clearDisplay();
-                display->setCursor(0, 0);
-                display->println(TXT("Config up-to-date", "配置已最新"));
-                display->display();
-            }
-            return true; // skip download
-        }
-        else if (display)
-        {
-            display->clearDisplay();
-            display->setCursor(0, 0);
-            display->println(TXT("MD5 mismatch, redownloading...", "MD5不一致，重新下载"));
-            display->display();
-            delay(100);
-        }
-    }
-
-    HTTPClient http;
-    if (!http.begin(url))
-    {
-        return false;
-    }
-
-    if (giteeToken != nullptr && giteeToken[0] != '\0')
-    {
-        http.addHeader("Authorization", String("Bearer ") + giteeToken);
-    }
-    http.addHeader("Accept", "application/vnd.github.v3.raw");
-
-    int code = http.GET();
-    if (code != HTTP_CODE_OK)
-    {
-        // If file is not found on the server, show device ID so user can register it.
-        if (code == HTTP_CODE_NOT_FOUND || code == 404)
-        {
-            if (display)
-            {
-                display->clearDisplay();
-                display->setCursor(0, 0);
-                display->println(TXT("Device not registered!", "设备未注册！"));
-                display->println(String(TXT("Device ID: ", "设备ID: ")) + config.device_id);
-                display->display();
-                delay(100);
-            }
-        }
-        http.end();
-        return false;
-    }
-
-    File f = LittleFS.open(kUserConfigPath, "w");
-    if (!f)
-    {
-        http.end();
-        return false;
-    }
-
-    WiFiClient *stream = http.getStreamPtr();
-    uint8_t buffer[512];
-    int32_t remaining = http.getSize();
-    int32_t totalSize = remaining; // -1 when unknown
-    int32_t downloaded = 0;
-    uint32_t lastUpdateMs = millis();
-
-    while (http.connected() && (remaining > 0 || remaining == -1))
-    {
-        size_t available = stream->available();
-        if (available)
-        {
-            int toRead = available;
-            if (toRead > (int)sizeof(buffer))
-                toRead = sizeof(buffer);
-
-            int readCount = stream->readBytes(buffer, toRead);
-            if (readCount > 0)
-            {
-                f.write(buffer, readCount);
-                downloaded += readCount;
-                if (remaining > 0)
-                {
-                    remaining -= readCount;
-                }
-
-                // Update on-screen progress occasionally when a display is provided.
-                if (verbose && display != nullptr)
-                {
-                    uint32_t now = millis();
-                    if (now - lastUpdateMs > 150)
-                    {
-                        lastUpdateMs = now;
-                        display->clearDisplay();
-                        display->setCursor(0, 0);
-                        display->println(TXT("Downloading config...", "正在下载配置..."));
-                        if (totalSize > 0)
-                        {
-                            int percent = (downloaded * 100) / totalSize;
-                            display->println(String(percent) + "%");
-                        }
-                        else
-                        {
-                            display->println(String(downloaded / 1024) + TXT(" KB", " KB"));
-                        }
-                        display->display();
-                    }
-                }
-            }
-        }
-        delay(1);
-    }
-
-    f.close();
-    http.end();
-
-    if (!remoteMd5.isEmpty())
-    {
-        String downloadedMd5 = ComputeFileMd5(kUserConfigPath);
-        if (!downloadedMd5.equalsIgnoreCase(remoteMd5))
-        {
-            if (display && verbose)
-            {
-                display->clearDisplay();
-                display->setCursor(0, 0);
-                display->println(TXT("MD5 verify failed", "MD5校验失败"));
-                display->display();
-            }
-            return false;
-        }
-    }
-
-    if (verbose && display != nullptr)
-    {
-        display->clearDisplay();
-        display->setCursor(0, 0);
-        display->println(TXT("Config updated", "配置已更新"));
-        display->display();
-    }
-
-    // Reload config from freshly downloaded file.
-    bool ok = EnsureUserConfig(config);
-    if (ok)
-    {
-        config.wifi_ssid = prevWifiSsid;
-        config.wifi_password = prevWifiPassword;
-        SaveUserConfig(config);
-    }
-    return ok;
+    return DownloadUserConfigFromSource(BuildRemoteSource(baseUrl,
+                                                          giteeToken,
+                                                          "Bearer ",
+                                                          "application/vnd.github.v3.raw"),
+                                        config,
+                                        verbose,
+                                        display);
 }

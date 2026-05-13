@@ -318,12 +318,16 @@ void setup()
     display.display();
   }
 
-  // Attempt to pull remote user_config.json named by device_id (GitHub first, Gitee fallback).
-  bool userConfigFetched = DownloadUserConfigFromGithub(user_config_base_url, userConfig, kVerboseStartup ? true : false, &display, user_config_github_token);
-  if (!userConfigFetched && user_config_gitee_token != nullptr && user_config_gitee_token[0] != '\0')
+  // Attempt to pull remote user_config.json named by device_id (Gitee first, GitHub fallback).
+  bool userConfigFetched = false;
+  if (user_config_gitee_base_url != nullptr && user_config_gitee_base_url[0] != '\0')
   {
-    Serial.println("[WARN] GitHub user_config.json download failed; trying Gitee fallback");
     userConfigFetched = DownloadUserConfigFromGitee(user_config_gitee_base_url, userConfig, kVerboseStartup ? true : false, &display, user_config_gitee_token);
+  }
+  if (!userConfigFetched && user_config_base_url != nullptr && user_config_base_url[0] != '\0')
+  {
+    Serial.println("[WARN] Gitee user_config.json download failed; trying GitHub fallback");
+    userConfigFetched = DownloadUserConfigFromGithub(user_config_base_url, userConfig, kVerboseStartup ? true : false, &display, user_config_github_token);
   }
 
   user_name = userConfig.username.c_str();
@@ -337,12 +341,16 @@ void setup()
   FaceUpdateConfig githubFaceConfig = {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(), user_config_base_url, user_config_github_token, "", "token "};
   FaceUpdateConfig giteeFaceConfig = {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(), user_config_gitee_base_url, user_config_gitee_token, gitee_accept_header, "Bearer "};
 
-  // Ensure face model is present before animation startup (GitHub first, Gitee fallback)
-  bool faceReady = EnsureFaceModelJson(githubFaceConfig, userConfig.device_id, display, kVerboseStartup);
-  if (!faceReady && user_config_gitee_base_url != nullptr && user_config_gitee_base_url[0] != '\0')
+  // Ensure face model is present before animation startup (Gitee first, GitHub fallback)
+  bool faceReady = false;
+  if (user_config_gitee_base_url != nullptr && user_config_gitee_base_url[0] != '\0')
   {
-    Serial.println("[WARN] GitHub face download failed; trying Gitee fallback");
     faceReady = EnsureFaceModelJson(giteeFaceConfig, userConfig.device_id, display, kVerboseStartup);
+  }
+  if (!faceReady && user_config_base_url != nullptr && user_config_base_url[0] != '\0')
+  {
+    Serial.println("[WARN] Gitee face download failed; trying GitHub fallback");
+    faceReady = EnsureFaceModelJson(githubFaceConfig, userConfig.device_id, display, kVerboseStartup);
   }
 
   if (faceReady)

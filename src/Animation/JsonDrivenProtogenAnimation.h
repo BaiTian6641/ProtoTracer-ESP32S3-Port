@@ -1034,6 +1034,7 @@ private:
         String filename = config.user_animation.length() > 0 ? config.user_animation : (deviceId + String("_animation.json"));
         String path = "/" + filename;
         String fallbackPath = "/example_animation.json";
+        String loadedPath;
 
         if (!LittleFS.begin(false) && !LittleFS.begin(true))
         {
@@ -1049,7 +1050,17 @@ private:
             {
                 jsonText = f.readString();
                 f.close();
+                loadedPath = path;
+                Serial.printf("[INFO] Loaded animation config from %s\n", path.c_str());
             }
+            else
+            {
+                Serial.printf("[WARN] Failed to open animation config %s\n", path.c_str());
+            }
+        }
+        else
+        {
+            Serial.printf("[WARN] Animation config %s not found; checking fallback %s\n", path.c_str(), fallbackPath.c_str());
         }
 
         if (jsonText.isEmpty() && LittleFS.exists(fallbackPath))
@@ -1059,7 +1070,12 @@ private:
             {
                 jsonText = f.readString();
                 f.close();
-                Serial.println("[INFO] Using fallback example_animation.json");
+                loadedPath = fallbackPath;
+                Serial.printf("[INFO] Using fallback animation config %s\n", fallbackPath.c_str());
+            }
+            else
+            {
+                Serial.printf("[WARN] Failed to open fallback animation config %s\n", fallbackPath.c_str());
             }
         }
 
@@ -1067,14 +1083,15 @@ private:
         {
             // Minimal default
             jsonText = "{\"expressions\":{\"Default\":{\"reset\":true}}}";
-            Serial.println("[WARN] Animation JSON missing; using minimal default.");
+            loadedPath = "<built-in default>";
+            Serial.printf("[WARN] Animation JSON missing for %s and %s; using minimal default.\n", path.c_str(), fallbackPath.c_str());
         }
 
         AnimJsonDocument doc(jsonText.length() + 2048);
         DeserializationError err = deserializeJson(doc, jsonText);
         if (err)
         {
-            Serial.printf("[WARN] Failed to parse animation JSON: %s\n", err.c_str());
+            Serial.printf("[WARN] Failed to parse animation JSON from %s: %s\n", loadedPath.c_str(), err.c_str());
             return false;
         }
 
@@ -1192,7 +1209,7 @@ public:
         }
         background.GetObject()->SetMaterial(&backgroundMat);
 
-        // Download user animation JSON if remote URLs are provided.
+        // Download user animation JSON if remote URLs are provided. AnimationDownloader prefers Gitee, then GitHub.
         String animFilename = config.user_animation.length() > 0 ? config.user_animation : (config.device_id + String("_animation.json"));
         AnimationDownloadConfig dlCfg{githubAnimBase, giteeAnimBase, githubToken, giteeToken, downloadDisplay, verboseDownload};
         AnimationDownloader::Download(dlCfg, animFilename);

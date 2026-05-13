@@ -6,6 +6,7 @@ This document tracks the JsonDrivenProtogenAnimation migration work for ProtoTra
 
 ## Current Validation State
 
+- Remote asset priority is now Gitee first, then GitHub fallback, for user config, face model, and animation JSON.
 - `esp32s3-RELEASE` builds successfully after aligning the async stack on `ESP32Async/AsyncTCP@3.4.10` and `ESP32Async/ESPAsyncWebServer@3.11.0`.
 - `esp32s3` also builds successfully after removing the duplicate standard `ElegantOTA` dependency so only `ElegantOTAPro` is linked.
 - The remaining ESP32-S3 risk is now runtime validation on hardware rather than a current compile or link blocker.
@@ -17,10 +18,10 @@ This document tracks the JsonDrivenProtogenAnimation migration work for ProtoTra
 | 1. User RGB color drift | Local fix applied, build validated | Palette state is now reset before default material registration so repeated JSON loads do not inherit mutated colors. |
 | 2. Slow visemes | Fixed in current branch, build validated | auto_link now applies after JSON load, acts as per-morph overrides, and old vrc_v_uh configs are accepted through aliasing. |
 | 3. Image sequence custom material | Planned | Existing ImageSequence support is compile-time only. |
-| 4. Unified remote file pull path | Partially implemented, build validated | `RemoteFileSync` now handles animation and face model sync with shared auth, MD5, temp-file replacement, and progress UI. User config still uses its older dedicated path. |
+| 4. Unified remote file pull path | Implemented, build validated | `RemoteFileSync` now handles user config, face model, and animation sync with shared auth, MD5, temp-file replacement, and progress UI. |
 | 5. Device-specific face model | Implemented, build validated | Face download and face load now prefer `<device_id>_face.json` and fall back to `universal_face.json`. |
 | 6. Auto firmware update via GitHub/Gitee | Planned | ElegantOTA Pro is currently used only as a manual OTA portal. |
-| 7. Harden JSON animation path | Planned | Needs validation, diagnostics, and fallback cleanup. |
+| 7. Harden JSON animation path | In progress, build validated | Startup diagnostics now report remote animation sync source plus local animation fallback/load path; unknown-key and bad-reference reporting still remain. |
 | 8. Standardize animation JSON | Draft started here | Current supported keys are documented below. |
 | 9. ESP32-S3 validation pass | In progress | Both `esp32s3` and `esp32s3-RELEASE` now build cleanly; hardware, network-fallback, and large-asset tests remain. |
 
@@ -69,10 +70,11 @@ Current fix:
   - local MD5 compare
   - temp-file download and replace
   - shared progress UI updates
+- `src/Network/UserConfigManager.cpp` now uses `RemoteFileSync` instead of its own dedicated HTTP and MD5 implementation.
 - `src/Network/AnimationDownloader.cpp` now uses `RemoteFileSync`.
 - `src/Network/FaceModelUpdater.cpp` now uses `RemoteFileSync` and tries `<device_id>_face.json` before `universal_face.json`.
 - `src/Animation/JsonDrivenProtogenAnimation.h` now loads `/<device_id>_face.json` first and falls back to `/universal_face.json`.
-- `src/main.cpp` now wires face sync through the same GitHub and Gitee base URLs already used for config and animation.
+- `src/main.cpp` now wires config, face, and animation sync through the same GitHub and Gitee base URLs and prefers Gitee before GitHub fallback.
 
 Build validation:
 - `esp32s3-RELEASE` passes after pinning the async web stack and aligning `ElegantOTAPro` onto the same `ESP32Async` dependency family.
@@ -83,6 +85,21 @@ Remaining check:
 - Cold boot with only `/universal_face.json` present.
 - GitHub unavailable with Gitee fallback available.
 - No Wi-Fi with previously cached local face and animation files.
+
+### Item 7: JSON animation path hardening
+
+Current fix:
+- `src/Network/AnimationDownloader.cpp` now logs whether animation sync succeeded via Gitee or GitHub and when it falls back between them.
+- `src/Animation/JsonDrivenProtogenAnimation.h` now logs:
+  - the preferred animation JSON path it tried
+  - when it falls back to `/example_animation.json`
+  - when both files are missing and it uses the built-in minimal default
+  - which source file failed JSON parsing
+
+Remaining check:
+- Add warnings for unknown morph names in `auto_link`, `flipped_morphs`, and expression parameters.
+- Add warnings for missing materials and unknown effect types.
+- Confirm the new logs are readable enough on real hardware bring-up.
 
 ## Remaining Work
 
@@ -118,12 +135,12 @@ Current code paths:
 - `src/main.cpp`
 
 Current state:
-- Animation and face model now share `RemoteFileSync` for auth, MD5, download, and atomic replace behavior.
-- User config still uses its older dedicated downloader path.
+- User config, animation, and face model now share `RemoteFileSync` for auth, MD5, download, and atomic replace behavior.
+- Startup now prefers Gitee first and uses GitHub only as fallback.
 
 Smallest safe slice:
-- Migrate `UserConfigManager` onto `RemoteFileSync` so config, face, and animation all use one implementation.
-- Keep the current temp-file replacement and checksum behavior so interrupted downloads do not overwrite good local data.
+- Validate the Gitee-first order on hardware with GitHub intentionally blocked.
+- Confirm config, face, and animation all remain bootable from cached local files when remote sync fails.
 
 ESP32-S3 notes:
 - Reuse one HTTP path implementation to reduce duplicated bugs in slow or unstable Wi-Fi conditions.
@@ -272,9 +289,8 @@ Validation checklist:
 ## Recommended Implementation Order
 
 1. Validate items 1, 2, 4, and 5 on real ESP32-S3 hardware.
-2. Migrate `UserConfigManager` onto `RemoteFileSync` to finish item 4.
-3. Harden item 7 while the download and fallback paths are still fresh.
-4. Implement item 3 once the JSON schema surface is stable enough to extend safely.
-5. Split out the formal schema document for item 8.
-6. Implement item 6 after the downloader and validation infrastructure are already stable.
-7. Run the remaining hardware-heavy validation from item 9.
+2. Continue hardening item 7 with warnings for unknown morphs, materials, and effect references.
+3. Implement item 3 once the JSON schema surface is stable enough to extend safely.
+4. Split out the formal schema document for item 8.
+5. Implement item 6 after the downloader and validation infrastructure are already stable.
+6. Run the remaining hardware-heavy validation from item 9.

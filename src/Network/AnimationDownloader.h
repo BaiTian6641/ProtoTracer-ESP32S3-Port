@@ -17,7 +17,7 @@ struct AnimationDownloadConfig
 class AnimationDownloader
 {
 public:
-    // Try GitHub first, then Gitee. Returns true if any download succeeded.
+    // Try Gitee first, then GitHub. Returns true if any download succeeded.
     static bool Download(const AnimationDownloadConfig &cfg, const String &filename);
 
 private:

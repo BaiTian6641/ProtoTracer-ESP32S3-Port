@@ -9,6 +9,10 @@
 
 namespace
 {
+    constexpr uint32_t kHttpConnectTimeoutMs = 8000;
+    constexpr uint32_t kHttpRequestTimeoutMs = 12000;
+    constexpr uint32_t kHttpIdleTimeoutMs = 5000;
+
     String BuildUrl(const char *baseUrl, const String &filename)
     {
         String url = baseUrl;
@@ -70,6 +74,8 @@ namespace
 
         HTTPClient http;
         String url = BuildUrl(source.baseUrl, DeriveMd5Filename(remoteFilename));
+        http.setConnectTimeout(kHttpConnectTimeoutMs);
+        http.setTimeout(kHttpRequestTimeoutMs);
         if (!http.begin(url))
         {
             return String();
@@ -80,6 +86,7 @@ namespace
         int code = http.GET();
         if (code != HTTP_CODE_OK)
         {
+            Serial.printf("[WARN] Remote MD5 fetch failed (%d) for %s\n", code, url.c_str());
             http.end();
             return String();
         }
@@ -224,6 +231,8 @@ bool RemoteFileSync::Sync(const RemoteFileSource &source,
 
     HTTPClient http;
     String url = BuildUrl(source.baseUrl, remoteFilename);
+    http.setConnectTimeout(kHttpConnectTimeoutMs);
+    http.setTimeout(kHttpRequestTimeoutMs);
     if (!http.begin(url))
     {
         ShowStatus(options.display, options.ui.httpBeginFail, options.verbose);
@@ -270,6 +279,8 @@ bool RemoteFileSync::Sync(const RemoteFileSource &source,
     int lastPct = -1;
     unsigned long lastUi = 0;
     bool writeFailed = false;
+    uint32_t lastDataMs = millis();
+    bool downloadStalled = false;
 
     while (http.connected() && (remaining > 0 || remaining == -1))
     {
@@ -292,6 +303,7 @@ bool RemoteFileSync::Sync(const RemoteFileSource &source,
                 }
 
                 downloaded += readCount;
+                lastDataMs = millis();
                 if (remaining > 0)
                 {
                     remaining -= readCount;
@@ -311,6 +323,12 @@ bool RemoteFileSync::Sync(const RemoteFileSource &source,
                 }
             }
         }
+        else if (millis() - lastDataMs > kHttpIdleTimeoutMs)
+        {
+            Serial.printf("[WARN] Remote download stalled for %s\n", url.c_str());
+            downloadStalled = true;
+            break;
+        }
 
         delay(1);
     }
@@ -318,7 +336,7 @@ bool RemoteFileSync::Sync(const RemoteFileSource &source,
     tempFile.close();
     http.end();
 
-    if (writeFailed || (totalSize >= 0 && downloaded != (uint32_t)totalSize))
+    if (writeFailed || downloadStalled || downloaded == 0 || (totalSize >= 0 && downloaded != (uint32_t)totalSize))
     {
         LittleFS.remove(tempPath);
         ShowStatus(options.display, options.ui.httpGetFail, options.verbose);
