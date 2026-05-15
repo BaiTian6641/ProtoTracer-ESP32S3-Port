@@ -259,7 +259,7 @@ namespace
                 raw_data = EncodeLegacyCommand(0, value);
                 handledControl = true;
             }
-            else if (!doc["brightness"].isNull())
+            if (!doc["brightness"].isNull())
             {
                 const uint8_t value = static_cast<uint8_t>(constrain(doc["brightness"].as<int>(), 0, 255));
                 remoteBrightness = value;
@@ -267,7 +267,7 @@ namespace
                 raw_data = EncodeLegacyCommand(1, value);
                 handledControl = true;
             }
-            else if (!doc["voice_enabled"].isNull())
+            if (!doc["voice_enabled"].isNull())
             {
                 const uint8_t value = doc["voice_enabled"].as<bool>() ? 1 : 0;
                 remoteVoice = value;
@@ -275,7 +275,7 @@ namespace
                 raw_data = EncodeLegacyCommand(2, value);
                 handledControl = true;
             }
-            else if (!doc["display_mode"].isNull())
+            if (!doc["display_mode"].isNull())
             {
                 const uint8_t value = static_cast<uint8_t>(constrain(doc["display_mode"].as<int>(), 0, 255));
                 remoteDisplayMode = value;
@@ -283,7 +283,7 @@ namespace
                 raw_data = EncodeLegacyCommand(3, value);
                 handledControl = true;
             }
-            else if (!doc["hue_shift"].isNull())
+            if (!doc["hue_shift"].isNull())
             {
                 const float hue = doc["hue_shift"].as<float>();
                 const int encoded = constrain(static_cast<int>(hue * 8.0f), 0, 65535);
