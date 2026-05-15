@@ -32,6 +32,7 @@ def merge_bin(source, target, env):
 env.AddPostAction(APP_BIN , merge_bin)
 
 # Patch the upload command to flash the merged binary at address 0x0
+'''
 env.Replace(
     UPLOADERFLAGS=[
             f
@@ -40,4 +41,4 @@ env.Replace(
         ]
         + ["0x0", MERGED_BIN],
     UPLOADCMD='"$PYTHONEXE" "$UPLOADER" $UPLOADERFLAGS',
-)
+)'''

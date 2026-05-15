@@ -22,6 +22,14 @@ String ReadUniqueDeviceId();
 namespace
 {
     constexpr const char *kUserConfigPath = "/user_config.json";
+    constexpr const char *kDefaultPortalSsid = "General ProtogenOTAWiFi";
+    constexpr const char *kDefaultPortalPassword = "Protogen#1229#25";
+    constexpr size_t kMaxPortalSsidLength = 32;
+
+    M5UnitGLASS2 *g_netWizardDisplay = nullptr;
+    bool g_netWizardDisplayActive = false;
+    String g_netWizardPortalSsid;
+    String g_netWizardPortalPassword;
 
     bool EnsureFsMounted()
     {
@@ -35,6 +43,86 @@ namespace
         if (v > 255)
             return 255;
         return static_cast<uint8_t>(v);
+    }
+
+    String CurrentPortalIpString()
+    {
+        IPAddress portalIp((uint32_t)0);
+#if defined(ESP32)
+        if (WiFi.AP.hasIP())
+        {
+            portalIp = WiFi.AP.localIP();
+        }
+#endif
+        if (portalIp == IPAddress((uint32_t)0))
+        {
+            portalIp = WiFi.softAPIP();
+        }
+        if (portalIp == IPAddress((uint32_t)0))
+        {
+            return String("192.168.4.1");
+        }
+        return portalIp.toString();
+    }
+
+    void ShowNetWizardDisplay(const String &statusLine, const String &hintLine = String())
+    {
+        if (!g_netWizardDisplay || !g_netWizardDisplayActive)
+        {
+            return;
+        }
+
+        g_netWizardDisplay->clearDisplay();
+        g_netWizardDisplay->setCursor(0, 0);
+        g_netWizardDisplay->println(statusLine);
+        g_netWizardDisplay->println(String(TXT("SSID: ", "热点: ")) + g_netWizardPortalSsid);
+        if (!g_netWizardPortalPassword.isEmpty())
+        {
+            g_netWizardDisplay->println(String(TXT("PW: ", "密码: ")) + g_netWizardPortalPassword);
+        }
+        g_netWizardDisplay->println(String(TXT("IP: ", "地址: ")) + CurrentPortalIpString());
+        g_netWizardDisplay->println(hintLine.isEmpty() ? TXT("Open browser if no popup", "未弹窗请手动打开浏览器") : hintLine);
+        g_netWizardDisplay->display();
+    }
+
+    const char *ConnectionStatusText(NetWizardConnectionStatus status)
+    {
+        switch (status)
+        {
+        case NetWizardConnectionStatus::CONNECTING:
+            return TXT("Connecting WiFi...", "正在连接WiFi...");
+        case NetWizardConnectionStatus::CONNECTED:
+            return TXT("WiFi connected", "WiFi已连接");
+        case NetWizardConnectionStatus::CONNECTION_FAILED:
+            return TXT("WiFi connect failed", "WiFi连接失败");
+        case NetWizardConnectionStatus::CONNECTION_LOST:
+            return TXT("WiFi lost", "WiFi连接中断");
+        case NetWizardConnectionStatus::NOT_FOUND:
+            return TXT("WiFi not found", "未找到WiFi");
+        case NetWizardConnectionStatus::DISCONNECTED:
+        default:
+            return TXT("Waiting for WiFi", "等待WiFi连接");
+        }
+    }
+
+    const char *PortalStateText(NetWizardPortalState state)
+    {
+        switch (state)
+        {
+        case NetWizardPortalState::CONNECTING_WIFI:
+            return TXT("Saving WiFi config", "正在保存WiFi配置");
+        case NetWizardPortalState::WAITING_FOR_CONNECTION:
+            return TXT("Applying WiFi config", "正在应用WiFi配置");
+        case NetWizardPortalState::SUCCESS:
+            return TXT("WiFi saved", "WiFi已保存");
+        case NetWizardPortalState::FAILED:
+            return TXT("WiFi setup failed", "WiFi设置失败");
+        case NetWizardPortalState::TIMEOUT:
+            return TXT("WiFi setup timeout", "WiFi设置超时");
+        case NetWizardPortalState::IDLE:
+        default:
+            return TXT("Join setup WiFi", "连接配置热点");
+        }
     }
 
     bool ConnectAndStabilizeWifi(const String &ssid,
@@ -73,6 +161,142 @@ namespace
         }
 
         return false;
+    }
+
+    String BuildSetupPortalSsid(const UserConfig &config)
+    {
+        String portalSsid = config.ota_ssid;
+        portalSsid.trim();
+        if (portalSsid.isEmpty())
+        {
+            portalSsid = config.username;
+            portalSsid.trim();
+        }
+        if (portalSsid.isEmpty())
+        {
+            portalSsid = config.device_id;
+        }
+        if (portalSsid.isEmpty())
+        {
+            portalSsid = kDefaultPortalSsid;
+        }
+        if (portalSsid.length() > kMaxPortalSsidLength)
+        {
+            Serial.printf("[WARN] Setup portal SSID is too long (%u); truncating to %u bytes\n",
+                          static_cast<unsigned>(portalSsid.length()),
+                          static_cast<unsigned>(kMaxPortalSsidLength));
+            portalSsid = portalSsid.substring(0, kMaxPortalSsidLength);
+        }
+        return portalSsid;
+    }
+
+    String BuildSetupPortalPassword(const UserConfig &config)
+    {
+        String portalPassword = config.ota_password;
+        portalPassword.trim();
+        if (portalPassword.isEmpty())
+        {
+            portalPassword = kDefaultPortalPassword;
+        }
+        if (portalPassword.length() < 8 || portalPassword.length() > 63)
+        {
+            Serial.printf("[WARN] Setup portal password length %u is invalid; using default password\n",
+                          static_cast<unsigned>(portalPassword.length()));
+            portalPassword = kDefaultPortalPassword;
+        }
+        return portalPassword;
+    }
+
+    void ConfigureNetWizardDisplayCallbacks(NetWizard &wizard)
+    {
+        wizard.onConnectionStatus([](NetWizardConnectionStatus status) {
+            if (!g_netWizardDisplayActive)
+            {
+                return;
+            }
+
+            const String hint = status == NetWizardConnectionStatus::CONNECTED ? WiFi.localIP().toString() : String();
+            ShowNetWizardDisplay(ConnectionStatusText(status), hint);
+        });
+
+        wizard.onPortalState([](NetWizardPortalState state) {
+            if (!g_netWizardDisplayActive)
+            {
+                return;
+            }
+
+            String hint;
+            if (state == NetWizardPortalState::IDLE)
+            {
+                hint = TXT("Open browser if no popup", "未弹窗请手动打开浏览器");
+            }
+            else if (state == NetWizardPortalState::SUCCESS)
+            {
+                hint = TXT("Reconnecting device", "设备正在重新连接");
+            }
+            ShowNetWizardDisplay(PortalStateText(state), hint);
+        });
+    }
+
+    bool RunNetWizardSetupPortal(UserConfig &config,
+                                 NetWizard &wizard,
+                                 unsigned long reconnectTimeoutMs,
+                                 M5UnitGLASS2 *display,
+                                 IPAddress *resolvedIp)
+    {
+        const String portalSsid = BuildSetupPortalSsid(config);
+        const String portalPassword = BuildSetupPortalPassword(config);
+
+        config.ota_ssid = portalSsid;
+        config.ota_password = portalPassword;
+
+        g_netWizardDisplay = display;
+        g_netWizardDisplayActive = display != nullptr;
+        g_netWizardPortalSsid = portalSsid;
+        g_netWizardPortalPassword = portalPassword;
+
+        ConfigureNetWizardDisplayCallbacks(wizard);
+        ShowNetWizardDisplay(TXT("Starting WiFi setup", "正在启动WiFi设置"));
+
+        Serial.printf("[INFO] Starting NetWizard setup portal SSID=%s IP=%s\n",
+                      portalSsid.c_str(),
+                      CurrentPortalIpString().c_str());
+
+        wizard.autoConnect(portalSsid.c_str(), portalPassword.c_str());
+
+        config.wifi_ssid = wizard.getSSID();
+        config.wifi_password = wizard.getPassword();
+
+        bool connected = ConnectAndStabilizeWifi(config.wifi_ssid, config.wifi_password, reconnectTimeoutMs, resolvedIp);
+        SaveUserConfig(config);
+
+        if (display)
+        {
+            display->clearDisplay();
+            display->setCursor(0, 0);
+            display->println(connected ? TXT("WiFi connected", "WiFi已连接") : TXT("WiFi setup done", "WiFi设置完成"));
+            if (connected && resolvedIp)
+            {
+                display->println(resolvedIp->toString());
+            }
+            else if (!config.wifi_ssid.isEmpty())
+            {
+                display->println(config.wifi_ssid);
+            }
+            if (!connected)
+            {
+                display->println(TXT("Retry from setup AP", "请重新连接配置热点"));
+            }
+            display->display();
+        }
+
+        if (!connected)
+        {
+            Serial.printf("[WARN] Portal WiFi handoff did not stabilize for SSID %s\n", config.wifi_ssid.c_str());
+        }
+
+        g_netWizardDisplayActive = false;
+        return connected;
     }
 
     RemoteFileSource BuildRemoteSource(const char *baseUrl,
@@ -329,6 +553,12 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
         return true;
     }
 
+    if (config.wifi_ssid.isEmpty())
+    {
+        Serial.println("[INFO] No saved WiFi credentials; entering NetWizard setup on first boot");
+        return RunNetWizardSetupPortal(config, wizard, portalReconnectTimeoutMs, display, &connectedIp);
+    }
+
     // Prompt user to press button on pin 14 within 10s to enter portal; otherwise continue boot.
     const uint32_t pressWindowMs = 10000;
     uint32_t waitStartMs = millis();
@@ -390,33 +620,7 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
                 delay(100);
             }
 
-            const char *apSsid = config.username.isEmpty() ? config.device_id.c_str() : config.username.c_str();
-            wizard.autoConnect(apSsid, config.ota_password.c_str());
-
-            // Mirror resolved credentials back into config and persist.
-            config.wifi_ssid = wizard.getSSID();
-            config.wifi_password = wizard.getPassword();
-            bool connectedPortal = ConnectAndStabilizeWifi(config.wifi_ssid, config.wifi_password, portalReconnectTimeoutMs, &connectedIp);
-            SaveUserConfig(config);
-
-            if (display)
-            {
-                display->clearDisplay();
-                display->setCursor(0, 0);
-                display->println(connectedPortal ? TXT("WiFi connected", "WiFi已连接") : TXT("WiFi setup done", "WiFi设置完成"));
-                if (connectedPortal)
-                {
-                    display->println(connectedIp.toString());
-                }
-                display->display();
-            }
-
-            if (!connectedPortal)
-            {
-                Serial.printf("[WARN] Portal WiFi handoff did not stabilize for SSID %s\n", config.wifi_ssid.c_str());
-            }
-
-            return connectedPortal;
+            return RunNetWizardSetupPortal(config, wizard, portalReconnectTimeoutMs, display, &connectedIp);
         }
 
         if (display)
@@ -431,33 +635,7 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
     }
 
     // Start captive portal / connect flow using username (fallback to device_id) as AP SSID and OTA password as portal password.
-    const char *apSsid = config.username.isEmpty() ? config.device_id.c_str() : config.username.c_str();
-    wizard.autoConnect(apSsid, config.ota_password.c_str());
-
-    // Mirror resolved credentials back into config and persist.
-    config.wifi_ssid = wizard.getSSID();
-    config.wifi_password = wizard.getPassword();
-    connected = ConnectAndStabilizeWifi(config.wifi_ssid, config.wifi_password, portalReconnectTimeoutMs, &connectedIp);
-    SaveUserConfig(config);
-
-    if (display)
-    {
-        display->clearDisplay();
-        display->setCursor(0, 0);
-        display->println(connected ? TXT("WiFi connected", "WiFi已连接") : TXT("WiFi setup done", "WiFi设置完成"));
-        if (connected)
-        {
-            display->println(connectedIp.toString());
-        }
-        display->display();
-    }
-
-    if (!connected)
-    {
-        Serial.printf("[WARN] Portal WiFi handoff did not stabilize for SSID %s\n", config.wifi_ssid.c_str());
-    }
-
-    return connected;
+    return RunNetWizardSetupPortal(config, wizard, portalReconnectTimeoutMs, display, &connectedIp);
 }
 
 bool DownloadUserConfigFromGithub(const char *baseUrl, UserConfig &config, bool verbose, M5UnitGLASS2 *display, const char *githubToken)
