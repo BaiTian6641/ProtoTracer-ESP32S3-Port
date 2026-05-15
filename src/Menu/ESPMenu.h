@@ -7,6 +7,7 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
+#include <ArduinoJson.h>
 #include <esp_attr.h>
 #include <esp_task_wdt.h>
 #include <driver/rtc_io.h>
@@ -34,6 +35,7 @@ extern M5UnitGLASS2 display;
 #include "../Filter/MinFilter.h"
 #include "../Signals/TimeStep.h"
 #include "../Flash/Icons/Icons.h"
+#include "../Network/UserConfigManager.h"
 
 #define DEMO_MODE 0
 
@@ -50,6 +52,7 @@ SparkFun_APDS9960 apds = SparkFun_APDS9960();
 #endif
 
 extern std::string user_name;
+extern UserConfig userConfig;
 
 const char *BLE_SERIAL2_SERVICE_UUID = "73cf57c7-6797-46e8-8202-dc5e7f956b57";
 extern std::string BLE_RX2_UUID;
@@ -64,6 +67,155 @@ uint32_t raw_data = 32000;
 
 namespace
 {
+    constexpr size_t kBleJsonChunkBytes = 160;
+
+    String EffectiveBleName()
+    {
+        if (!userConfig.username.isEmpty())
+        {
+            return userConfig.username;
+        }
+
+        if (!userConfig.device_id.isEmpty())
+        {
+            return userConfig.device_id;
+        }
+
+        return String(user_name.c_str());
+    }
+
+    String BuildRemoteControllerManifestJson()
+    {
+        DynamicJsonDocument doc(1024);
+        const String relayBaseUrl = (WiFi.status() == WL_CONNECTED)
+                                        ? (String("http://") + WiFi.localIP().toString() + "/api/relay/esp32c6")
+                                        : String("");
+
+        JsonObject device = doc.createNestedObject("device");
+        device["display_name"] = EffectiveBleName();
+        device["hardware_revision"] = "esp32s3";
+
+        JsonObject pairing = doc.createNestedObject("pairing");
+        pairing["transport"] = "ble";
+        pairing["service_uuid"] = BLE_SERIAL2_SERVICE_UUID;
+        pairing["ble_rx_uuid"] = BLE_RX2_UUID.c_str();
+        pairing["ble_tx_uuid"] = BLE_TX2_UUID.c_str();
+        pairing["config_endpoint"] = "/api/remote/config";
+        pairing["bound_peer_id"] = EffectiveBleName();
+
+        JsonObject visual = doc.createNestedObject("visual");
+        visual["animation_asset"] = userConfig.user_animation;
+        visual["red"] = userConfig.user_r;
+        visual["green"] = userConfig.user_g;
+        visual["blue"] = userConfig.user_b;
+
+        JsonObject repo = doc.createNestedObject("repo");
+        repo["asset_base_url"] = relayBaseUrl;
+
+        String payload;
+        serializeJson(doc, payload);
+        return payload;
+    }
+
+    void NotifyBleJsonPayload(const String &payload)
+    {
+        if (!bleDeviceConnected || bleTxCharacteristic == nullptr || payload.isEmpty())
+        {
+            return;
+        }
+
+        for (size_t offset = 0; offset < payload.length(); offset += kBleJsonChunkBytes)
+        {
+            const size_t chunkLength = std::min(kBleJsonChunkBytes, payload.length() - offset);
+            bleTxCharacteristic->setValue(reinterpret_cast<const uint8_t *>(payload.c_str() + offset), chunkLength);
+            bleTxCharacteristic->notify();
+            delay(12);
+        }
+    }
+
+    uint32_t EncodeLegacyCommand(const uint8_t type, const uint16_t value)
+    {
+        switch (type)
+        {
+        case 1:
+            return (static_cast<uint32_t>(type) << 24) | (0xFFUL << 16) | ((static_cast<uint32_t>(value) & 0xFFUL) << 8);
+        case 4:
+            return (static_cast<uint32_t>(type) << 24) | (0xFFUL << 16) | (static_cast<uint32_t>(value) & 0xFFFFUL);
+        case 0:
+        case 2:
+        case 3:
+        default:
+            return (static_cast<uint32_t>(type) << 24) | (0xFFUL << 16) | (static_cast<uint32_t>(value) & 0xFFUL);
+        }
+    }
+
+    bool ApplyJsonCommand(const std::string &rxValue)
+    {
+        if (rxValue.empty() || rxValue.front() != '{')
+        {
+            return false;
+        }
+
+        DynamicJsonDocument doc(rxValue.size() + 512);
+        const DeserializationError err = deserializeJson(doc, rxValue.c_str());
+        if (err)
+        {
+            Serial.printf("BLE JSON parse failed: %s\n", err.c_str());
+            return false;
+        }
+
+        const String op = doc["op"] | String("");
+        if (op == "config.get" || op == "pair.discover" || op == "pair.info")
+        {
+            NotifyBleJsonPayload(BuildRemoteControllerManifestJson());
+            return true;
+        }
+
+        if (op == "control.set" || op == "control.patch")
+        {
+            if (!doc["expression"].isNull())
+            {
+                raw_data = EncodeLegacyCommand(0, static_cast<uint16_t>(constrain(doc["expression"].as<int>(), 0, 255)));
+            }
+            else if (!doc["brightness"].isNull())
+            {
+                raw_data = EncodeLegacyCommand(1, static_cast<uint16_t>(constrain(doc["brightness"].as<int>(), 0, 255)));
+            }
+            else if (!doc["voice_enabled"].isNull())
+            {
+                raw_data = EncodeLegacyCommand(2, doc["voice_enabled"].as<bool>() ? 1 : 0);
+            }
+            else if (!doc["display_mode"].isNull())
+            {
+                raw_data = EncodeLegacyCommand(3, static_cast<uint16_t>(constrain(doc["display_mode"].as<int>(), 0, 255)));
+            }
+            else if (!doc["hue_shift"].isNull())
+            {
+                const float hue = doc["hue_shift"].as<float>();
+                const int encoded = constrain(static_cast<int>(hue * 8.0f), 0, 65535);
+                raw_data = EncodeLegacyCommand(4, static_cast<uint16_t>(encoded));
+            }
+
+            Serial.printf("BLE JSON control op applied: %s\n", op.c_str());
+            return true;
+        }
+
+        if (op == "ping")
+        {
+            DynamicJsonDocument pong(256);
+            pong["op"] = "pong";
+            pong["name"] = EffectiveBleName();
+            pong["service_uuid"] = BLE_SERIAL2_SERVICE_UUID;
+
+            String payload;
+            serializeJson(pong, payload);
+            NotifyBleJsonPayload(payload);
+            return true;
+        }
+
+        return false;
+    }
+
     class MenuBleServerCallbacks : public BLEServerCallbacks
     {
         void onConnect(BLEServer *server) override
@@ -85,6 +237,11 @@ namespace
         {
             std::string rxValue = characteristic->getValue().c_str();
             if (rxValue.empty())
+            {
+                return;
+            }
+
+            if (ApplyJsonCommand(rxValue))
             {
                 return;
             }
@@ -234,12 +391,16 @@ private:
         BLEService *service = bleServer->createService(BLE_SERIAL2_SERVICE_UUID);
 
         bleTxCharacteristic = service->createCharacteristic(BLE_TX2_UUID.c_str(), BLECharacteristic::PROPERTY_NOTIFY);
+        bleTxCharacteristic->addDescriptor(new BLE2902());
 
-        BLECharacteristic *rxCharacteristic = service->createCharacteristic(BLE_RX2_UUID.c_str(), BLECharacteristic::PROPERTY_WRITE);
+        BLECharacteristic *rxCharacteristic = service->createCharacteristic(BLE_RX2_UUID.c_str(), BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
         rxCharacteristic->setCallbacks(new MenuBleRxCallbacks());
 
         service->start();
-        bleServer->getAdvertising()->start();
+        BLEAdvertising *advertising = bleServer->getAdvertising();
+        advertising->addServiceUUID(BLE_SERIAL2_SERVICE_UUID);
+        advertising->setScanResponse(true);
+        advertising->start();
         Serial.println("BLE UART ready, waiting for client...");
     }
 

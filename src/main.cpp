@@ -132,6 +132,100 @@ const char *index_html = R"rawliteral(
 </html>
 )rawliteral";
 
+constexpr const char *kRemoteC6ManifestFilename = "remote-esp32c6.json";
+constexpr const char *kRemoteC6FirmwareFilename = "remote-firmware.bin";
+constexpr const char *kRelayManifestCachePath = "/relay_remote-esp32c6.json";
+constexpr const char *kRelayFirmwareCachePath = "/relay_remote-firmware.bin";
+
+bool gRelayRoutesRegistered = false;
+bool gRuntimeServerStarted = false;
+
+bool RefreshRelayAsset(const char *remoteFilename, const char *localPath)
+{
+  if (remoteFilename == nullptr || localPath == nullptr)
+  {
+    return false;
+  }
+
+  RemoteFileSource sources[2];
+  sources[0].baseUrl = user_config_gitee_base_url;
+  sources[0].token = user_config_gitee_token;
+  sources[0].authScheme = "Bearer ";
+  sources[0].acceptHeader = gitee_accept_header;
+  sources[0].name = "Gitee";
+  sources[1].baseUrl = user_config_base_url;
+  sources[1].token = user_config_github_token;
+  sources[1].authScheme = "token ";
+  sources[1].acceptHeader = nullptr;
+  sources[1].name = "GitHub";
+
+  RemoteFileSyncOptions options;
+  options.verbose = kVerboseStartup;
+  options.keepExistingWhenRemoteMd5Unavailable = false;
+
+  int usedSourceIndex = -1;
+  const bool synced = RemoteFileSync::SyncAny(
+      sources,
+      2,
+      String(remoteFilename),
+      String(localPath),
+      options,
+      &usedSourceIndex);
+
+  if (synced)
+  {
+    Serial.printf("[INFO] Refreshed relay asset %s via source %d\n", remoteFilename, usedSourceIndex);
+    return true;
+  }
+
+  return RemoteFileSync::EnsureFsMounted() && LittleFS.exists(localPath);
+}
+
+void RegisterC6RelayRoutes()
+{
+  if (gRelayRoutesRegistered)
+  {
+    return;
+  }
+
+  server.on("/api/relay/esp32c6/healthz", HTTP_GET, [](AsyncWebServerRequest *request)
+            { request->send(200, "application/json", "{\"status\":\"ok\"}"); });
+
+  server.on("/api/relay/esp32c6/manifest", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+              if (!RefreshRelayAsset(kRemoteC6ManifestFilename, kRelayManifestCachePath))
+              {
+                request->send(502, "application/json", "{\"error\":\"Failed to refresh remote-esp32c6.json\"}");
+                return;
+              }
+
+              request->send(LittleFS, kRelayManifestCachePath, "application/json", false); });
+
+  server.on("/api/relay/esp32c6/remote-firmware.bin", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+              if (!RefreshRelayAsset(kRemoteC6FirmwareFilename, kRelayFirmwareCachePath))
+              {
+                request->send(502, "application/json", "{\"error\":\"Failed to refresh remote-firmware.bin\"}");
+                return;
+              }
+
+              request->send(LittleFS, kRelayFirmwareCachePath, "application/octet-stream", false); });
+
+  gRelayRoutesRegistered = true;
+}
+
+void EnsureRuntimeServerStarted()
+{
+  if (gRuntimeServerStarted)
+  {
+    return;
+  }
+
+  server.begin();
+  gRuntimeServerStarted = true;
+  Serial.println("[INFO] Runtime HTTP server started");
+}
+
 float FreeMem()
 {
   uint32_t stackT;
@@ -333,6 +427,9 @@ void setup()
     display.println(TXT("Continuing startup", "继续启动"));
     display.display();
   }
+
+  RegisterC6RelayRoutes();
+  EnsureRuntimeServerStarted();
 
   // Attempt to pull remote user_config.json named by device_id, preferring the lower-latency remote.
   RemoteFileSource userConfigSources[2];
