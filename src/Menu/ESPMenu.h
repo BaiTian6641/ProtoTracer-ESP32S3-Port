@@ -62,12 +62,15 @@ static BLEServer *bleServer = nullptr;
 static BLECharacteristic *bleTxCharacteristic = nullptr;
 static bool bleDeviceConnected = false;
 static bool bleOldDeviceConnected = false;
+static String blePendingJsonPayload;
+static bool bleJsonPayloadPending = false;
 
 uint32_t raw_data = 32000;
 
 namespace
 {
     constexpr size_t kBleJsonChunkBytes = 160;
+    constexpr uint8_t kRemoteControllerExpressionCount = 17;
 
     String EffectiveBleName()
     {
@@ -105,6 +108,7 @@ namespace
 
         JsonObject visual = doc.createNestedObject("visual");
         visual["animation_asset"] = userConfig.user_animation;
+        visual["expression_count"] = kRemoteControllerExpressionCount;
         visual["red"] = userConfig.user_r;
         visual["green"] = userConfig.user_g;
         visual["blue"] = userConfig.user_b;
@@ -131,6 +135,66 @@ namespace
             bleTxCharacteristic->notify();
             delay(12);
         }
+    }
+
+    void QueueBleJsonPayload(const String &payload)
+    {
+        if (payload.isEmpty())
+        {
+            return;
+        }
+
+        blePendingJsonPayload = payload;
+        bleJsonPayloadPending = true;
+    }
+
+    void FlushQueuedBleJsonPayload()
+    {
+        if (!bleJsonPayloadPending)
+        {
+            return;
+        }
+
+        if (!bleDeviceConnected || bleTxCharacteristic == nullptr)
+        {
+            return;
+        }
+
+        NotifyBleJsonPayload(blePendingJsonPayload);
+        blePendingJsonPayload = String("");
+        bleJsonPayloadPending = false;
+    }
+
+    String BuildRemoteControllerStateJson(const JsonDocument &doc)
+    {
+        DynamicJsonDocument response(384);
+        response["op"] = "control.state";
+        response["accepted"] = true;
+
+        if (!doc["expression"].isNull())
+        {
+            response["expression"] = doc["expression"].as<int>();
+        }
+        if (!doc["brightness"].isNull())
+        {
+            response["brightness"] = doc["brightness"].as<int>();
+        }
+        if (!doc["voice_enabled"].isNull())
+        {
+            response["voice_enabled"] = doc["voice_enabled"].as<bool>();
+        }
+        if (!doc["display_mode"].isNull())
+        {
+            response["display_mode"] = doc["display_mode"].as<int>();
+        }
+        if (!doc["hue_shift"].isNull())
+        {
+            response["hue_shift"] = doc["hue_shift"].as<float>();
+        }
+
+        String payload;
+        serializeJson(response, payload);
+        return payload;
     }
 
     uint32_t EncodeLegacyCommand(const uint8_t type, const uint16_t value)
@@ -167,7 +231,7 @@ namespace
         const String op = doc["op"] | String("");
         if (op == "config.get" || op == "pair.discover" || op == "pair.info")
         {
-            NotifyBleJsonPayload(BuildRemoteControllerManifestJson());
+            QueueBleJsonPayload(BuildRemoteControllerManifestJson());
             return true;
         }
 
@@ -197,6 +261,7 @@ namespace
             }
 
             Serial.printf("BLE JSON control op applied: %s\n", op.c_str());
+            QueueBleJsonPayload(BuildRemoteControllerStateJson(doc));
             return true;
         }
 
@@ -209,7 +274,7 @@ namespace
 
             String payload;
             serializeJson(pong, payload);
-            NotifyBleJsonPayload(payload);
+            QueueBleJsonPayload(payload);
             return true;
         }
 
@@ -235,11 +300,14 @@ namespace
     {
         void onWrite(BLECharacteristic *characteristic) override
         {
-            std::string rxValue = characteristic->getValue().c_str();
-            if (rxValue.empty())
+            const uint8_t *data = characteristic->getData();
+            const size_t length = characteristic->getLength();
+            if (data == nullptr || length == 0)
             {
                 return;
             }
+
+            std::string rxValue(reinterpret_cast<const char *>(data), length);
 
             if (ApplyJsonCommand(rxValue))
             {
@@ -546,6 +614,8 @@ public:
                 bleOldDeviceConnected = true;
             }
         }
+
+        FlushQueuedBleJsonPayload();
 
         //free_mem = (int)((float)((float)ESP.getFreeHeap() / (float)ESP.getHeapSize())*100.0f);
         display.startWrite();
