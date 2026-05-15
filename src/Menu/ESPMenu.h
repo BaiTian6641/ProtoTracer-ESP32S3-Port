@@ -1,3 +1,5 @@
+#pragma once
+
 // #include <esp_now.h>
 #include <WiFi.h>
 #include <Adafruit_NeoPixel.h>
@@ -71,6 +73,17 @@ namespace
 {
     constexpr size_t kBleJsonChunkBytes = 160;
     constexpr uint8_t kRemoteControllerExpressionCount = 17;
+
+    volatile bool remoteExpressionPending = false;
+    volatile bool remoteBrightnessPending = false;
+    volatile bool remoteVoicePending = false;
+    volatile bool remoteDisplayModePending = false;
+    volatile bool remoteHuePending = false;
+    volatile uint8_t remoteExpression = 0;
+    volatile uint8_t remoteBrightness = 0;
+    volatile uint8_t remoteVoice = 1;
+    volatile uint8_t remoteDisplayMode = 1;
+    volatile uint16_t remoteHueEncoded = 0;
 
     String EffectiveBleName()
     {
@@ -237,30 +250,50 @@ namespace
 
         if (op == "control.set" || op == "control.patch")
         {
+            bool handledControl = false;
             if (!doc["expression"].isNull())
             {
-                raw_data = EncodeLegacyCommand(0, static_cast<uint16_t>(constrain(doc["expression"].as<int>(), 0, 255)));
+                const uint8_t value = static_cast<uint8_t>(constrain(doc["expression"].as<int>(), 0, kRemoteControllerExpressionCount - 1));
+                remoteExpression = value;
+                remoteExpressionPending = true;
+                raw_data = EncodeLegacyCommand(0, value);
+                handledControl = true;
             }
             else if (!doc["brightness"].isNull())
             {
-                raw_data = EncodeLegacyCommand(1, static_cast<uint16_t>(constrain(doc["brightness"].as<int>(), 0, 255)));
+                const uint8_t value = static_cast<uint8_t>(constrain(doc["brightness"].as<int>(), 0, 255));
+                remoteBrightness = value;
+                remoteBrightnessPending = true;
+                raw_data = EncodeLegacyCommand(1, value);
+                handledControl = true;
             }
             else if (!doc["voice_enabled"].isNull())
             {
-                raw_data = EncodeLegacyCommand(2, doc["voice_enabled"].as<bool>() ? 1 : 0);
+                const uint8_t value = doc["voice_enabled"].as<bool>() ? 1 : 0;
+                remoteVoice = value;
+                remoteVoicePending = true;
+                raw_data = EncodeLegacyCommand(2, value);
+                handledControl = true;
             }
             else if (!doc["display_mode"].isNull())
             {
-                raw_data = EncodeLegacyCommand(3, static_cast<uint16_t>(constrain(doc["display_mode"].as<int>(), 0, 255)));
+                const uint8_t value = static_cast<uint8_t>(constrain(doc["display_mode"].as<int>(), 0, 255));
+                remoteDisplayMode = value;
+                remoteDisplayModePending = true;
+                raw_data = EncodeLegacyCommand(3, value);
+                handledControl = true;
             }
             else if (!doc["hue_shift"].isNull())
             {
                 const float hue = doc["hue_shift"].as<float>();
                 const int encoded = constrain(static_cast<int>(hue * 8.0f), 0, 65535);
-                raw_data = EncodeLegacyCommand(4, static_cast<uint16_t>(encoded));
+                remoteHueEncoded = static_cast<uint16_t>(encoded);
+                remoteHuePending = true;
+                raw_data = EncodeLegacyCommand(4, remoteHueEncoded);
+                handledControl = true;
             }
 
-            Serial.printf("BLE JSON control op applied: %s\n", op.c_str());
+            Serial.printf("BLE JSON control op %s: %s raw=0x%08lx\n", handledControl ? "applied" : "ignored", op.c_str(), static_cast<unsigned long>(raw_data));
             QueueBleJsonPayload(BuildRemoteControllerStateJson(doc));
             return true;
         }
@@ -623,6 +656,51 @@ public:
         // display.drawString("Current: ", 0, 12);
         // display.drawString("Brightness: ", 0, 24);
         // display.drawString("Lip Sync: ", 0, 36);
+
+        if (remoteExpressionPending)
+        {
+            remoteExpressionPending = false;
+            tempvalue = remoteExpression;
+            if (facialexpression != tempvalue)
+            {
+                facialexpression = tempvalue;
+                display.fillRect(65, 37, 14, 12, TFT_BLACK);
+                display.display();
+            }
+        }
+        if (remoteBrightnessPending)
+        {
+            remoteBrightnessPending = false;
+            tempvalue = remoteBrightness;
+            if (bright != tempvalue)
+            {
+                bright = tempvalue;
+                display.fillRect(40, 50, 20, 12, TFT_BLACK);
+                display.display();
+            }
+        }
+        if (remoteVoicePending)
+        {
+            remoteVoicePending = false;
+            tempvalue = remoteVoice;
+            if (voiceenable != tempvalue)
+            {
+                voiceenable = tempvalue;
+                display.fillRect(65, 50, 60, 12, TFT_BLACK);
+                display.display();
+            }
+        }
+        if (remoteDisplayModePending)
+        {
+            remoteDisplayModePending = false;
+            dmode = remoteDisplayMode;
+        }
+        if (remoteHuePending)
+        {
+            remoteHuePending = false;
+            tempHue = remoteHueEncoded / 8.0f;
+        }
+
         data_type = (uint8_t)(raw_data >> 24);
         if (data_type == 0)
         {
