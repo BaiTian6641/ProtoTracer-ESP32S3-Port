@@ -185,12 +185,14 @@ private:
     std::vector<HueShiftBinding> hueShiftRegistry; // material* -> concrete HueShift handler
     std::vector<BoopMorphSpec> boopMorphSpecs; // boop count -> expression mapping from JSON
     uint32_t lastBoopTime = 0;           // timestamp of last boop (in millis)
+    uint32_t lastBoopReportTime = 0;     // when we last detected/reported a boop
     uint8_t boopCount = 0;               // count of boops in current window
     bool lastBoopState = false;          // previous frame's boop state for edge detection
     String activeBoopExpression;
     uint32_t activeBoopUntil = 0;
-    static constexpr uint32_t kBoopTimeWindow = 1200; // window to count boops
-    static constexpr uint32_t kBoopHoldMs = 1800;     // keep resolved boop expression visible
+    static constexpr uint32_t kBoopTimeWindow = 800;      // window to count boops (reduced for responsiveness)
+    static constexpr uint32_t kBoopHoldMs = 1200;         // keep resolved boop expression visible
+    static constexpr uint32_t kBoopMinDebounceMs = 100;   // minimum ms between boop detections to avoid noise
 
     // Helpers
     Object3D *GetFaceObject()
@@ -376,11 +378,11 @@ private:
         return jsonFaceLoaded;
     }
 
-    const char *NormalizeBoopExpressionName(const char *name) const
+    String NormalizeBoopExpressionName(const char *name) const
     {
-        if (name == nullptr)
+        if (name == nullptr || !name[0])
         {
-            return nullptr;
+            return "";
         }
 
         String candidate = name;
@@ -389,7 +391,7 @@ private:
             return "Surprised";
         }
 
-        return name;
+        return String(name);
     }
 
     void ChangeInterpolationMethods()
@@ -1201,12 +1203,18 @@ private:
                 JsonObject obj = v.as<JsonObject>();
                 BoopMorphSpec spec;
                 spec.times = obj["times"] | 1;
-                spec.name = NormalizeBoopExpressionName(obj["name"] | String(""));
+                String rawName = obj["name"] | String("");
+                spec.name = NormalizeBoopExpressionName(rawName.c_str());
                 if (spec.name.length() > 0)
                 {
                     boopMorphSpecs.push_back(spec);
+                    Serial.printf("[BOOP] Registered: %d times -> '%s'\n", spec.times, spec.name.c_str());
                 }
             }
+        }
+        if (boopMorphSpecs.size() == 0)
+        {
+            Serial.println("[BOOP] WARNING: No boop_morphs configured in JSON!");
         }
 
         baseXOffset = doc["x_offset"] | baseXOffset;
@@ -1241,24 +1249,39 @@ private:
 
     String ResolveBoopExpression()
     {
-        // Note: This is called every frame from Update(), so we track boop state changes
+        uint32_t now = millis();
+        
+        // Return active boop expression if still within hold window
         if (activeBoopExpression.length() > 0)
         {
-            const uint32_t now = millis();
             if (now < activeBoopUntil)
             {
                 return activeBoopExpression;
             }
-
+            // Hold window expired
             activeBoopExpression.clear();
         }
 
-        bool currentBoopState = Menu::UseBoopSensor() ? Menu::isBooped() : false;
-        uint32_t now = millis();
+        // Only check for new boops if sensor is enabled
+        if (!Menu::UseBoopSensor())
+        {
+            return "";
+        }
 
-        // Edge detection: transition from not booped to booped
+        bool currentBoopState = Menu::isBooped();
+
+        // Edge detection: transition from not booped to booped (with debouncing)
         if (currentBoopState && !lastBoopState)
         {
+            uint32_t timeSinceLastReport = now - lastBoopReportTime;
+            
+            // Debounce: ignore if too soon after last detection
+            if (timeSinceLastReport < kBoopMinDebounceMs)
+            {
+                lastBoopState = currentBoopState;
+                return "";
+            }
+            
             // New boop detected
             uint32_t timeSinceLastBoop = now - lastBoopTime;
             
@@ -1266,45 +1289,61 @@ private:
             if (boopCount == 0 || timeSinceLastBoop < kBoopTimeWindow)
             {
                 boopCount++;
+                Serial.printf("[BOOP] Detected boop #%d at time %u (window in progress)\n", boopCount, now);
             }
             else
             {
                 // Time window expired, reset counter and start new sequence
                 boopCount = 1;
+                Serial.printf("[BOOP] New boop sequence started (previous window expired)\n");
             }
             
             lastBoopTime = now;
+            lastBoopReportTime = now;
         }
 
         lastBoopState = currentBoopState;
 
         // Check if window has closed (no new boops for kBoopTimeWindow ms)
-        if (boopCount > 0 && !currentBoopState && (now - lastBoopTime) > kBoopTimeWindow)
+        if (boopCount > 0 && !currentBoopState)
         {
-            // Window closed, resolve the boop sequence
-            String result = "";
+            uint32_t timeSinceLastBoop = now - lastBoopTime;
             
-            // Find matching expression by boop count
-            for (const auto &spec : boopMorphSpecs)
+            if (timeSinceLastBoop > kBoopTimeWindow)
             {
-                if (spec.times == boopCount)
+                // Window closed, resolve the boop sequence
+                String result = "";
+                
+                Serial.printf("[BOOP] Window closed with %d boops detected\n", boopCount);
+                
+                // Find matching expression by boop count
+                for (const auto &spec : boopMorphSpecs)
                 {
-                    result = spec.name;
-                    break;
+                    if (spec.times == boopCount)
+                    {
+                        result = spec.name;
+                        Serial.printf("[BOOP] Matched %d boop(s) to expression: '%s'\n", boopCount, result.c_str());
+                        break;
+                    }
                 }
-            }
+                
+                if (result.isEmpty())
+                {
+                    Serial.printf("[BOOP] WARNING: No expression mapped for %d boop(s)\n", boopCount);
+                }
 
-            if (!result.isEmpty())
-            {
-                activeBoopExpression = result;
-                activeBoopUntil = now + kBoopHoldMs;
+                if (!result.isEmpty())
+                {
+                    activeBoopExpression = result;
+                    activeBoopUntil = now + kBoopHoldMs;
+                }
+                
+                // Reset counters
+                boopCount = 0;
+                lastBoopTime = 0;
+                
+                return result;
             }
-            
-            // Reset counters
-            boopCount = 0;
-            lastBoopTime = 0;
-            
-            return result;
         }
 
         // Window still open or no boops counted
@@ -1380,10 +1419,10 @@ public:
     void MenuUpdate()
     {
         espmenu.Update();
-        if (!animationName.isEmpty())
-        {
-            display.drawString(animationName, 5, 24);
-        }
+        //if (!animationName.isEmpty())
+        //{
+        //    display.drawString(animationName, 5, 24);
+        //}
     }
 
     int GetDisplayMode()
