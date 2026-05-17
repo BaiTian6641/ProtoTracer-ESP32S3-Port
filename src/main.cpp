@@ -80,7 +80,7 @@ constexpr bool kVerboseStartup = false;
 #endif
 
 #ifndef PROTOTRACER_FW_VERSION
-#define PROTOTRACER_FW_VERSION "1.0.2"
+#define PROTOTRACER_FW_VERSION "1.0.3"
 #endif
 
 #ifndef PROTOTRACER_FW_MANIFEST
