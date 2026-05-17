@@ -169,6 +169,11 @@ private:
         float basis = 0.0f;
         float goal = 1.0f;
     };
+    struct BoopMorphSpec
+    {
+        uint8_t times = 1;      // number of boops to trigger this expression
+        String name;             // expression name to trigger
+    };
     struct HueShiftBinding
     {
         Material *material = nullptr;
@@ -177,6 +182,11 @@ private:
     };
     std::vector<AutoLinkSpec> autoLinkSpecs; // optional per-morph overrides from JSON
     std::vector<HueShiftBinding> hueShiftRegistry; // material* -> concrete HueShift handler
+    std::vector<BoopMorphSpec> boopMorphSpecs; // boop count -> expression mapping from JSON
+    uint32_t lastBoopTime = 0;           // timestamp of last boop (in millis)
+    uint8_t boopCount = 0;               // count of boops in current window
+    bool lastBoopState = false;          // previous frame's boop state for edge detection
+    static constexpr uint32_t kBoopTimeWindow = 500; // 500ms window to count boops
 
     // Helpers
     Object3D *GetFaceObject()
@@ -1143,6 +1153,27 @@ private:
             }
         }
 
+        boopMorphSpecs.clear();
+        if (doc.containsKey("boop_morphs"))
+        {
+            JsonArray boops = doc["boop_morphs"].as<JsonArray>();
+            for (JsonVariant v : boops)
+            {
+                if (!v.is<JsonObject>())
+                {
+                    continue;
+                }
+                JsonObject obj = v.as<JsonObject>();
+                BoopMorphSpec spec;
+                spec.times = obj["times"] | 1;
+                spec.name = obj["name"] | String("");
+                if (spec.name.length() > 0)
+                {
+                    boopMorphSpecs.push_back(spec);
+                }
+            }
+        }
+
         baseXOffset = doc["x_offset"] | baseXOffset;
         baseYOffset = doc["y_offset"] | baseYOffset;
 
@@ -1173,16 +1204,59 @@ private:
         return true;
     }
 
-    String ResolveBoopExpression() const
+    String ResolveBoopExpression()
     {
-        for (const auto &p : expressions)
+        // Note: This is called every frame from Update(), so we track boop state changes
+        bool currentBoopState = Menu::UseBoopSensor() ? Menu::isBooped() : false;
+        uint32_t now = millis();
+
+        // Edge detection: transition from not booped to booped
+        if (currentBoopState && !lastBoopState)
         {
-            if (p.first.equalsIgnoreCase("Surprised"))
+            // New boop detected
+            uint32_t timeSinceLastBoop = now - lastBoopTime;
+            
+            // If first boop or within time window, increment counter
+            if (boopCount == 0 || timeSinceLastBoop < kBoopTimeWindow)
             {
-                return p.first;
+                boopCount++;
             }
+            else
+            {
+                // Time window expired, reset counter and start new sequence
+                boopCount = 1;
+            }
+            
+            lastBoopTime = now;
         }
-        return expressionOrder.empty() ? String("") : expressionOrder.front();
+
+        lastBoopState = currentBoopState;
+
+        // Check if window has closed (no new boops for kBoopTimeWindow ms)
+        if (boopCount > 0 && !currentBoopState && (now - lastBoopTime) > kBoopTimeWindow)
+        {
+            // Window closed, resolve the boop sequence
+            String result = "";
+            
+            // Find matching expression by boop count
+            for (const auto &spec : boopMorphSpecs)
+            {
+                if (spec.times == boopCount)
+                {
+                    result = spec.name;
+                    break;
+                }
+            }
+            
+            // Reset counters
+            boopCount = 0;
+            lastBoopTime = 0;
+            
+            return result;
+        }
+
+        // Window still open or no boops counted
+        return "";
     }
 
 public:
@@ -1275,7 +1349,6 @@ public:
         blurV.SetRatio(fGenBlur.Update());
         blurR.SetRatio(fGenBlur.Update());
 
-        bool isBooped = Menu::UseBoopSensor() ? Menu::isBooped() : false;
         uint8_t mode = Menu::GetFaceState();
 
         MicrophoneFourierIT::Update();
@@ -1299,8 +1372,10 @@ public:
             }
         }
 
+        // Resolve boop sequence (called every frame for state tracking)
+        String boopExpr = ResolveBoopExpression();
         // Intercept animation selection from JSON definitions.
-        String targetExpr = isBooped ? ResolveBoopExpression() : GetExpressionByIndex(mode);
+        String targetExpr = !boopExpr.isEmpty() ? boopExpr : GetExpressionByIndex(mode);
         if (!targetExpr.isEmpty())
         {
             ApplyExpression(targetExpr);

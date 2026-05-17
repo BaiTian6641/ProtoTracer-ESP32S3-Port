@@ -19,6 +19,11 @@
         "Zzz",
         "MouthEnd"
     ],
+    "boop_morphs": [
+        {"times": 1, "name": "Suprise"},
+        {"times": 3, "name": "Angry"},
+        {"times": 10, "name": "XwX"}
+    ],
     "auto_link": [
         {"name": "HideBlush", "frames": 30, "basis": 0.0, "goal": 1.0},
         {"name": "HideSecondEye", "frames": 30, "basis": 0.0, "goal": 1.0},
