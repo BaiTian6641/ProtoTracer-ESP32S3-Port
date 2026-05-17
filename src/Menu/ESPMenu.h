@@ -15,6 +15,7 @@
 #include <driver/rtc_io.h>
 #include <esp_mac.h>
 #include <esp_timer.h>
+#include <algorithm>
 #include <string>
 
 #include <M5Unified.h>
@@ -66,24 +67,69 @@ static bool bleDeviceConnected = false;
 static bool bleOldDeviceConnected = false;
 static String blePendingJsonPayload;
 static bool bleJsonPayloadPending = false;
+static String bleRxJsonBuffer;
 
 uint32_t raw_data = 32000;
 
 namespace
 {
     constexpr size_t kBleJsonChunkBytes = 160;
+    constexpr size_t kBleRxJsonBufferBytes = 1024;
+    constexpr uint8_t kRemoteCommandQueueSize = 8;
     constexpr uint8_t kRemoteControllerExpressionCount = 17;
+    constexpr const char *kRemoteControllerExpressionNames[kRemoteControllerExpressionCount] = {
+        "Default",
+        "Angry",
+        "Doubt",
+        "Frown",
+        "Heart",
+        "Sad",
+        "Surprise",
+        "Happy",
+        "OwO",
+        "Surprise",
+        "Sleepy",
+        "Curious",
+        "Excited",
+        "Wink",
+        "Shy",
+        "Focus",
+        "Custom",
+    };
 
-    volatile bool remoteExpressionPending = false;
-    volatile bool remoteBrightnessPending = false;
-    volatile bool remoteVoicePending = false;
-    volatile bool remoteDisplayModePending = false;
-    volatile bool remoteHuePending = false;
-    volatile uint8_t remoteExpression = 0;
-    volatile uint8_t remoteBrightness = 0;
-    volatile uint8_t remoteVoice = 1;
-    volatile uint8_t remoteDisplayMode = 1;
-    volatile uint16_t remoteHueEncoded = 0;
+    volatile uint32_t remoteCommandQueue[kRemoteCommandQueueSize] = {};
+    volatile uint8_t remoteCommandQueueHead = 0;
+    volatile uint8_t remoteCommandQueueTail = 0;
+
+    String BlePreviewText(const std::string &value)
+    {
+        constexpr size_t kPreviewBytes = 96;
+        const size_t previewLength = std::min(kPreviewBytes, value.size());
+        String preview;
+        preview.reserve(previewLength + 1);
+
+        for (size_t index = 0; index < previewLength; ++index)
+        {
+            const unsigned char c = static_cast<unsigned char>(value[index]);
+            preview += (c >= 32 && c <= 126) ? static_cast<char>(c) : '.';
+        }
+
+        if (value.size() > previewLength)
+        {
+            preview += "...";
+        }
+
+        return preview;
+    }
+
+    void LogBleWritePreview(const std::string &value)
+    {
+        Serial.printf(
+            "BLE RX write received: bytes=%u buffered=%u preview='%s'\n",
+            static_cast<unsigned>(value.size()),
+            static_cast<unsigned>(bleRxJsonBuffer.length()),
+            BlePreviewText(value).c_str());
+    }
 
     String EffectiveBleName()
     {
@@ -102,7 +148,7 @@ namespace
 
     String BuildRemoteControllerManifestJson()
     {
-        DynamicJsonDocument doc(1024);
+        DynamicJsonDocument doc(1536);
         const String relayBaseUrl = (WiFi.status() == WL_CONNECTED)
                                         ? (String("http://") + WiFi.localIP().toString() + "/api/relay/esp32c6")
                                         : String("");
@@ -122,6 +168,11 @@ namespace
         JsonObject visual = doc.createNestedObject("visual");
         visual["animation_asset"] = userConfig.user_animation;
         visual["expression_count"] = kRemoteControllerExpressionCount;
+        JsonArray expressionNames = visual.createNestedArray("expression_names");
+        for (uint8_t index = 0; index < kRemoteControllerExpressionCount; ++index)
+        {
+            expressionNames.add(kRemoteControllerExpressionNames[index]);
+        }
         visual["red"] = userConfig.user_r;
         visual["green"] = userConfig.user_g;
         visual["blue"] = userConfig.user_b;
@@ -226,6 +277,137 @@ namespace
         }
     }
 
+    bool EnqueueLegacyCommand(const uint32_t command)
+    {
+        const uint8_t nextHead = static_cast<uint8_t>((remoteCommandQueueHead + 1) % kRemoteCommandQueueSize);
+        if (nextHead == remoteCommandQueueTail)
+        {
+            Serial.printf("BLE legacy command queue full, dropping raw=0x%08lx\n", static_cast<unsigned long>(command));
+            return false;
+        }
+
+        remoteCommandQueue[remoteCommandQueueHead] = command;
+        remoteCommandQueueHead = nextHead;
+        Serial.printf(
+            "BLE legacy command queued: raw=0x%08lx head=%u tail=%u\n",
+            static_cast<unsigned long>(command),
+            static_cast<unsigned>(remoteCommandQueueHead),
+            static_cast<unsigned>(remoteCommandQueueTail));
+        return true;
+    }
+
+    bool EnqueueLegacyCommand(const uint8_t type, const uint16_t value, uint32_t *encodedCommand)
+    {
+        const uint32_t command = EncodeLegacyCommand(type, value);
+        if (encodedCommand != nullptr)
+        {
+            *encodedCommand = command;
+        }
+        return EnqueueLegacyCommand(command);
+    }
+
+    bool DequeueLegacyCommand(uint32_t *command)
+    {
+        if (command == nullptr || remoteCommandQueueTail == remoteCommandQueueHead)
+        {
+            return false;
+        }
+
+        *command = remoteCommandQueue[remoteCommandQueueTail];
+        remoteCommandQueueTail = static_cast<uint8_t>((remoteCommandQueueTail + 1) % kRemoteCommandQueueSize);
+        return true;
+    }
+
+    void ClearQueuedLegacyCommands()
+    {
+        remoteCommandQueueHead = 0;
+        remoteCommandQueueTail = 0;
+    }
+
+    bool IsJsonWhitespace(const char value)
+    {
+        return value == ' ' || value == '\r' || value == '\n' || value == '\t';
+    }
+
+    void TrimLeadingBleJsonWhitespace()
+    {
+        while (bleRxJsonBuffer.length() > 0 && IsJsonWhitespace(bleRxJsonBuffer[0]))
+        {
+            bleRxJsonBuffer.remove(0, 1);
+        }
+    }
+
+    bool ExtractCompleteJsonObject(const String &source, String *json, size_t *nextIndex)
+    {
+        size_t start = 0;
+        while (start < source.length() && source[start] != '{')
+        {
+            if (!IsJsonWhitespace(source[start]))
+            {
+                return false;
+            }
+            ++start;
+        }
+
+        if (start >= source.length())
+        {
+            return false;
+        }
+
+        bool inString = false;
+        bool escaped = false;
+        int depth = 0;
+        for (size_t index = start; index < source.length(); ++index)
+        {
+            const char current = source[index];
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+
+            if (current == '\\')
+            {
+                escaped = inString;
+                continue;
+            }
+
+            if (current == '"')
+            {
+                inString = !inString;
+                continue;
+            }
+
+            if (inString)
+            {
+                continue;
+            }
+
+            if (current == '{')
+            {
+                ++depth;
+            }
+            else if (current == '}')
+            {
+                --depth;
+                if (depth == 0)
+                {
+                    if (json != nullptr)
+                    {
+                        *json = source.substring(start, index + 1);
+                    }
+                    if (nextIndex != nullptr)
+                    {
+                        *nextIndex = index + 1;
+                    }
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     bool ApplyJsonCommand(const std::string &rxValue)
     {
         if (rxValue.empty() || rxValue.front() != '{')
@@ -242,8 +424,10 @@ namespace
         }
 
         const String op = doc["op"] | String("");
+        Serial.printf("BLE JSON op received: %s bytes=%u\n", op.c_str(), static_cast<unsigned>(rxValue.size()));
         if (op == "config.get" || op == "pair.discover" || op == "pair.info")
         {
+            Serial.println("BLE JSON config request accepted");
             QueueBleJsonPayload(BuildRemoteControllerManifestJson());
             return true;
         }
@@ -251,55 +435,52 @@ namespace
         if (op == "control.set" || op == "control.patch")
         {
             bool handledControl = false;
+            uint32_t lastCommand = 0;
             if (!doc["expression"].isNull())
             {
                 const uint8_t value = static_cast<uint8_t>(constrain(doc["expression"].as<int>(), 0, kRemoteControllerExpressionCount - 1));
-                remoteExpression = value;
-                remoteExpressionPending = true;
-                raw_data = EncodeLegacyCommand(0, value);
-                handledControl = true;
+                const bool queued = EnqueueLegacyCommand(0, value, &lastCommand);
+                Serial.printf("BLE JSON control field expression=%u %s raw=0x%08lx\n", static_cast<unsigned>(value), queued ? "queued" : "failed", static_cast<unsigned long>(lastCommand));
+                handledControl = queued || handledControl;
             }
             if (!doc["brightness"].isNull())
             {
                 const uint8_t value = static_cast<uint8_t>(constrain(doc["brightness"].as<int>(), 0, 255));
-                remoteBrightness = value;
-                remoteBrightnessPending = true;
-                raw_data = EncodeLegacyCommand(1, value);
-                handledControl = true;
+                const bool queued = EnqueueLegacyCommand(1, value, &lastCommand);
+                Serial.printf("BLE JSON control field brightness=%u %s raw=0x%08lx\n", static_cast<unsigned>(value), queued ? "queued" : "failed", static_cast<unsigned long>(lastCommand));
+                handledControl = queued || handledControl;
             }
             if (!doc["voice_enabled"].isNull())
             {
                 const uint8_t value = doc["voice_enabled"].as<bool>() ? 1 : 0;
-                remoteVoice = value;
-                remoteVoicePending = true;
-                raw_data = EncodeLegacyCommand(2, value);
-                handledControl = true;
+                const bool queued = EnqueueLegacyCommand(2, value, &lastCommand);
+                Serial.printf("BLE JSON control field voice_enabled=%u %s raw=0x%08lx\n", static_cast<unsigned>(value), queued ? "queued" : "failed", static_cast<unsigned long>(lastCommand));
+                handledControl = queued || handledControl;
             }
             if (!doc["display_mode"].isNull())
             {
                 const uint8_t value = static_cast<uint8_t>(constrain(doc["display_mode"].as<int>(), 0, 255));
-                remoteDisplayMode = value;
-                remoteDisplayModePending = true;
-                raw_data = EncodeLegacyCommand(3, value);
-                handledControl = true;
+                const bool queued = EnqueueLegacyCommand(3, value, &lastCommand);
+                Serial.printf("BLE JSON control field display_mode=%u %s raw=0x%08lx\n", static_cast<unsigned>(value), queued ? "queued" : "failed", static_cast<unsigned long>(lastCommand));
+                handledControl = queued || handledControl;
             }
             if (!doc["hue_shift"].isNull())
             {
                 const float hue = doc["hue_shift"].as<float>();
                 const int encoded = constrain(static_cast<int>(hue * 8.0f), 0, 65535);
-                remoteHueEncoded = static_cast<uint16_t>(encoded);
-                remoteHuePending = true;
-                raw_data = EncodeLegacyCommand(4, remoteHueEncoded);
-                handledControl = true;
+                const bool queued = EnqueueLegacyCommand(4, static_cast<uint16_t>(encoded), &lastCommand);
+                Serial.printf("BLE JSON control field hue_shift=%.2f encoded=%d %s raw=0x%08lx\n", hue, encoded, queued ? "queued" : "failed", static_cast<unsigned long>(lastCommand));
+                handledControl = queued || handledControl;
             }
 
-            Serial.printf("BLE JSON control op %s: %s raw=0x%08lx\n", handledControl ? "applied" : "ignored", op.c_str(), static_cast<unsigned long>(raw_data));
+            Serial.printf("BLE JSON control op %s: %s raw=0x%08lx\n", handledControl ? "queued" : "ignored", op.c_str(), static_cast<unsigned long>(lastCommand));
             QueueBleJsonPayload(BuildRemoteControllerStateJson(doc));
             return true;
         }
 
         if (op == "ping")
         {
+            Serial.println("BLE JSON ping accepted");
             DynamicJsonDocument pong(256);
             pong["op"] = "pong";
             pong["name"] = EffectiveBleName();
@@ -314,17 +495,104 @@ namespace
         return false;
     }
 
+    bool ApplyBleJsonWrite(const std::string &rxValue)
+    {
+        if (rxValue.empty())
+        {
+            return false;
+        }
+
+        size_t offset = 0;
+        if (bleRxJsonBuffer.length() == 0)
+        {
+            while (offset < rxValue.size() && IsJsonWhitespace(rxValue[offset]))
+            {
+                ++offset;
+            }
+            if (offset >= rxValue.size() || rxValue[offset] != '{')
+            {
+                Serial.printf(
+                    "BLE RX write is not JSON: bytes=%u first=0x%02x preview='%s'\n",
+                    static_cast<unsigned>(rxValue.size()),
+                    offset < rxValue.size() ? static_cast<unsigned>(static_cast<unsigned char>(rxValue[offset])) : 0,
+                    BlePreviewText(rxValue).c_str());
+                return false;
+            }
+        }
+
+        const std::string chunk = rxValue.substr(offset);
+        if (bleRxJsonBuffer.length() > 0 && !chunk.empty() && chunk.front() == '{')
+        {
+            Serial.printf(
+                "BLE JSON new object started while %u bytes were buffered; dropping incomplete object\n",
+                static_cast<unsigned>(bleRxJsonBuffer.length()));
+            bleRxJsonBuffer = String("");
+        }
+
+        if ((bleRxJsonBuffer.length() + chunk.size()) > kBleRxJsonBufferBytes)
+        {
+            Serial.printf("BLE JSON RX buffer overflow, dropping %u buffered bytes\n", static_cast<unsigned>(bleRxJsonBuffer.length() + chunk.size()));
+            bleRxJsonBuffer = String("");
+            return true;
+        }
+
+        bleRxJsonBuffer += String(chunk.c_str());
+        Serial.printf(
+            "BLE JSON chunk buffered: chunk=%u total=%u\n",
+            static_cast<unsigned>(chunk.size()),
+            static_cast<unsigned>(bleRxJsonBuffer.length()));
+
+        while (true)
+        {
+            TrimLeadingBleJsonWhitespace();
+
+            String json;
+            size_t nextIndex = 0;
+            if (!ExtractCompleteJsonObject(bleRxJsonBuffer, &json, &nextIndex))
+            {
+                if (bleRxJsonBuffer.length() > 0 && bleRxJsonBuffer[0] != '{')
+                {
+                    Serial.printf("BLE JSON buffer lost object start, clearing %u bytes\n", static_cast<unsigned>(bleRxJsonBuffer.length()));
+                    bleRxJsonBuffer = String("");
+                }
+                else
+                {
+                    Serial.printf("BLE JSON waiting for complete object: buffered=%u\n", static_cast<unsigned>(bleRxJsonBuffer.length()));
+                }
+                return true;
+            }
+
+            const std::string jsonValue(json.c_str(), json.length());
+            Serial.printf("BLE JSON complete object: bytes=%u payload='%s'\n", static_cast<unsigned>(jsonValue.size()), BlePreviewText(jsonValue).c_str());
+            if (!ApplyJsonCommand(jsonValue))
+            {
+                Serial.println("BLE JSON complete object ignored");
+            }
+            bleRxJsonBuffer.remove(0, nextIndex);
+
+            TrimLeadingBleJsonWhitespace();
+            if (bleRxJsonBuffer.length() == 0)
+            {
+                return true;
+            }
+        }
+    }
+
     class MenuBleServerCallbacks : public BLEServerCallbacks
     {
         void onConnect(BLEServer *server) override
         {
             bleDeviceConnected = true;
+            bleRxJsonBuffer = String("");
+            ClearQueuedLegacyCommands();
             Serial.println("BLE client connected");
         }
 
         void onDisconnect(BLEServer *server) override
         {
             bleDeviceConnected = false;
+            bleRxJsonBuffer = String("");
+            ClearQueuedLegacyCommands();
             Serial.println("BLE client disconnected");
         }
     };
@@ -341,22 +609,36 @@ namespace
             }
 
             std::string rxValue(reinterpret_cast<const char *>(data), length);
+            LogBleWritePreview(rxValue);
 
-            if (ApplyJsonCommand(rxValue))
+            if (ApplyBleJsonWrite(rxValue))
             {
                 return;
             }
 
-            raw_data = 0;
-            for (size_t i = 0; i < rxValue.size() && i < 8; ++i)
+            uint32_t legacyCommand = 0;
+            bool hasDigits = false;
+            for (size_t i = 0; i < rxValue.size() && i < 10; ++i)
             {
                 const char c = rxValue[i];
                 if (c >= '0' && c <= '9')
                 {
-                    raw_data = raw_data * 10 + static_cast<uint32_t>(c - '0');
+                    hasDigits = true;
+                    legacyCommand = legacyCommand * 10 + static_cast<uint32_t>(c - '0');
+                }
+                else if (hasDigits)
+                {
+                    break;
                 }
             }
-            Serial.printf("BLE RX raw_data: %lu\n", static_cast<unsigned long>(raw_data));
+            if (!hasDigits)
+            {
+                return;
+            }
+            if (EnqueueLegacyCommand(legacyCommand))
+            {
+                Serial.printf("BLE RX legacy raw_data queued: %lu\n", static_cast<unsigned long>(legacyCommand));
+            }
         }
     };
 }
@@ -483,11 +765,79 @@ private:
         }
     }
 
+    static void ApplyLegacyCommand(const uint32_t command)
+    {
+        raw_data = command;
+        data_type = (uint8_t)(command >> 24);
+        if (data_type == 0)
+        {
+            tempvalue = (uint8_t)(command & 0x000000FF);
+            confirm = (uint8_t)((command & 0x00FF0000) >> 16);
+            if (confirm == 255 && facialexpression != tempvalue)
+            {
+                facialexpression = tempvalue;
+                confirm = 0;
+                display.fillRect(65, 37, 14, 12, TFT_BLACK);
+                display.display();
+            }
+        }
+        else if (data_type == 1)
+        {
+            tempvalue = (uint8_t)((command & 0x0000FF00) >> 8);
+            confirm = (uint8_t)((command & 0x00FF0000) >> 16);
+            if (confirm == 255 && bright != tempvalue)
+            {
+                bright = tempvalue;
+                confirm = 0;
+                display.fillRect(40, 50, 20, 12, TFT_BLACK);
+                display.display();
+            }
+        }
+        else if (data_type == 2)
+        {
+            tempvalue = (uint8_t)(command & 0x000000FF);
+            confirm = (uint8_t)((command & 0x00FF0000) >> 16);
+            if (confirm == 255 && voiceenable != tempvalue)
+            {
+                voiceenable = tempvalue;
+                display.fillRect(65, 50, 60, 12, TFT_BLACK);
+                display.display();
+                confirm = 0;
+            }
+        }
+        else if (data_type == 3)
+        {
+            tempvalue = (uint8_t)(command & 0x000000FF);
+            confirm = (uint8_t)((command & 0x00FF0000) >> 16);
+            if (confirm == 255)
+            {
+                dmode = tempvalue;
+                confirm = 0;
+            }
+        }
+        else if (data_type == 4)
+        {
+            confirm = (uint8_t)((command & 0x00FF0000) >> 16);
+            if (confirm == 255)
+            {
+                tempHue = static_cast<float>(command & 0x0000FFFF) / 8.0f;
+                confirm = 0;
+            }
+        }
+    }
+
     void startBluetooth()
     {
         BLEDevice::init(user_name.c_str());
         bleServer = BLEDevice::createServer();
         bleServer->setCallbacks(new MenuBleServerCallbacks());
+
+        Serial.printf(
+            "BLE UART start: name='%s' service=%s rx=%s tx=%s\n",
+            user_name.c_str(),
+            BLE_SERIAL2_SERVICE_UUID,
+            BLE_RX2_UUID.c_str(),
+            BLE_TX2_UUID.c_str());
 
         BLEService *service = bleServer->createService(BLE_SERIAL2_SERVICE_UUID);
 
@@ -657,104 +1007,24 @@ public:
         // display.drawString("Brightness: ", 0, 24);
         // display.drawString("Lip Sync: ", 0, 36);
 
-        if (remoteExpressionPending)
+        uint32_t queuedCommand = 0;
+        bool consumedQueuedCommand = false;
+        while (DequeueLegacyCommand(&queuedCommand))
         {
-            remoteExpressionPending = false;
-            tempvalue = remoteExpression;
-            if (facialexpression != tempvalue)
-            {
-                facialexpression = tempvalue;
-                display.fillRect(65, 37, 14, 12, TFT_BLACK);
-                display.display();
-            }
+            ApplyLegacyCommand(queuedCommand);
+            Serial.printf(
+                "ESPMenu applied remote raw=0x%08lx type=%u face=%u bright=%u hue=%u voice=%u\n",
+                static_cast<unsigned long>(queuedCommand),
+                static_cast<unsigned>(data_type),
+                static_cast<unsigned>(facialexpression),
+                static_cast<unsigned>(bright),
+                static_cast<unsigned>(tempHue),
+                static_cast<unsigned>(voiceenable));
+            consumedQueuedCommand = true;
         }
-        if (remoteBrightnessPending)
+        if (!consumedQueuedCommand)
         {
-            remoteBrightnessPending = false;
-            tempvalue = remoteBrightness;
-            if (bright != tempvalue)
-            {
-                bright = tempvalue;
-                display.fillRect(40, 50, 20, 12, TFT_BLACK);
-                display.display();
-            }
-        }
-        if (remoteVoicePending)
-        {
-            remoteVoicePending = false;
-            tempvalue = remoteVoice;
-            if (voiceenable != tempvalue)
-            {
-                voiceenable = tempvalue;
-                display.fillRect(65, 50, 60, 12, TFT_BLACK);
-                display.display();
-            }
-        }
-        if (remoteDisplayModePending)
-        {
-            remoteDisplayModePending = false;
-            dmode = remoteDisplayMode;
-        }
-        if (remoteHuePending)
-        {
-            remoteHuePending = false;
-            tempHue = remoteHueEncoded / 8.0f;
-        }
-
-        data_type = (uint8_t)(raw_data >> 24);
-        if (data_type == 0)
-        {
-            tempvalue = (uint8_t)(raw_data & 0x000000FF);
-            confirm = (uint8_t)((raw_data & 0x00FF0000) >> 16);
-            if (confirm == 255 && facialexpression != tempvalue)
-            {
-                facialexpression = tempvalue;
-                confirm = 0;
-                display.fillRect(65, 37, 14, 12, TFT_BLACK);
-                display.display();
-            }
-        }
-        else if (data_type == 1)
-        {
-            tempvalue = (uint8_t)((raw_data & 0x0000FF00) >> 8);
-            confirm = (uint8_t)((raw_data & 0x00FF0000) >> 16);
-            if (confirm == 255 && bright != tempvalue)
-            {
-                bright = tempvalue;
-                confirm = 0;
-                display.fillRect(40, 50, 20, 12, TFT_BLACK);
-                display.display();
-            }
-        }
-        else if (data_type == 2)
-        {
-            tempvalue = (uint8_t)(raw_data & 0x000000FF);
-            confirm = (uint8_t)((raw_data & 0x00FF0000) >> 16);
-            if (confirm == 255  && voiceenable != tempvalue)
-            {
-                voiceenable = tempvalue;
-                display.fillRect(65, 50, 60, 12, TFT_BLACK);
-                display.display();
-                confirm = 0;
-            }
-        }
-        else if (data_type == 3)
-        {
-            tempvalue = (uint8_t)(raw_data & 0x000000FF);
-            confirm = (uint8_t)((raw_data & 0x00FF0000) >> 16);
-            if (confirm == 255)
-            {
-                dmode = tempvalue;
-                confirm = 0;
-            }
-        }else if (data_type == 4)
-        {
-            confirm = (uint8_t)((raw_data & 0x00FF0000) >> 16);
-            if (confirm == 255)
-            {
-                tempHue = (uint16_t)(raw_data & 0x0000FFFF) / 8;
-                confirm = 0;
-            }
+            ApplyLegacyCommand(raw_data);
         }
 
         /*
