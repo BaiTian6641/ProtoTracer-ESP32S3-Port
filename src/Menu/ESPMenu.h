@@ -171,7 +171,7 @@ namespace
             metadata.expression_names.push_back(String(kRemoteControllerExpressionNames[index]));
         }
 
-        if (!LittleFS.begin(false) && !LittleFS.begin(true))
+        if (!LittleFS.begin(false))
         {
             return metadata;
         }
@@ -555,7 +555,7 @@ namespace
             uint32_t lastCommand = 0;
             if (!doc["expression"].isNull())
             {
-                const uint8_t value = static_cast<uint8_t>(constrain(doc["expression"].as<int>(), 0, kRemoteControllerExpressionCount - 1));
+                const uint8_t value = static_cast<uint8_t>(constrain(doc["expression"].as<int>(), 0, kRemoteControllerExpressionMax - 1));
                 const bool queued = EnqueueLegacyCommand(0, value, &lastCommand);
                 Serial.printf("BLE JSON control field expression=%u %s raw=0x%08lx\n", static_cast<unsigned>(value), queued ? "queued" : "failed", static_cast<unsigned long>(lastCommand));
                 handledControl = queued || handledControl;
