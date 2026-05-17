@@ -10,13 +10,16 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <ArduinoJson.h>
+#include <LittleFS.h>
 #include <esp_attr.h>
 #include <esp_task_wdt.h>
 #include <driver/rtc_io.h>
 #include <esp_mac.h>
 #include <esp_timer.h>
 #include <algorithm>
+#include <cstring>
 #include <string>
+#include <vector>
 
 #include <M5Unified.h>
 #include <M5UnitGLASS2.h>
@@ -76,6 +79,7 @@ namespace
     constexpr size_t kBleJsonChunkBytes = 160;
     constexpr size_t kBleRxJsonBufferBytes = 1024;
     constexpr uint8_t kRemoteCommandQueueSize = 8;
+    constexpr uint8_t kRemoteControllerExpressionMax = 64;
     constexpr uint8_t kRemoteControllerExpressionCount = 17;
     constexpr const char *kRemoteControllerExpressionNames[kRemoteControllerExpressionCount] = {
         "Default",
@@ -100,6 +104,12 @@ namespace
     volatile uint32_t remoteCommandQueue[kRemoteCommandQueueSize] = {};
     volatile uint8_t remoteCommandQueueHead = 0;
     volatile uint8_t remoteCommandQueueTail = 0;
+
+    struct AnimationManifestMetadata
+    {
+        String animation_asset;
+        std::vector<String> expression_names;
+    };
 
     String BlePreviewText(const std::string &value)
     {
@@ -146,9 +156,104 @@ namespace
         return String(user_name.c_str());
     }
 
+    AnimationManifestMetadata LoadAnimationManifestMetadata()
+    {
+        AnimationManifestMetadata metadata;
+
+        metadata.animation_asset = userConfig.device_id.length() > 0
+                                       ? (userConfig.device_id + String("_animation.json"))
+                                       : String("example_animation.json");
+
+        metadata.expression_names.reserve(kRemoteControllerExpressionCount);
+        for (uint8_t index = 0; index < kRemoteControllerExpressionCount; ++index)
+        {
+            metadata.expression_names.push_back(String(kRemoteControllerExpressionNames[index]));
+        }
+
+        if (!LittleFS.begin(false) && !LittleFS.begin(true))
+        {
+            return metadata;
+        }
+
+        const String preferredPath = String("/") + metadata.animation_asset;
+        const String fallbackPath = String("/example_animation.json");
+        String selectedPath;
+        if (LittleFS.exists(preferredPath))
+        {
+            selectedPath = preferredPath;
+        }
+        else if (LittleFS.exists(fallbackPath))
+        {
+            selectedPath = fallbackPath;
+        }
+        else
+        {
+            return metadata;
+        }
+
+        File animationFile = LittleFS.open(selectedPath, "r");
+        if (!animationFile)
+        {
+            return metadata;
+        }
+
+        DynamicJsonDocument doc(65536);
+        const DeserializationError err = deserializeJson(doc, animationFile);
+        animationFile.close();
+        if (err)
+        {
+            return metadata;
+        }
+
+        metadata.animation_asset = selectedPath.startsWith("/") ? selectedPath.substring(1) : selectedPath;
+
+        std::vector<String> parsed_names;
+        parsed_names.reserve(kRemoteControllerExpressionCount);
+        JsonObject expressions = doc["expressions"].as<JsonObject>();
+        if (!expressions.isNull())
+        {
+            for (JsonPair kv : expressions)
+            {
+                const char *name = kv.key().c_str();
+                if (name == nullptr || name[0] == '\0' || std::strcmp(name, "reset_state") == 0)
+                {
+                    continue;
+                }
+
+                parsed_names.push_back(String(name));
+                if (parsed_names.size() >= kRemoteControllerExpressionMax)
+                {
+                    break;
+                }
+            }
+        }
+
+        size_t configured_count = 0;
+        if (doc["animation_num"].is<int>())
+        {
+            configured_count = static_cast<size_t>(std::max(0, doc["animation_num"].as<int>()));
+        }
+        else if (doc["animatiuon_num"].is<int>())
+        {
+            configured_count = static_cast<size_t>(std::max(0, doc["animatiuon_num"].as<int>()));
+        }
+        if (configured_count > 0 && configured_count < parsed_names.size())
+        {
+            parsed_names.resize(configured_count);
+        }
+
+        if (!parsed_names.empty())
+        {
+            metadata.expression_names = std::move(parsed_names);
+        }
+
+        return metadata;
+    }
+
     String BuildRemoteControllerManifestJson()
     {
-        DynamicJsonDocument doc(1536);
+        DynamicJsonDocument doc(6144);
+        const AnimationManifestMetadata animation_metadata = LoadAnimationManifestMetadata();
         const String relayBaseUrl = (WiFi.status() == WL_CONNECTED)
                                         ? (String("http://") + WiFi.localIP().toString() + "/api/relay/esp32c6")
                                         : String("");
@@ -166,12 +271,12 @@ namespace
         pairing["bound_peer_id"] = EffectiveBleName();
 
         JsonObject visual = doc.createNestedObject("visual");
-        visual["animation_asset"] = userConfig.user_animation;
-        visual["expression_count"] = kRemoteControllerExpressionCount;
+        visual["animation_asset"] = animation_metadata.animation_asset;
+        visual["expression_count"] = static_cast<uint8_t>(std::min<size_t>(kRemoteControllerExpressionMax, animation_metadata.expression_names.size()));
         JsonArray expressionNames = visual.createNestedArray("expression_names");
-        for (uint8_t index = 0; index < kRemoteControllerExpressionCount; ++index)
+        for (size_t index = 0; index < animation_metadata.expression_names.size(); ++index)
         {
-            expressionNames.add(kRemoteControllerExpressionNames[index]);
+            expressionNames.add(animation_metadata.expression_names[index]);
         }
         visual["red"] = userConfig.user_r;
         visual["green"] = userConfig.user_g;
