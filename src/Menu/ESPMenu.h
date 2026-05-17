@@ -108,6 +108,7 @@ namespace
     struct AnimationManifestMetadata
     {
         String animation_asset;
+        String animation_name;
         std::vector<String> expression_names;
     };
 
@@ -206,6 +207,16 @@ namespace
         }
 
         metadata.animation_asset = selectedPath.startsWith("/") ? selectedPath.substring(1) : selectedPath;
+        metadata.animation_name = doc["animation_name"] | doc["display_name"] | doc["name"] | doc["user"] | String("");
+        if (metadata.animation_name.isEmpty())
+        {
+            metadata.animation_name = metadata.animation_asset;
+            const int dot = metadata.animation_name.lastIndexOf('.');
+            if (dot > 0)
+            {
+                metadata.animation_name = metadata.animation_name.substring(0, dot);
+            }
+        }
 
         std::vector<String> parsed_names;
         parsed_names.reserve(kRemoteControllerExpressionCount);
@@ -271,6 +282,7 @@ namespace
         pairing["bound_peer_id"] = EffectiveBleName();
 
         JsonObject visual = doc.createNestedObject("visual");
+        visual["animation_name"] = animation_metadata.animation_name;
         visual["animation_asset"] = animation_metadata.animation_asset;
         visual["expression_count"] = static_cast<uint8_t>(std::min<size_t>(kRemoteControllerExpressionMax, animation_metadata.expression_names.size()));
         JsonArray expressionNames = visual.createNestedArray("expression_names");

@@ -153,6 +153,7 @@ private:
     bool EyeShapeB = true;
 
     String deviceId;
+    String animationName;
 
     ExpressionConfig resetState;
     std::vector<String> expressionOrder;
@@ -186,7 +187,10 @@ private:
     uint32_t lastBoopTime = 0;           // timestamp of last boop (in millis)
     uint8_t boopCount = 0;               // count of boops in current window
     bool lastBoopState = false;          // previous frame's boop state for edge detection
-    static constexpr uint32_t kBoopTimeWindow = 500; // 500ms window to count boops
+    String activeBoopExpression;
+    uint32_t activeBoopUntil = 0;
+    static constexpr uint32_t kBoopTimeWindow = 1200; // window to count boops
+    static constexpr uint32_t kBoopHoldMs = 1800;     // keep resolved boop expression visible
 
     // Helpers
     Object3D *GetFaceObject()
@@ -370,6 +374,22 @@ private:
             Serial.printf("[INFO] Loaded face model from %s\n", path.c_str());
         }
         return jsonFaceLoaded;
+    }
+
+    const char *NormalizeBoopExpressionName(const char *name) const
+    {
+        if (name == nullptr)
+        {
+            return nullptr;
+        }
+
+        String candidate = name;
+        if (candidate.equalsIgnoreCase("Suprise") || candidate.equalsIgnoreCase("Surprize"))
+        {
+            return "Surprised";
+        }
+
+        return name;
     }
 
     void ChangeInterpolationMethods()
@@ -1105,6 +1125,21 @@ private:
             return false;
         }
 
+        animationName = doc["animation_name"] | doc["display_name"] | doc["name"] | doc["user"] | String("");
+        if (animationName.isEmpty())
+        {
+            animationName = loadedPath;
+            if (animationName.startsWith("/"))
+            {
+                animationName.remove(0, 1);
+            }
+            const int dot = animationName.lastIndexOf('.');
+            if (dot > 0)
+            {
+                animationName = animationName.substring(0, dot);
+            }
+        }
+
         if (doc.containsKey("Mat_register"))
         {
             JsonObject mats = doc["Mat_register"].as<JsonObject>();
@@ -1166,7 +1201,7 @@ private:
                 JsonObject obj = v.as<JsonObject>();
                 BoopMorphSpec spec;
                 spec.times = obj["times"] | 1;
-                spec.name = obj["name"] | String("");
+                spec.name = NormalizeBoopExpressionName(obj["name"] | String(""));
                 if (spec.name.length() > 0)
                 {
                     boopMorphSpecs.push_back(spec);
@@ -1207,6 +1242,17 @@ private:
     String ResolveBoopExpression()
     {
         // Note: This is called every frame from Update(), so we track boop state changes
+        if (activeBoopExpression.length() > 0)
+        {
+            const uint32_t now = millis();
+            if (now < activeBoopUntil)
+            {
+                return activeBoopExpression;
+            }
+
+            activeBoopExpression.clear();
+        }
+
         bool currentBoopState = Menu::UseBoopSensor() ? Menu::isBooped() : false;
         uint32_t now = millis();
 
@@ -1246,6 +1292,12 @@ private:
                     result = spec.name;
                     break;
                 }
+            }
+
+            if (!result.isEmpty())
+            {
+                activeBoopExpression = result;
+                activeBoopUntil = now + kBoopHoldMs;
             }
             
             // Reset counters
@@ -1328,6 +1380,10 @@ public:
     void MenuUpdate()
     {
         espmenu.Update();
+        if (!animationName.isEmpty())
+        {
+            display.drawString(animationName, 5, 24);
+        }
     }
 
     int GetDisplayMode()
