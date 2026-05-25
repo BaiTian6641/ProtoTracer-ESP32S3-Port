@@ -193,12 +193,35 @@ bool RemoteFileSync::EnsureFsMounted()
         return true;
     }
 
-    if (LittleFS.begin(false) || LittleFS.begin(true))
+    // Try to mount without format first, with watchdog protection against I/O hangs
+    const uint32_t mountTimeoutMs = 5000;
+    const uint32_t startMs = millis();
+    
+    // Attempt mount without format (faster, non-destructive)
+    if (LittleFS.begin(false))
     {
         mounted = true;
+        return true;
     }
-
-    return mounted;
+    
+    // Watchdog check: if mount took too long, abandon second attempt to avoid double hang
+    if ((millis() - startMs) > (mountTimeoutMs / 2))
+    {
+        Serial.printf("[WARN] LittleFS first mount attempt took >%lu ms; skipping format attempt\n", mountTimeoutMs / 2);
+        return false;
+    }
+    
+    // If non-format mount failed, try with format (destructive, slower)
+    if (LittleFS.begin(true))
+    {
+        mounted = true;
+        Serial.println("[INFO] LittleFS mounted after format");
+        return true;
+    }
+    
+    // Total mount failure
+    Serial.printf("[ERROR] LittleFS mount failed after %lu ms (total operation)\n", millis() - startMs);
+    return false;
 }
 
 bool RemoteFileSync::IsSourceConfigured(const RemoteFileSource &source)

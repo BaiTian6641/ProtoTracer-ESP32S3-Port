@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:id="@+id/layout_controls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:visibility="gone">
+
+        <!-- Connection status -->
+        <TextView
+            android:id="@+id/tv_connection_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/status_connected"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textColor="@color/ble_connected"
+            android:layout_marginBottom="4dp" />
+
+        <!-- Device info -->
+        <TextView
+            android:id="@+id/tv_device_info"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/tv_device_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceHeadline6"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/tv_animation_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:layout_marginBottom="16dp" />
+
+        <!-- ===== EXPRESSION SECTION ===== -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_expression"
+            android:textAppearance="?attr/textAppearanceHeadline6"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/tv_expression_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?attr/textAppearanceBodyLarge"
+            android:gravity="center"
+            android:padding="8dp"
+            android:background="?attr/colorSurfaceVariant"
+            android:layout_marginBottom="8dp"
+            android:text="—" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp">
+
+            <Button
+                android:id="@+id/btn_prev_expression"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/btn_prev_expression"
+                style="?attr/materialButtonOutlinedStyle" />
+
+            <Button
+                android:id="@+id/btn_next_expression"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/btn_next_expression"
+                android:layout_marginStart="8dp"
+                style="?attr/materialButtonOutlinedStyle" />
+
+            <Button
+                android:id="@+id/btn_confirm_expression"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/btn_confirm_expression"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+        <!-- ===== BRIGHTNESS SECTION ===== -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_brightness"
+            android:textAppearance="?attr/textAppearanceHeadline6"
+            android:layout_marginBottom="4dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:id="@+id/tv_brightness_value"
+                android:layout_width="48dp"
+                android:layout_height="wrap_content"
+                android:text="128"
+                android:textAppearance="?attr/textAppearanceBodyLarge"
+                android:gravity="center" />
+
+            <com.google.android.material.slider.Slider
+                android:id="@+id/slider_brightness"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:valueFrom="0"
+                android:valueTo="255"
+                android:value="128"
+                android:stepSize="1"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/btn_send_brightness"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ok"
+                style="?attr/materialButtonOutlinedStyle" />
+        </LinearLayout>
+
+        <!-- ===== HUE SHIFT SECTION ===== -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_hue_shift"
+            android:textAppearance="?attr/textAppearanceHeadline6"
+            android:layout_marginBottom="4dp" />
+
+        <!-- Color preview box -->
+        <View
+            android:id="@+id/view_color_preview"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginBottom="8dp"
+            android:background="#FF0000" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:id="@+id/tv_hue_shift_value"
+                android:layout_width="56dp"
+                android:layout_height="wrap_content"
+                android:text="0.0"
+                android:textAppearance="?attr/textAppearanceBodyLarge"
+                android:gravity="center" />
+
+            <com.google.android.material.slider.Slider
+                android:id="@+id/slider_hue_shift"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:valueFrom="0"
+                android:valueTo="360"
+                android:value="0"
+                android:stepSize="1"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/btn_send_hue_shift"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ok"
+                style="?attr/materialButtonOutlinedStyle" />
+        </LinearLayout>
+
+        <!-- ===== TOGGLE SWITCHES ===== -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/label_voice_enable"
+                android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switch_voice_enable"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/label_fan_enable"
+                android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switch_fan_enable"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="false" />
+        </LinearLayout>
+
+        <!-- ===== DISCONNECT BUTTON ===== -->
+        <Button
+            android:id="@+id/btn_disconnect"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/disconnect"
+            android:layout_marginTop="16dp"
+            style="?attr/materialButtonOutlinedStyle"
+            android:textColor="@color/error" />
+
+    </LinearLayout>
+
+</ScrollView>

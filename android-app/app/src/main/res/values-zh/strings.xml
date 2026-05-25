@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ProtoTracer 遥控器</string>
+
+    <!-- Main screen -->
+    <string name="title_scan_devices">扫描 BLE 设备</string>
+    <string name="btn_scan">扫描</string>
+    <string name="btn_stop_scan">停止</string>
+    <string name="btn_scan_qr">扫描二维码</string>
+    <string name="scanning">正在扫描设备…</string>
+    <string name="no_devices">未发现 BLE 设备。\n点击"扫描"搜索设备。</string>
+    <string name="device_unnamed">未知设备</string>
+    <string name="status_connecting">连接中…</string>
+    <string name="status_connected">已连接</string>
+    <string name="status_disconnected">未连接</string>
+    <string name="status_pairing">配对中…</string>
+
+    <!-- Permissions -->
+    <string name="permission_bluetooth_rationale">需要蓝牙权限以扫描和连接 ProtoTracer 设备。</string>
+    <string name="permission_location_rationale">在此 Android 版本中，蓝牙扫描需要位置权限。</string>
+    <string name="permission_camera_rationale">需要相机权限以扫描设备二维码。</string>
+
+    <!-- QR Scanner -->
+    <string name="title_qr_scanner">扫描设备二维码</string>
+    <string name="qr_hint">将相机对准 ProtoTracer 设备上显示的二维码</string>
+    <string name="qr_scanned_format">已扫描: %s</string>
+
+    <!-- Device Control -->
+    <string name="title_device_control">设备控制</string>
+    <string name="label_expression">表情</string>
+    <string name="btn_prev_expression">◀ 上一个</string>
+    <string name="btn_next_expression">下一个 ▶</string>
+    <string name="btn_confirm_expression">确认发送</string>
+    <string name="label_brightness">亮度</string>
+    <string name="label_hue_shift">色相偏移</string>
+    <string name="label_voice_enable">语音检测</string>
+    <string name="label_fan_enable">风扇</string>
+    <string name="label_device_info">设备信息</string>
+    <string name="label_animation">动画</string>
+    <string name="label_color_preview">颜色预览</string>
+    <string name="disconnect">断开连接</string>
+    <string name="send_failed">发送失败</string>
+
+    <!-- General -->
+    <string name="ok">确定</string>
+    <string name="cancel">取消</string>
+    <string name="error">错误</string>
+    <string name="error_bluetooth_disabled">蓝牙未开启，请先开启蓝牙。</string>
+    <string name="error_ble_not_supported">此设备不支持 BLE。</string>
+    <string name="error_connection_failed">连接失败。</string>
+    <string name="error_service_discovery">服务发现失败。</string>
+</resources>

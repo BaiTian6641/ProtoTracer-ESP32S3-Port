@@ -162,28 +162,42 @@ private:
 
     void LoadJsonFaceBlocking()
     {
-        // Block until LittleFS mounts and the face json is successfully loaded.
+        // Block until LittleFS mounts and the face json is successfully loaded, with timeout protection.
+        const uint32_t timeoutMs = 10000; // 10 second timeout to prevent infinite blocking
+        const uint32_t startMs = millis();
+        uint32_t retryCount = 0;
+        
         while (USE_JSON_FACE_MODEL && !jsonFaceLoaded)
         {
+            // Safety timeout to prevent infinite freeze
+            if ((millis() - startMs) > timeoutMs)
+            {
+                Serial.printf("[ERROR] Face model loading timeout after %lu ms\n", timeoutMs);
+                return;
+            }
+            
             if (!LittleFS.begin(false) && !LittleFS.begin(true))
             {
                 Serial.println("[WARN] LittleFS mount failed; retrying...");
                 delay(500);
+                yield(); // Feed watchdog during retry
                 continue;
             }
 
             if (!LittleFS.exists("/universal_face.json"))
             {
-                Serial.println("[WARN] universal_face.json not found; waiting for file...");
+                Serial.printf("[WARN] universal_face.json not found; waiting for file... (attempt %lu)\n", ++retryCount);
                 delay(500);
+                yield(); // Feed watchdog during retry
                 continue;
             }
 
             jsonFaceLoaded = jsonFace.Load(LittleFS, "/universal_face.json");
             if (!jsonFaceLoaded)
             {
-                Serial.println("[WARN] universal_face.json failed to load; retrying...");
+                Serial.printf("[WARN] universal_face.json failed to load (attempt %lu); retrying...\n", ++retryCount);
                 delay(500);
+                yield(); // Feed watchdog during retry
             }
         }
     }

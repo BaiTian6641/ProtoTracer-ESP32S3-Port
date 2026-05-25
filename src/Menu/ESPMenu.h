@@ -13,6 +13,7 @@
 #include <LittleFS.h>
 #include <esp_attr.h>
 #include <esp_task_wdt.h>
+#include <esp_heap_caps.h>
 #include <driver/rtc_io.h>
 #include <esp_mac.h>
 #include <esp_timer.h>
@@ -28,6 +29,16 @@
 #define TXT(en, cn) cn
 #else
 #define TXT(en, cn) en
+#endif
+
+#ifndef ESPMENU_REMOTE_DEBUG_LOG
+#define ESPMENU_REMOTE_DEBUG_LOG 0
+#endif
+
+#if ESPMENU_REMOTE_DEBUG_LOG
+#define ESPMENU_LOG_PRINTF(...) Serial.printf(__VA_ARGS__)
+#else
+#define ESPMENU_LOG_PRINTF(...) do { } while (0)
 #endif
 
 extern M5UnitGLASS2 display;
@@ -72,6 +83,13 @@ static String blePendingJsonPayload;
 static bool bleJsonPayloadPending = false;
 static String bleRxJsonBuffer;
 
+// Cached manifest built once during init — avoids file I/O + JSON parsing in BLE callbacks.
+static String bleCachedManifestJson;
+static bool bleManifestRequested = false;
+
+// Lightweight spinlock for the legacy command queue shared between BLE ISR and main loop.
+static portMUX_TYPE gCommandQueueMux = portMUX_INITIALIZER_UNLOCKED;
+
 uint32_t raw_data = 32000;
 
 namespace
@@ -79,6 +97,9 @@ namespace
     constexpr size_t kBleJsonChunkBytes = 160;
     constexpr size_t kBleRxJsonBufferBytes = 1024;
     constexpr uint8_t kRemoteCommandQueueSize = 8;
+    constexpr uint8_t kBoopThresholdFloor = 6;
+    constexpr uint8_t kBoopThresholdScalePercent = 60;
+    constexpr uint8_t kBoopReleaseScalePercent = 40;
     constexpr uint8_t kRemoteControllerExpressionMax = 64;
     constexpr uint8_t kRemoteControllerExpressionCount = 17;
     constexpr const char *kRemoteControllerExpressionNames[kRemoteControllerExpressionCount] = {
@@ -198,6 +219,7 @@ namespace
             return metadata;
         }
 
+        // Large JSON allocation - PSRAM-enabled by default via heap_caps_malloc_extmem_enable()
         DynamicJsonDocument doc(65536);
         const DeserializationError err = deserializeJson(doc, animationFile);
         animationFile.close();
@@ -263,6 +285,7 @@ namespace
 
     String BuildRemoteControllerManifestJson()
     {
+        // Manifest JSON - PSRAM-enabled by default
         DynamicJsonDocument doc(6144);
         const AnimationManifestMetadata animation_metadata = LoadAnimationManifestMetadata();
         const String relayBaseUrl = (WiFi.status() == WL_CONNECTED)
@@ -304,8 +327,16 @@ namespace
 
     void NotifyBleJsonPayload(const String &payload)
     {
-        if (!bleDeviceConnected || bleTxCharacteristic == nullptr || payload.isEmpty())
+        if (bleTxCharacteristic == nullptr || payload.isEmpty())
         {
+            return;
+        }
+
+        if (!bleDeviceConnected)
+        {
+            // Client not fully connected yet (onConnect hasn't fired).
+            // Don't drop the payload — FlushQueuedBleJsonPayload will re-queue it.
+            Serial.println("BLE notify deferred: client not connected yet");
             return;
         }
 
@@ -314,8 +345,11 @@ namespace
             const size_t chunkLength = std::min(kBleJsonChunkBytes, payload.length() - offset);
             bleTxCharacteristic->setValue(reinterpret_cast<const uint8_t *>(payload.c_str() + offset), chunkLength);
             bleTxCharacteristic->notify();
-            delay(12);
+            // Give the BLE stack time to actually transmit before queuing the next chunk.
+            // 8 ms per chunk keeps the main-loop stall under ~50 ms for typical manifests.
+            delay(8);
         }
+        Serial.printf("BLE notify sent: %u bytes\n", static_cast<unsigned>(payload.length()));
     }
 
     void QueueBleJsonPayload(const String &payload)
@@ -325,25 +359,48 @@ namespace
             return;
         }
 
+        portENTER_CRITICAL(&gCommandQueueMux);
         blePendingJsonPayload = payload;
         bleJsonPayloadPending = true;
+        portEXIT_CRITICAL(&gCommandQueueMux);
     }
 
     void FlushQueuedBleJsonPayload()
     {
-        if (!bleJsonPayloadPending)
+        bool pending = false;
+        String payload;
+
+        portENTER_CRITICAL(&gCommandQueueMux);
+        pending = bleJsonPayloadPending;
+        if (pending)
+        {
+            payload = blePendingJsonPayload;
+            blePendingJsonPayload = String("");
+            bleJsonPayloadPending = false;
+        }
+        portEXIT_CRITICAL(&gCommandQueueMux);
+
+        if (!pending)
         {
             return;
         }
 
-        if (!bleDeviceConnected || bleTxCharacteristic == nullptr)
+        if (bleTxCharacteristic == nullptr)
         {
+            Serial.println("BLE flush failed: TX characteristic is null");
             return;
         }
 
-        NotifyBleJsonPayload(blePendingJsonPayload);
-        blePendingJsonPayload = String("");
-        bleJsonPayloadPending = false;
+        if (!bleDeviceConnected)
+        {
+            // Race: onWrite fired before onConnect. Re-queue the payload
+            // so the next Menu::Update() call can try again.
+            Serial.println("BLE flush deferred: re-queuing payload (client not connected yet)");
+            QueueBleJsonPayload(payload);
+            return;
+        }
+
+        NotifyBleJsonPayload(payload);
     }
 
     String BuildRemoteControllerStateJson(const JsonDocument &doc)
@@ -396,15 +453,18 @@ namespace
 
     bool EnqueueLegacyCommand(const uint32_t command)
     {
+        portENTER_CRITICAL(&gCommandQueueMux);
         const uint8_t nextHead = static_cast<uint8_t>((remoteCommandQueueHead + 1) % kRemoteCommandQueueSize);
         if (nextHead == remoteCommandQueueTail)
         {
+            portEXIT_CRITICAL(&gCommandQueueMux);
             Serial.printf("BLE legacy command queue full, dropping raw=0x%08lx\n", static_cast<unsigned long>(command));
             return false;
         }
 
         remoteCommandQueue[remoteCommandQueueHead] = command;
         remoteCommandQueueHead = nextHead;
+        portEXIT_CRITICAL(&gCommandQueueMux);
         Serial.printf(
             "BLE legacy command queued: raw=0x%08lx head=%u tail=%u\n",
             static_cast<unsigned long>(command),
@@ -425,20 +485,30 @@ namespace
 
     bool DequeueLegacyCommand(uint32_t *command)
     {
-        if (command == nullptr || remoteCommandQueueTail == remoteCommandQueueHead)
+        if (command == nullptr)
         {
+            return false;
+        }
+
+        portENTER_CRITICAL(&gCommandQueueMux);
+        if (remoteCommandQueueTail == remoteCommandQueueHead)
+        {
+            portEXIT_CRITICAL(&gCommandQueueMux);
             return false;
         }
 
         *command = remoteCommandQueue[remoteCommandQueueTail];
         remoteCommandQueueTail = static_cast<uint8_t>((remoteCommandQueueTail + 1) % kRemoteCommandQueueSize);
+        portEXIT_CRITICAL(&gCommandQueueMux);
         return true;
     }
 
     void ClearQueuedLegacyCommands()
     {
+        portENTER_CRITICAL(&gCommandQueueMux);
         remoteCommandQueueHead = 0;
         remoteCommandQueueTail = 0;
+        portEXIT_CRITICAL(&gCommandQueueMux);
     }
 
     bool IsJsonWhitespace(const char value)
@@ -532,6 +602,7 @@ namespace
             return false;
         }
 
+        // BLE JSON - PSRAM-enabled by default
         DynamicJsonDocument doc(rxValue.size() + 512);
         const DeserializationError err = deserializeJson(doc, rxValue.c_str());
         if (err)
@@ -544,8 +615,11 @@ namespace
         Serial.printf("BLE JSON op received: %s bytes=%u\n", op.c_str(), static_cast<unsigned>(rxValue.size()));
         if (op == "config.get" || op == "pair.discover" || op == "pair.info")
         {
-            Serial.println("BLE JSON config request accepted");
-            QueueBleJsonPayload(BuildRemoteControllerManifestJson());
+            // DO NOT build the manifest here — this runs in the BLE RX callback.
+            // Defer to the main loop via a flag to avoid file I/O / JSON parsing
+            // on the BLE task, which would block further BLE RX and trigger the WDT.
+            Serial.println("BLE JSON config request accepted (deferred to main loop)");
+            bleManifestRequested = true;
             return true;
         }
 
@@ -702,7 +776,7 @@ namespace
             bleDeviceConnected = true;
             bleRxJsonBuffer = String("");
             ClearQueuedLegacyCommands();
-            Serial.println("BLE client connected");
+            Serial.println("BLE client connected — bleDeviceConnected=true");
         }
 
         void onDisconnect(BLEServer *server) override
@@ -710,7 +784,7 @@ namespace
             bleDeviceConnected = false;
             bleRxJsonBuffer = String("");
             ClearQueuedLegacyCommands();
-            Serial.println("BLE client disconnected");
+            Serial.println("BLE client disconnected — bleDeviceConnected=false");
         }
     };
 
@@ -806,10 +880,56 @@ private:
     static MinFilter<10> minF;
     static TimeStep timeStep;
     static float minimum;
+    static bool boopCurrentHigh;
+    static bool boopPulsePending;
+    static uint32_t boopLastPulseMs;
+    static uint16_t boopRearmMs;
+    static uint8_t boopReleaseHysteresis;
+    static uint32_t bleReAdvertiseAtMs;
     static bool didBegin;
     static bool isBright;
     static bool isProx;
     static bool mouth;
+
+    static void UpdateBoopSensorState()
+    {
+#ifdef NEW_GESTURE
+        proximity = PAJ7620_sensor.getProximityDistance();
+#else
+        apds.readProximity(proximity);
+#endif
+
+        // Keep baseline stable while booped so proximity deltas do not self-cancel.
+        if (timeStep.IsReady() && !boopCurrentHigh)
+        {
+            minimum = minF.Filter(proximity);
+        }
+
+        // Dark acrylic attenuates the proximity delta, so trigger earlier and release with a smaller margin.
+        const uint8_t effectiveThreshold = std::max<uint8_t>(
+            kBoopThresholdFloor,
+            static_cast<uint8_t>((static_cast<uint16_t>(threshold) * kBoopThresholdScalePercent) / 100));
+        const uint8_t releaseMargin = std::max<uint8_t>(
+            boopReleaseHysteresis,
+            static_cast<uint8_t>(std::max<uint8_t>(2, static_cast<uint8_t>((static_cast<uint16_t>(effectiveThreshold) * kBoopReleaseScalePercent) / 100))));
+        const float onThreshold = minimum + effectiveThreshold;
+        const float offThreshold = minimum + releaseMargin;
+        const uint32_t now = millis();
+
+        if (!boopCurrentHigh)
+        {
+            if (proximity > onThreshold && (now - boopLastPulseMs) >= boopRearmMs)
+            {
+                boopCurrentHigh = true;
+                boopPulsePending = true;
+                boopLastPulseMs = now;
+            }
+        }
+        else if (proximity < offThreshold)
+        {
+            boopCurrentHigh = false;
+        }
+    }
 
     // static void InitESPNow()
     //{
@@ -1094,6 +1214,13 @@ public:
         #else
         display.progressBar(14,50,100,8,47);
         #endif
+
+        // Pre-build the remote controller manifest once during init so that
+        // BLE config/discover requests do not trigger file I/O or JSON parsing
+        // in the BLE RX callback (which would block the BLE task and cause WDT).
+        bleCachedManifestJson = BuildRemoteControllerManifestJson();
+        Serial.printf("BLE manifest cached: %u bytes\n", static_cast<unsigned>(bleCachedManifestJson.length()));
+
         display.display();
         delay(500);
     }
@@ -1104,15 +1231,38 @@ public:
         {
             if (!bleDeviceConnected && bleOldDeviceConnected)
             {
-                delay(500);
-                bleServer->startAdvertising();
-                Serial.println("Restarted BLE advertising...");
-                bleOldDeviceConnected = false;
+                if (bleReAdvertiseAtMs == 0)
+                {
+                    bleReAdvertiseAtMs = millis() + 500;
+                }
+                else if (millis() >= bleReAdvertiseAtMs)
+                {
+                    bleServer->startAdvertising();
+                    Serial.println("Restarted BLE advertising...");
+                    bleOldDeviceConnected = false;
+                    bleReAdvertiseAtMs = 0;
+                }
             }
             else if (bleDeviceConnected && !bleOldDeviceConnected)
             {
                 bleOldDeviceConnected = true;
+                bleReAdvertiseAtMs = 0;
             }
+        }
+
+        // Handle deferred manifest request (set by BLE RX callback).
+        // We build/send here in the main loop, NOT in the BLE callback, so that
+        // file I/O and JSON parsing never block the BLE task.
+        if (bleManifestRequested)
+        {
+            bleManifestRequested = false;
+            if (bleCachedManifestJson.isEmpty())
+            {
+                bleCachedManifestJson = BuildRemoteControllerManifestJson();
+                Serial.printf("BLE manifest rebuilt on demand: %u bytes\n",
+                              static_cast<unsigned>(bleCachedManifestJson.length()));
+            }
+            QueueBleJsonPayload(bleCachedManifestJson);
         }
 
         FlushQueuedBleJsonPayload();
@@ -1129,7 +1279,7 @@ public:
         while (DequeueLegacyCommand(&queuedCommand))
         {
             ApplyLegacyCommand(queuedCommand);
-            Serial.printf(
+            ESPMENU_LOG_PRINTF(
                 "ESPMenu applied remote raw=0x%08lx type=%u face=%u bright=%u hue=%u voice=%u\n",
                 static_cast<unsigned long>(queuedCommand),
                 static_cast<unsigned>(data_type),
@@ -1359,23 +1509,35 @@ public:
 
     static bool UseBoopSensor()
     {
+        return didBegin;
+    }
+
+    static bool ConsumeBoopPulse()
+    {
+        if (!UseBoopSensor())
+        {
+            return false;
+        }
+
+        UpdateBoopSensorState();
+        if (!boopPulsePending)
+        {
+            return false;
+        }
+
+        boopPulsePending = false;
         return true;
     }
 
     static bool isBooped()
-    { 
-        #ifdef NEW_GESTURE
-        proximity = PAJ7620_sensor.getProximityDistance();
-        #else
-        apds.readProximity(proximity);
-        #endif
-
-        if (timeStep.IsReady())
+    {
+        if (!UseBoopSensor())
         {
-            minimum = minF.Filter(proximity);
+            return false;
         }
 
-        return proximity > minimum + threshold;
+        UpdateBoopSensorState();
+        return boopCurrentHigh;
     }
 };
 
@@ -1416,6 +1578,12 @@ uint8_t Menu::threshold;
 MinFilter<10> Menu::minF = MinFilter<10>(false);
 TimeStep Menu::timeStep = TimeStep(5);
 float Menu::minimum = 0.0f;
+bool Menu::boopCurrentHigh = false;
+bool Menu::boopPulsePending = false;
+uint32_t Menu::boopLastPulseMs = 0;
+uint16_t Menu::boopRearmMs = 35;
+uint8_t Menu::boopReleaseHysteresis = 4;
+uint32_t Menu::bleReAdvertiseAtMs = 0;
 bool Menu::didBegin = false;
 bool Menu::isBright = false;
 bool Menu::isProx = false;

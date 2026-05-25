@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ProtoTracer Remote</string>
+
+    <!-- Main screen -->
+    <string name="title_scan_devices">Scan BLE Devices</string>
+    <string name="btn_scan">Scan</string>
+    <string name="btn_stop_scan">Stop</string>
+    <string name="btn_scan_qr">Scan QR Code</string>
+    <string name="scanning">Scanning for devices…</string>
+    <string name="no_devices">No BLE devices found.\nTap Scan to search.</string>
+    <string name="device_unnamed">Unknown Device</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_pairing">Pairing…</string>
+
+    <!-- Permissions -->
+    <string name="permission_bluetooth_rationale">Bluetooth access is required to scan and connect to ProtoTracer devices.</string>
+    <string name="permission_location_rationale">Location access is required for Bluetooth scanning on this Android version.</string>
+    <string name="permission_camera_rationale">Camera access is required to scan the device QR code.</string>
+
+    <!-- QR Scanner -->
+    <string name="title_qr_scanner">Scan Device QR Code</string>
+    <string name="qr_hint">Point camera at the QR code displayed on your ProtoTracer device</string>
+    <string name="qr_scanned_format">Scanned: %s</string>
+
+    <!-- Device Control -->
+    <string name="title_device_control">Device Control</string>
+    <string name="label_expression">Expression</string>
+    <string name="btn_prev_expression">◀ Prev</string>
+    <string name="btn_next_expression">Next ▶</string>
+    <string name="btn_confirm_expression">Confirm</string>
+    <string name="label_brightness">Brightness</string>
+    <string name="label_hue_shift">Hue Shift</string>
+    <string name="label_voice_enable">Voice Detection</string>
+    <string name="label_fan_enable">Fan</string>
+    <string name="label_device_info">Device Info</string>
+    <string name="label_animation">Animation</string>
+    <string name="label_color_preview">Color Preview</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="send_failed">Send failed</string>
+
+    <!-- General -->
+    <string name="ok">OK</string>
+    <string name="cancel">Cancel</string>
+    <string name="error">Error</string>
+    <string name="error_bluetooth_disabled">Bluetooth is disabled. Please enable it.</string>
+    <string name="error_ble_not_supported">BLE is not supported on this device.</string>
+    <string name="error_connection_failed">Connection failed.</string>
+    <string name="error_service_discovery">Service discovery failed.</string>
+</resources>

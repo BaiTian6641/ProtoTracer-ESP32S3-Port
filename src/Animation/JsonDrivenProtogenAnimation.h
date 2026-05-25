@@ -44,6 +44,18 @@
 #define USE_PSRAM_FOR_ANIM_JSON 1
 #endif
 
+#ifndef BOOP_DEBUG_LOG
+#define BOOP_DEBUG_LOG 0
+#endif
+
+#if BOOP_DEBUG_LOG
+#define BOOP_LOG_PRINTF(...) Serial.printf(__VA_ARGS__)
+#define BOOP_LOG_PRINTLN(msg) Serial.println(msg)
+#else
+#define BOOP_LOG_PRINTF(...) do { } while (0)
+#define BOOP_LOG_PRINTLN(msg) do { } while (0)
+#endif
+
 #if defined(ESP32) && USE_PSRAM_FOR_ANIM_JSON
 struct AnimJsonPsramAllocator
 {
@@ -174,6 +186,7 @@ private:
     {
         uint8_t times = 1;      // number of boops to trigger this expression
         String name;             // expression name to trigger
+        uint32_t periodMs = 2800; // hold duration for this expression after trigger
     };
     struct HueShiftBinding
     {
@@ -184,15 +197,14 @@ private:
     std::vector<AutoLinkSpec> autoLinkSpecs; // optional per-morph overrides from JSON
     std::vector<HueShiftBinding> hueShiftRegistry; // material* -> concrete HueShift handler
     std::vector<BoopMorphSpec> boopMorphSpecs; // boop count -> expression mapping from JSON
-    uint32_t lastBoopTime = 0;           // timestamp of last boop (in millis)
-    uint32_t lastBoopReportTime = 0;     // when we last detected/reported a boop
-    uint8_t boopCount = 0;               // count of boops in current window
-    bool lastBoopState = false;          // previous frame's boop state for edge detection
+    uint32_t boopWindowStart = 0;        // start timestamp of current boop count window
+    uint32_t boopLastPulseTime = 0;      // last pulse timestamp for diagnostics
+    uint16_t boopCount = 0;              // persistent boop count inside current window
+    uint32_t boopWindowMs = 30000;       // configurable boop count window (default 30s)
+    uint8_t boopSensorThreshold = 180;   // optional JSON override for Menu boop sensitivity
     String activeBoopExpression;
     uint32_t activeBoopUntil = 0;
-    static constexpr uint32_t kBoopTimeWindow = 800;      // window to count boops (reduced for responsiveness)
-    static constexpr uint32_t kBoopHoldMs = 1200;         // keep resolved boop expression visible
-    static constexpr uint32_t kBoopMinDebounceMs = 100;   // minimum ms between boop detections to avoid noise
+    static constexpr uint32_t kDefaultBoopHoldMs = 2800;  // fallback hold duration when period_ms is omitted
 
     // Helpers
     Object3D *GetFaceObject()
@@ -386,12 +398,76 @@ private:
         }
 
         String candidate = name;
-        if (candidate.equalsIgnoreCase("Suprise") || candidate.equalsIgnoreCase("Surprize"))
+        if (candidate.equalsIgnoreCase("Suprise") ||
+            candidate.equalsIgnoreCase("Surprize") ||
+            candidate.equalsIgnoreCase("Suprised") ||
+            candidate.equalsIgnoreCase("Surprise"))
         {
             return "Surprised";
         }
 
         return String(name);
+    }
+
+    ExpressionConfig *FindExpressionConfig(const String &name)
+    {
+        for (auto &pair : expressions)
+        {
+            if (pair.first.equalsIgnoreCase(name))
+            {
+                return &pair.second;
+            }
+        }
+
+        const String alias = NormalizeBoopExpressionName(name.c_str());
+        if (alias.length() > 0 && !alias.equalsIgnoreCase(name))
+        {
+            for (auto &pair : expressions)
+            {
+                if (pair.first.equalsIgnoreCase(alias))
+                {
+                    return &pair.second;
+                }
+            }
+        }
+
+        return nullptr;
+    }
+
+    const BoopMorphSpec *FindBoopSpecByTimes(uint16_t times) const
+    {
+        for (const auto &spec : boopMorphSpecs)
+        {
+            if (spec.times == times && spec.name.length() > 0)
+            {
+                return &spec;
+            }
+        }
+        return nullptr;
+    }
+
+    const BoopMorphSpec *ResolveBoopSpecForCount(uint16_t count) const
+    {
+        // Priority: explicit count rule (e.g. 10 -> XwX), then multiples rule (3 -> Angry), then default (1 -> Surprised).
+        if (const BoopMorphSpec *exact = FindBoopSpecByTimes(count))
+        {
+            return exact;
+        }
+
+        if ((count % 3) == 0)
+        {
+            if (const BoopMorphSpec *multiple = FindBoopSpecByTimes(3))
+            {
+                return multiple;
+            }
+        }
+
+        if (const BoopMorphSpec *fallback = FindBoopSpecByTimes(1))
+        {
+            return fallback;
+        }
+
+        return nullptr;
     }
 
     void ChangeInterpolationMethods()
@@ -412,13 +488,25 @@ private:
         const String preferredFacePath = deviceId.length() > 0 ? "/" + deviceId + String("_face.json") : String();
         const String fallbackFacePath = "/universal_face.json";
 
-        // Block until LittleFS mounts and the face json is successfully loaded.
+        // Block until LittleFS mounts and the face json is successfully loaded, with timeout protection.
+        const uint32_t timeoutMs = 10000; // 10 second timeout to prevent infinite blocking
+        const uint32_t startMs = millis();
+        uint32_t retryCount = 0;
+        
         while (USE_JSON_FACE_MODEL && !jsonFaceLoaded)
         {
+            // Safety timeout to prevent infinite freeze
+            if ((millis() - startMs) > timeoutMs)
+            {
+                Serial.printf("[ERROR] Face model loading timeout after %lu ms\n", timeoutMs);
+                return;
+            }
+
             if (!LittleFS.begin(false) && !LittleFS.begin(true))
             {
                 Serial.println("[WARN] LittleFS mount failed; retrying...");
                 delay(500);
+                yield(); // Feed watchdog during retry
                 continue;
             }
 
@@ -437,26 +525,27 @@ private:
 
             if (preferredExists)
             {
-                Serial.printf("[WARN] %s failed to load; retrying...\n", preferredFacePath.c_str());
+                Serial.printf("[WARN] %s failed to load (attempt %lu); retrying...\n", preferredFacePath.c_str(), ++retryCount);
             }
 
             if (fallbackExists)
             {
-                Serial.printf("[WARN] %s failed to load; retrying...\n", fallbackFacePath.c_str());
+                Serial.printf("[WARN] %s failed to load (attempt %lu); retrying...\n", fallbackFacePath.c_str(), ++retryCount);
             }
             else if (!preferredExists)
             {
                 if (!preferredFacePath.isEmpty())
                 {
-                    Serial.printf("[WARN] Face model not found (%s or %s); waiting for file...\n", preferredFacePath.c_str(), fallbackFacePath.c_str());
+                    Serial.printf("[WARN] Face model not found (%s or %s); waiting for file... (attempt %lu)\n", preferredFacePath.c_str(), fallbackFacePath.c_str(), ++retryCount);
                 }
                 else
                 {
-                    Serial.printf("[WARN] %s not found; waiting for file...\n", fallbackFacePath.c_str());
+                    Serial.printf("[WARN] %s not found; waiting for file... (attempt %lu)\n", fallbackFacePath.c_str(), ++retryCount);
                 }
             }
 
             delay(500);
+            yield(); // Feed watchdog during retry loop
         }
     }
 
@@ -994,18 +1083,11 @@ private:
 
     void ApplyExpression(const String &name)
     {
-        ExpressionConfig *target = nullptr;
-        for (auto &pair : expressions)
-        {
-            if (pair.first.equalsIgnoreCase(name))
-            {
-                target = &pair.second;
-                break;
-            }
-        }
+        ExpressionConfig *target = FindExpressionConfig(name);
 
         if (!target)
         {
+            Serial.printf("[BOOP] Expression '%s' not found in expressions map\n", name.c_str());
             return;
         }
 
@@ -1047,17 +1129,17 @@ private:
         }
     }
 
-    String GetExpressionByIndex(uint8_t idx) const
+    const String *GetExpressionByIndexPtr(uint8_t idx) const
     {
         if (expressionOrder.empty())
         {
-            return "";
+            return nullptr;
         }
         if (idx >= expressionOrder.size())
         {
             idx = idx % expressionOrder.size();
         }
-        return expressionOrder[idx];
+        return &expressionOrder[idx];
     }
 
     bool LoadAnimationConfig(const UserConfig &config)
@@ -1068,10 +1150,15 @@ private:
         String fallbackPath = "/example_animation.json";
         String loadedPath;
 
-        if (!LittleFS.begin(false) && !LittleFS.begin(true))
+        // LittleFS should already be mounted by RemoteFileSync::EnsureFsMounted() during setup
+        // If not mounted, attempt mounting with timeout protection
+        if (!LittleFS.begin(false))
         {
-            Serial.println("[WARN] LittleFS mount failed for animation config.");
-            return false;
+            if (!LittleFS.begin(true))
+            {
+                Serial.println("[ERROR] LittleFS mount failed for animation config; using minimal default.");
+                // Fall through to built-in default below
+            }
         }
 
         String jsonText;
@@ -1126,6 +1213,18 @@ private:
             Serial.printf("[WARN] Failed to parse animation JSON from %s: %s\n", loadedPath.c_str(), err.c_str());
             return false;
         }
+
+        boopSensorThreshold = 180;
+        int parsedBoopThreshold = doc["boop_threshold"] | -1;
+        if (parsedBoopThreshold < 0)
+        {
+            parsedBoopThreshold = doc["boop_sensor_threshold"] | -1;
+        }
+        if (parsedBoopThreshold >= 0)
+        {
+            boopSensorThreshold = static_cast<uint8_t>(constrain(parsedBoopThreshold, 0, 255));
+        }
+        Serial.printf("[INFO] Boop sensor threshold set to %u\n", static_cast<unsigned>(boopSensorThreshold));
 
         animationName = doc["animation_name"] | doc["display_name"] | doc["name"] | doc["user"] | String("");
         if (animationName.isEmpty())
@@ -1205,16 +1304,37 @@ private:
                 spec.times = obj["times"] | 1;
                 String rawName = obj["name"] | String("");
                 spec.name = NormalizeBoopExpressionName(rawName.c_str());
+                spec.periodMs = std::max<uint32_t>(200, obj["period_ms"] | kDefaultBoopHoldMs);
                 if (spec.name.length() > 0)
                 {
                     boopMorphSpecs.push_back(spec);
-                    Serial.printf("[BOOP] Registered: %d times -> '%s'\n", spec.times, spec.name.c_str());
+                    BOOP_LOG_PRINTF("[BOOP] Registered: %d times -> '%s' (period=%lu ms)\n",
+                                    spec.times,
+                                    spec.name.c_str(),
+                                    static_cast<unsigned long>(spec.periodMs));
                 }
             }
         }
+
+        if (doc.containsKey("boop_window_ms"))
+        {
+            boopWindowMs = std::max<uint32_t>(1000, doc["boop_window_ms"].as<uint32_t>());
+        }
+        else if (doc.containsKey("boop_window_seconds"))
+        {
+            boopWindowMs = std::max<uint32_t>(1000, doc["boop_window_seconds"].as<uint32_t>() * 1000UL);
+        }
+
+        boopWindowStart = 0;
+        boopLastPulseTime = 0;
+        boopCount = 0;
+        activeBoopExpression = "";
+        activeBoopUntil = 0;
+
+        BOOP_LOG_PRINTF("[BOOP] Count window configured: %lu ms\n", static_cast<unsigned long>(boopWindowMs));
         if (boopMorphSpecs.size() == 0)
         {
-            Serial.println("[BOOP] WARNING: No boop_morphs configured in JSON!");
+            BOOP_LOG_PRINTLN("[BOOP] WARNING: No boop_morphs configured in JSON!");
         }
 
         baseXOffset = doc["x_offset"] | baseXOffset;
@@ -1247,7 +1367,7 @@ private:
         return true;
     }
 
-    String ResolveBoopExpression()
+    const String *ResolveBoopExpressionPtr()
     {
         uint32_t now = millis();
         
@@ -1256,7 +1376,7 @@ private:
         {
             if (now < activeBoopUntil)
             {
-                return activeBoopExpression;
+                return &activeBoopExpression;
             }
             // Hold window expired
             activeBoopExpression.clear();
@@ -1265,89 +1385,57 @@ private:
         // Only check for new boops if sensor is enabled
         if (!Menu::UseBoopSensor())
         {
-            return "";
+            return nullptr;
         }
 
-        bool currentBoopState = Menu::isBooped();
-
-        // Edge detection: transition from not booped to booped (with debouncing)
-        if (currentBoopState && !lastBoopState)
+        // Expire the persistent count window even without new pulses.
+        if (boopCount > 0 && boopWindowStart > 0 && (now - boopWindowStart) >= boopWindowMs)
         {
-            uint32_t timeSinceLastReport = now - lastBoopReportTime;
-            
-            // Debounce: ignore if too soon after last detection
-            if (timeSinceLastReport < kBoopMinDebounceMs)
-            {
-                lastBoopState = currentBoopState;
-                return "";
-            }
-            
-            // New boop detected
-            uint32_t timeSinceLastBoop = now - lastBoopTime;
-            
-            // If first boop or within time window, increment counter
-            if (boopCount == 0 || timeSinceLastBoop < kBoopTimeWindow)
-            {
-                boopCount++;
-                Serial.printf("[BOOP] Detected boop #%d at time %u (window in progress)\n", boopCount, now);
-            }
-            else
-            {
-                // Time window expired, reset counter and start new sequence
-                boopCount = 1;
-                Serial.printf("[BOOP] New boop sequence started (previous window expired)\n");
-            }
-            
-            lastBoopTime = now;
-            lastBoopReportTime = now;
+            BOOP_LOG_PRINTF("[BOOP] Window expired after %lu ms, resetting count (%u -> 0)\n",
+                            static_cast<unsigned long>(boopWindowMs),
+                            static_cast<unsigned>(boopCount));
+            boopCount = 0;
+            boopWindowStart = 0;
+            boopLastPulseTime = 0;
         }
 
-        lastBoopState = currentBoopState;
-
-        // Check if window has closed (no new boops for kBoopTimeWindow ms)
-        if (boopCount > 0 && !currentBoopState)
+        if (Menu::ConsumeBoopPulse())
         {
-            uint32_t timeSinceLastBoop = now - lastBoopTime;
-            
-            if (timeSinceLastBoop > kBoopTimeWindow)
+            if (boopWindowStart == 0)
             {
-                // Window closed, resolve the boop sequence
-                String result = "";
-                
-                Serial.printf("[BOOP] Window closed with %d boops detected\n", boopCount);
-                
-                // Find matching expression by boop count
-                for (const auto &spec : boopMorphSpecs)
-                {
-                    if (spec.times == boopCount)
-                    {
-                        result = spec.name;
-                        Serial.printf("[BOOP] Matched %d boop(s) to expression: '%s'\n", boopCount, result.c_str());
-                        break;
-                    }
-                }
-                
-                if (result.isEmpty())
-                {
-                    Serial.printf("[BOOP] WARNING: No expression mapped for %d boop(s)\n", boopCount);
-                }
-
-                if (!result.isEmpty())
-                {
-                    activeBoopExpression = result;
-                    activeBoopUntil = now + kBoopHoldMs;
-                }
-                
-                // Reset counters
+                boopWindowStart = now;
                 boopCount = 0;
-                lastBoopTime = 0;
-                
-                return result;
+                BOOP_LOG_PRINTF("[BOOP] Starting count window (%lu ms)\n", static_cast<unsigned long>(boopWindowMs));
             }
+
+            boopCount++;
+            boopLastPulseTime = now;
+
+            BOOP_LOG_PRINTF("[BOOP] Pulse count=%u elapsed=%lu/%lu ms\n",
+                            static_cast<unsigned>(boopCount),
+                            static_cast<unsigned long>(now - boopWindowStart),
+                            static_cast<unsigned long>(boopWindowMs));
+
+            const BoopMorphSpec *spec = ResolveBoopSpecForCount(boopCount);
+            if (!spec)
+            {
+                BOOP_LOG_PRINTF("[BOOP] No expression mapping for count=%u\n", static_cast<unsigned>(boopCount));
+                return nullptr;
+            }
+
+            BOOP_LOG_PRINTF("[BOOP] Count %u -> '%s' (hold=%lu ms)\n",
+                            static_cast<unsigned>(boopCount),
+                            spec->name.c_str(),
+                            static_cast<unsigned long>(spec->periodMs));
+
+            activeBoopExpression = spec->name;
+            activeBoopUntil = now + spec->periodMs;
+
+            return &activeBoopExpression;
         }
 
-        // Window still open or no boops counted
-        return "";
+        // No new pulse this frame.
+        return nullptr;
     }
 
 public:
@@ -1393,7 +1481,7 @@ public:
         #elif defined(TASESP32P4)
         MicrophoneFourierIT::Initialize(23, 8000, 68.0f, 120.0f);
         #endif
-        espmenu.Initialize(17, 200);
+        espmenu.Initialize(17, boopSensorThreshold);
         ChangeInterpolationMethods();
         return true;
     }
@@ -1468,12 +1556,16 @@ public:
         }
 
         // Resolve boop sequence (called every frame for state tracking)
-        String boopExpr = ResolveBoopExpression();
-        // Intercept animation selection from JSON definitions.
-        String targetExpr = !boopExpr.isEmpty() ? boopExpr : GetExpressionByIndex(mode);
-        if (!targetExpr.isEmpty())
+        const String *targetExpr = ResolveBoopExpressionPtr();
+        if (!targetExpr)
         {
-            ApplyExpression(targetExpr);
+            targetExpr = GetExpressionByIndexPtr(mode);
+        }
+
+        // Intercept animation selection from JSON definitions.
+        if (targetExpr && targetExpr->length() > 0)
+        {
+            ApplyExpression(*targetExpr);
         }
 
         ApplyHueShiftToCurrentFaceMaterial(Menu::GetHueShift());

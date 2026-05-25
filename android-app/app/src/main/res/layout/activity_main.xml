@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent" android:layout_height="match_parent">
+
+<LinearLayout android:orientation="vertical" android:padding="12dp"
+    android:layout_width="match_parent" android:layout_height="wrap_content">
+
+    <TextView android:id="@+id/tv_status" android:text="Disconnected"
+        android:textSize="16sp" android:layout_marginBottom="4dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+    <LinearLayout android:orientation="horizontal"
+        android:layout_width="match_parent" android:layout_height="wrap_content">
+        <Button android:id="@+id/btn_qr" android:text="Scan QR"
+            android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/btn_scan" android:text="Scan BLE"
+            android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"/>
+        <Button android:id="@+id/btn_stop_scan" android:text="Stop"
+            android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_marginStart="4dp" android:enabled="false"/>
+    </LinearLayout>
+
+    <TextView android:id="@+id/tv_rx_uuid" android:visibility="gone"
+        android:fontFamily="monospace" android:textSize="10sp" android:layout_marginTop="4dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+    <TextView android:id="@+id/tv_no_devices" android:text="No devices. Scan BLE to find your ProtoTracer."
+        android:layout_marginTop="8dp" android:gravity="center"
+        android:layout_width="match_parent" android:layout_height="wrap_content"/>
+    <LinearLayout android:id="@+id/layout_devices" android:orientation="vertical"
+        android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+    <!-- Controls (visible when connected) -->
+    <LinearLayout android:id="@+id/layout_controls" android:orientation="vertical"
+        android:visibility="gone" android:layout_marginTop="8dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content">
+
+        <TextView android:text="Expression" android:textSize="18sp" android:textStyle="bold"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <TextView android:id="@+id/tv_expr" android:text="0: Default"
+            android:textSize="16sp" android:gravity="center" android:padding="8dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <LinearLayout android:orientation="horizontal"
+            android:layout_width="match_parent" android:layout_height="wrap_content">
+            <Button android:id="@+id/btn_prev" android:text="Prev"
+                android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content"/>
+            <Button android:id="@+id/btn_next" android:text="Next"
+                android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"/>
+            <Button android:id="@+id/btn_send_expr" android:text="Confirm"
+                android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"/>
+        </LinearLayout>
+
+        <TextView android:text="Brightness" android:textSize="18sp" android:textStyle="bold"
+            android:layout_marginTop="12dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <LinearLayout android:orientation="horizontal" android:gravity="center_vertical"
+            android:layout_width="match_parent" android:layout_height="wrap_content">
+            <TextView android:id="@+id/tv_bright" android:text="128" android:width="40dp"
+                android:gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <com.google.android.material.slider.Slider android:id="@+id/slider_bright"
+                android:valueFrom="0" android:valueTo="255" android:value="128" android:stepSize="1"
+                android:layout_weight="1" android:layout_marginStart="8dp" android:layout_marginEnd="8dp"
+                android:layout_width="0dp" android:layout_height="wrap_content"/>
+            <Button android:id="@+id/btn_send_bright" android:text="Set"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        </LinearLayout>
+
+        <TextView android:text="Hue Shift" android:textSize="18sp" android:textStyle="bold"
+            android:layout_marginTop="12dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <View android:id="@+id/view_hue" android:background="#FF0000"
+            android:layout_marginTop="4dp"
+            android:layout_width="match_parent" android:layout_height="32dp"/>
+        <LinearLayout android:orientation="horizontal" android:gravity="center_vertical"
+            android:layout_width="match_parent" android:layout_height="wrap_content">
+            <TextView android:id="@+id/tv_hue" android:text="0" android:width="48dp"
+                android:gravity="center" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <com.google.android.material.slider.Slider android:id="@+id/slider_hue"
+                android:valueFrom="0" android:valueTo="360" android:value="0" android:stepSize="1"
+                android:layout_weight="1" android:layout_marginStart="8dp" android:layout_marginEnd="8dp"
+                android:layout_width="0dp" android:layout_height="wrap_content"/>
+            <Button android:id="@+id/btn_send_hue" android:text="Set"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        </LinearLayout>
+
+        <LinearLayout android:orientation="horizontal" android:layout_marginTop="12dp"
+            android:gravity="center_vertical"
+            android:layout_width="match_parent" android:layout_height="wrap_content">
+            <TextView android:text="Voice Detection" android:textSize="16sp"
+                android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content"/>
+            <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/switch_voice"
+                android:checked="true"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        </LinearLayout>
+
+        <LinearLayout android:orientation="horizontal" android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:layout_width="match_parent" android:layout_height="wrap_content">
+            <TextView android:text="Fan" android:textSize="16sp"
+                android:layout_weight="1" android:layout_width="0dp" android:layout_height="wrap_content"/>
+            <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/switch_fan"
+                android:checked="false"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        </LinearLayout>
+
+        <Button android:id="@+id/btn_disconnect" android:text="Disconnect"
+            android:layout_marginTop="16dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+</LinearLayout>
+</ScrollView>

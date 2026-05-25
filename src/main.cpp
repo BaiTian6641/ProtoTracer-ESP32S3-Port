@@ -80,7 +80,7 @@ constexpr bool kVerboseStartup = false;
 #endif
 
 #ifndef PROTOTRACER_FW_VERSION
-#define PROTOTRACER_FW_VERSION "1.0.3"
+#define PROTOTRACER_FW_VERSION "1.0.8"
 #endif
 
 #ifndef PROTOTRACER_FW_MANIFEST
@@ -93,6 +93,9 @@ constexpr bool kVerboseStartup = false;
 
 constexpr const char *kFirmwareVersion = PROTOTRACER_FW_VERSION;
 constexpr const char *kFirmwareManifest = PROTOTRACER_FW_MANIFEST;
+
+static uint32_t gOtaButtonDownAtMs = 0;
+static uint32_t gOtaButtonLastTriggerMs = 0;
 
 #ifdef TASESP32S3
 extern VirtualMatrixPanel *virtualDisp;
@@ -284,7 +287,8 @@ void setup()
   }
 
   // Factory flash indicator: blink internal WS2812 red/blue if face model or animation config is missing.
-  if (LittleFS.begin(false) || LittleFS.begin(true))
+  // Note: LittleFS already mounted by EnsureUserConfig() via RemoteFileSync::EnsureFsMounted()
+  if (true)
   {
     const char *markerPath = "/factory_blink_done";
 
@@ -307,6 +311,7 @@ void setup()
         nowpixels.setPixelColor(0, (i % 2 == 0) ? red : blue);
         nowpixels.show();
         delay(300);
+        yield(); // Feed watchdog during factory indicator blink
       }
       nowpixels.setPixelColor(0, 0);
       nowpixels.show();
@@ -529,15 +534,36 @@ void setup()
 
 void loop()
 {
+  const uint32_t now = millis();
+  const bool otaPressed = (digitalRead(OTA_BTN) == LOW);
+
+  if (otaPressed)
+  {
+    if (gOtaButtonDownAtMs == 0)
+    {
+      gOtaButtonDownAtMs = now;
+    }
+  }
+  else
+  {
+    gOtaButtonDownAtMs = 0;
+  }
+
+  const bool otaLongPress = (gOtaButtonDownAtMs != 0) && ((now - gOtaButtonDownAtMs) >= 1200);
+  const bool otaCooldownElapsed = (now - gOtaButtonLastTriggerMs) >= 30000;
 
 #ifdef TASESP32S3
-  if (digitalRead(OTA_BTN) == LOW)
+  if (otaLongPress && otaCooldownElapsed)
   {
+    gOtaButtonLastTriggerMs = now;
     virtualDisp->clearScreen();
     virtualDisp->fillScreenRGB888(255, 255, 255);
     qrcode_initText(&qrcode, qrcodeData, 3, 0, userConfig.ble_rx_uuid.c_str());
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(userConfig.ota_ssid.c_str(), userConfig.ota_password.c_str());
+    if (WiFi.getMode() != WIFI_AP)
+    {
+      WiFi.mode(WIFI_AP);
+      WiFi.softAP(userConfig.ota_ssid.c_str(), userConfig.ota_password.c_str());
+    }
     Serial.println("");
     for (uint8_t y = 0; y < qrcode.size; y++)
     {
@@ -549,33 +575,45 @@ void loop()
                                      qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_b);
       }
     }
-    delay(15000);
   }
   // controller.SetAccentBrightness(animation.GetAccentBrightness() * 25 + 5);
   // controller.SetBrightness(powf(animation.GetBrightness() + 3, 2) / 3);
   float ratio = (float)(millis() % 5000) / 5000.0f;
   controller.SetBrightness(animation.GetBrightness());
+  yield(); // Feed watchdog before animation update
   animation.UpdateTime(ratio);
+  yield(); // Feed watchdog before render
   controller.Render(animation.GetScene());
+  yield(); // Feed watchdog before display
 #elif defined(TASESP32P4)
   // TODO: add panel-clearing logic for P4 HUB75 if needed
-  if (digitalRead(OTA_BTN) == LOW)
+  if (otaLongPress && otaCooldownElapsed)
   {
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(userConfig.ota_ssid.c_str(), userConfig.ota_password.c_str());
-    delay(15000);
+    gOtaButtonLastTriggerMs = now;
+    if (WiFi.getMode() != WIFI_AP)
+    {
+      WiFi.mode(WIFI_AP);
+      WiFi.softAP(userConfig.ota_ssid.c_str(), userConfig.ota_password.c_str());
+    }
   }
   float ratio = (float)(millis() % 5000) / 5000.0f;
   controller.SetBrightness(animation.GetBrightness());
+  yield(); // Feed watchdog before animation update
   animation.UpdateTime(ratio);
+  yield(); // Feed watchdog before render
   controller.Render(animation.GetScene());
+  yield(); // Feed watchdog before display
 #else
   Serial.print("not defined");
 #endif
 
+  // Yield to background WiFi/BLE/LWIP tasks to reduce starvation risk under sustained rendering load.
+  delay(1);
+
   // controller.
 
   controller.Display();
+  yield(); // Feed watchdog after display update
 
 #ifdef PRINTINFO
   Serial.print("Animated in ");

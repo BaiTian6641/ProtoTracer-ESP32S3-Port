@@ -19,10 +19,11 @@
         "Zzz",
         "MouthEnd"
     ],
+    "boop_window_ms": 30000,
     "boop_morphs": [
-        {"times": 1, "name": "Suprise"},
-        {"times": 3, "name": "Angry"},
-        {"times": 10, "name": "XwX"}
+        {"times": 1, "name": "Surprised", "period_ms": 2500},
+        {"times": 3, "name": "Angry", "period_ms": 3000},
+        {"times": 10, "name": "XwX", "period_ms": 8000}
     ],
     "auto_link": [
         {"name": "HideBlush", "frames": 30, "basis": 0.0, "goal": 1.0},
