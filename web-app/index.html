@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0a0f1a" />
+  <title>ProtoTracer Remote</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦊</text></svg>" />
+</head>
+<body>
+
+  <!-- Connection Status Bar -->
+  <header id="statusBar">
+    <div class="status-indicator">
+      <span id="statusDot" class="dot disconnected"></span>
+      <span id="statusText">Disconnected</span>
+    </div>
+    <div id="deviceInfo" class="device-info hidden">
+      <span id="deviceName"></span>
+      <span id="batteryBadge" class="badge hidden">--%</span>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main>
+
+    <!-- Connection Panel (shown when disconnected) -->
+    <section id="connectPanel" class="panel">
+      <div class="hero">
+        <div class="hero-icon">🦊</div>
+        <h1>ProtoTracer Remote</h1>
+        <p class="subtitle">Web Bluetooth Remote Control</p>
+      </div>
+
+      <div class="card">
+        <h3>Connect to Device</h3>
+        <p class="desc">Make sure your ProtoTracer is powered on and BLE advertising is active.</p>
+        <button id="btnScan" class="btn primary full-width" disabled>
+          <span class="btn-icon">🔍</span> Scan for ProtoTracer
+        </button>
+        <div id="scanStatus" class="scan-status"></div>
+        <div id="deviceList" class="device-list hidden"></div>
+      </div>
+
+      <div class="card">
+        <h3>Manual Connection</h3>
+        <p class="desc">If auto-scan doesn't work, enter your device name or BLE address.</p>
+        <div class="input-row">
+          <input type="text" id="manualDeviceName" placeholder="Device name (e.g. Protogen-01)" />
+          <button id="btnManualConnect" class="btn secondary" disabled>Connect</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Browser Compatibility</h3>
+        <div id="bleSupportInfo" class="compat-info"></div>
+      </div>
+    </section>
+
+    <!-- Control Panel (shown when connected) -->
+    <section id="controlPanel" class="panel hidden">
+      
+      <!-- Expression Selector -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Expressions</h3>
+          <span id="exprCount" class="badge"></span>
+        </div>
+        <div id="expressionGrid" class="expression-grid">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Brightness Control -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Brightness</h3>
+          <span id="brightnessValue" class="badge">105</span>
+        </div>
+        <div class="slider-container">
+          <span class="slider-label">🌑</span>
+          <input type="range" id="brightnessSlider" min="0" max="255" value="105" class="slider" />
+          <span class="slider-label">☀️</span>
+        </div>
+      </div>
+
+      <!-- Hue Shift -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Color Hue Shift</h3>
+          <span id="hueValue" class="badge">0°</span>
+        </div>
+        <div class="slider-container">
+          <input type="range" id="hueSlider" min="0" max="360" value="0" class="slider hue-slider" />
+        </div>
+        <div class="hue-presets">
+          <button class="hue-btn" data-hue="0" style="background:#ff4444"></button>
+          <button class="hue-btn" data-hue="30" style="background:#ff8844"></button>
+          <button class="hue-btn" data-hue="60" style="background:#ffdd44"></button>
+          <button class="hue-btn" data-hue="120" style="background:#44ff44"></button>
+          <button class="hue-btn" data-hue="180" style="background:#44ddff"></button>
+          <button class="hue-btn" data-hue="240" style="background:#4444ff"></button>
+          <button class="hue-btn" data-hue="280" style="background:#aa44ff"></button>
+          <button class="hue-btn" data-hue="320" style="background:#ff44aa"></button>
+        </div>
+      </div>
+
+      <!-- Toggles Row -->
+      <div class="card">
+        <h3>Options</h3>
+        <div class="toggle-row">
+          <div class="toggle-item">
+            <label class="toggle">
+              <input type="checkbox" id="voiceToggle" checked />
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-label">🎤 Lip Sync</span>
+          </div>
+          <div class="toggle-item">
+            <label class="toggle">
+              <input type="checkbox" id="displayModeToggle" />
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-label">🖥️ Display Mode</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="card">
+        <h3>Quick Actions</h3>
+        <div class="action-grid">
+          <button id="btnPing" class="btn secondary">📡 Ping Device</button>
+          <button id="btnRefreshManifest" class="btn secondary">🔄 Refresh Manifest</button>
+          <button id="btnDisconnect" class="btn danger">🔌 Disconnect</button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Log Panel -->
+    <section id="logPanel" class="panel">
+      <div class="card">
+        <div class="card-header">
+          <h3>Event Log</h3>
+          <button id="btnClearLog" class="btn small">Clear</button>
+        </div>
+        <div id="logOutput" class="log-output">
+          <!-- Log entries -->
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Scripts -->
+  <script src="js/ble.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
