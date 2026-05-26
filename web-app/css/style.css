@@ -96,6 +96,21 @@ body {
   color: var(--text-secondary);
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.lang-btn {
+  min-width: 32px;
+  height: 28px;
+  padding: 0 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .badge {
   background: var(--bg-card);
   border: 1px solid var(--border);

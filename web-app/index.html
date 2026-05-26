@@ -14,11 +14,14 @@
   <header id="statusBar">
     <div class="status-indicator">
       <span id="statusDot" class="dot disconnected"></span>
-      <span id="statusText">Disconnected</span>
+      <span id="statusText" data-i18n="status.disconnected">Disconnected</span>
     </div>
-    <div id="deviceInfo" class="device-info hidden">
-      <span id="deviceName"></span>
-      <span id="batteryBadge" class="badge hidden">--%</span>
+    <div class="header-right">
+      <button id="btnLangToggle" class="btn small lang-btn" title="Switch language / 切换语言">中</button>
+      <div id="deviceInfo" class="device-info hidden">
+        <span id="deviceName"></span>
+        <span id="batteryBadge" class="badge hidden">--%</span>
+      </div>
     </div>
   </header>
 
@@ -29,31 +32,31 @@
     <section id="connectPanel" class="panel">
       <div class="hero">
         <div class="hero-icon">🦊</div>
-        <h1>ProtoTracer Remote</h1>
-        <p class="subtitle">Web Bluetooth Remote Control</p>
+        <h1 data-i18n="hero.title">ProtoTracer Remote</h1>
+        <p class="subtitle" data-i18n="hero.subtitle">Web Bluetooth Remote Control</p>
       </div>
 
       <div class="card">
-        <h3>Connect to Device</h3>
-        <p class="desc">Make sure your ProtoTracer is powered on and BLE advertising is active.</p>
+        <h3 data-i18n="connect.title">Connect to Device</h3>
+        <p class="desc" data-i18n="connect.desc">Make sure your ProtoTracer is powered on and BLE advertising is active.</p>
         <button id="btnScan" class="btn primary full-width" disabled>
-          <span class="btn-icon">🔍</span> Scan for ProtoTracer
+          <span data-i18n="connect.scanBtn">🔍 Scan for ProtoTracer</span>
         </button>
         <div id="scanStatus" class="scan-status"></div>
         <div id="deviceList" class="device-list hidden"></div>
       </div>
 
       <div class="card">
-        <h3>Manual Connection</h3>
-        <p class="desc">If auto-scan doesn't work, enter your device name or BLE address.</p>
+        <h3 data-i18n="connect.manualTitle">Manual Connection</h3>
+        <p class="desc" data-i18n="connect.manualDesc">If auto-scan doesn't work, enter your device name or BLE address.</p>
         <div class="input-row">
-          <input type="text" id="manualDeviceName" placeholder="Device name (e.g. Protogen-01)" />
-          <button id="btnManualConnect" class="btn secondary" disabled>Connect</button>
+          <input type="text" id="manualDeviceName" data-i18n-placeholder="connect.placeholder" placeholder="Device name (e.g. Protogen-01)" />
+          <button id="btnManualConnect" class="btn secondary" disabled data-i18n="connect.manualBtn">Connect</button>
         </div>
       </div>
 
       <div class="card">
-        <h3>Browser Compatibility</h3>
+        <h3 data-i18n="connect.compatTitle">Browser Compatibility</h3>
         <div id="bleSupportInfo" class="compat-info"></div>
       </div>
     </section>
@@ -64,7 +67,7 @@
       <!-- Expression Selector -->
       <div class="card">
         <div class="card-header">
-          <h3>Expressions</h3>
+          <h3 data-i18n="ctrl.expressions">Expressions</h3>
           <span id="exprCount" class="badge"></span>
         </div>
         <div id="expressionGrid" class="expression-grid">
@@ -75,7 +78,7 @@
       <!-- Brightness Control -->
       <div class="card">
         <div class="card-header">
-          <h3>Brightness</h3>
+          <h3 data-i18n="ctrl.brightness">Brightness</h3>
           <span id="brightnessValue" class="badge">105</span>
         </div>
         <div class="slider-container">
@@ -88,7 +91,7 @@
       <!-- Hue Shift -->
       <div class="card">
         <div class="card-header">
-          <h3>Color Hue Shift</h3>
+          <h3 data-i18n="ctrl.hue">Color Hue Shift</h3>
           <span id="hueValue" class="badge">0°</span>
         </div>
         <div class="slider-container">
@@ -108,32 +111,32 @@
 
       <!-- Toggles Row -->
       <div class="card">
-        <h3>Options</h3>
+        <h3 data-i18n="ctrl.options">Options</h3>
         <div class="toggle-row">
           <div class="toggle-item">
             <label class="toggle">
               <input type="checkbox" id="voiceToggle" checked />
               <span class="toggle-slider"></span>
             </label>
-            <span class="toggle-label">🎤 Lip Sync</span>
+            <span class="toggle-label" data-i18n="ctrl.lipSync">🎤 Lip Sync</span>
           </div>
           <div class="toggle-item">
             <label class="toggle">
               <input type="checkbox" id="displayModeToggle" />
               <span class="toggle-slider"></span>
             </label>
-            <span class="toggle-label">🖥️ Display Mode</span>
+            <span class="toggle-label" data-i18n="ctrl.displayMode">🖥️ Display Mode</span>
           </div>
         </div>
       </div>
 
       <!-- Quick Actions -->
       <div class="card">
-        <h3>Quick Actions</h3>
+        <h3 data-i18n="ctrl.quickActions">Quick Actions</h3>
         <div class="action-grid">
-          <button id="btnPing" class="btn secondary">📡 Ping Device</button>
-          <button id="btnRefreshManifest" class="btn secondary">🔄 Refresh Manifest</button>
-          <button id="btnDisconnect" class="btn danger">🔌 Disconnect</button>
+          <button id="btnPing" class="btn secondary" data-i18n="ctrl.ping">📡 Ping Device</button>
+          <button id="btnRefreshManifest" class="btn secondary" data-i18n="ctrl.refreshManifest">🔄 Refresh Manifest</button>
+          <button id="btnDisconnect" class="btn danger" data-i18n="ctrl.disconnect">🔌 Disconnect</button>
         </div>
       </div>
 
@@ -143,8 +146,8 @@
     <section id="logPanel" class="panel">
       <div class="card">
         <div class="card-header">
-          <h3>Event Log</h3>
-          <button id="btnClearLog" class="btn small">Clear</button>
+          <h3 data-i18n="ctrl.log">Event Log</h3>
+          <button id="btnClearLog" class="btn small" data-i18n="ctrl.clearLog">Clear</button>
         </div>
         <div id="logOutput" class="log-output">
           <!-- Log entries -->
@@ -158,6 +161,7 @@
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- Scripts -->
+  <script src="js/i18n.js"></script>
   <script src="js/ble.js"></script>
   <script src="js/app.js"></script>
 </body>

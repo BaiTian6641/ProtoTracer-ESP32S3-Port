@@ -1,7 +1,8 @@
 /**
  * ProtoTracer Remote - Application Controller
- * 
+ *
  * Manages UI state, user interactions, and bridges BLE events to the DOM.
+ * All user-visible strings go through I18N.t().
  */
 
 (function () {
@@ -12,58 +13,61 @@
   const $$ = (sel) => document.querySelectorAll(sel);
 
   const dom = {
-    statusDot:       $('#statusDot'),
-    statusText:      $('#statusText'),
-    deviceName:      $('#deviceName'),
-    batteryBadge:    $('#batteryBadge'),
-    connectPanel:    $('#connectPanel'),
-    controlPanel:    $('#controlPanel'),
-    btnScan:         $('#btnScan'),
-    btnManualConnect:$('#btnManualConnect'),
-    manualDeviceName:$('#manualDeviceName'),
-    scanStatus:      $('#scanStatus'),
-    deviceList:      $('#deviceList'),
-    bleSupportInfo:  $('#bleSupportInfo'),
-    expressionGrid:  $('#expressionGrid'),
-    exprCount:       $('#exprCount'),
-    brightnessSlider:$('#brightnessSlider'),
-    brightnessValue: $('#brightnessValue'),
-    hueSlider:       $('#hueSlider'),
-    hueValue:        $('#hueValue'),
-    voiceToggle:     $('#voiceToggle'),
+    statusDot:        $('#statusDot'),
+    statusText:       $('#statusText'),
+    deviceName:       $('#deviceName'),
+    batteryBadge:     $('#batteryBadge'),
+    btnLangToggle:    $('#btnLangToggle'),
+    connectPanel:     $('#connectPanel'),
+    controlPanel:     $('#controlPanel'),
+    btnScan:          $('#btnScan'),
+    btnManualConnect: $('#btnManualConnect'),
+    manualDeviceName: $('#manualDeviceName'),
+    scanStatus:       $('#scanStatus'),
+    deviceList:       $('#deviceList'),
+    bleSupportInfo:   $('#bleSupportInfo'),
+    expressionGrid:   $('#expressionGrid'),
+    exprCount:        $('#exprCount'),
+    brightnessSlider: $('#brightnessSlider'),
+    brightnessValue:  $('#brightnessValue'),
+    hueSlider:        $('#hueSlider'),
+    hueValue:         $('#hueValue'),
+    voiceToggle:      $('#voiceToggle'),
     displayModeToggle:$('#displayModeToggle'),
-    btnPing:         $('#btnPing'),
+    btnPing:          $('#btnPing'),
     btnRefreshManifest:$('#btnRefreshManifest'),
-    btnDisconnect:   $('#btnDisconnect'),
-    btnClearLog:     $('#btnClearLog'),
-    logOutput:       $('#logOutput'),
-    toastContainer:  $('#toastContainer'),
+    btnDisconnect:    $('#btnDisconnect'),
+    btnClearLog:      $('#btnClearLog'),
+    logOutput:        $('#logOutput'),
+    toastContainer:   $('#toastContainer'),
   };
 
   // --- Application State ---
   let state = {
-    expressions: [],      // [{name, index}]
+    expressions:       [],
     currentExpression: 0,
-    brightness: 105,
-    hue: 0.0,
-    voiceEnabled: true,
-    displayMode: 0,
-    connected: false,
+    brightness:        105,
+    hue:               0.0,
+    voiceEnabled:      true,
+    displayMode:       0,
+    connected:         false,
   };
 
   // --- Initialization ---
   function init() {
+    I18N.applyToDOM(document.body);
+    updateLangToggleLabel();
     checkBLESupport();
 
     // BLE events
-    ProtoTracerBLE.on('status', onStatusChange);
-    ProtoTracerBLE.on('connected', onConnected);
+    ProtoTracerBLE.on('status',       onStatusChange);
+    ProtoTracerBLE.on('connected',    onConnected);
     ProtoTracerBLE.on('disconnected', onDisconnected);
-    ProtoTracerBLE.on('manifest', onManifestReceived);
+    ProtoTracerBLE.on('manifest',     onManifestReceived);
     ProtoTracerBLE.on('controlState', onControlState);
-    ProtoTracerBLE.on('pong', onPongReceived);
-    ProtoTracerBLE.on('sent', onCommandSent);
-    ProtoTracerBLE.on('received', onDataReceived);
+    ProtoTracerBLE.on('pong',         onPongReceived);
+    ProtoTracerBLE.on('sent',         onCommandSent);
+    ProtoTracerBLE.on('received',     onDataReceived);
 
     // UI events
     dom.btnScan.addEventListener('click', onScanClick);
@@ -78,6 +82,7 @@
     dom.btnRefreshManifest.addEventListener('click', onRefreshManifestClick);
     dom.btnDisconnect.addEventListener('click', onDisconnectClick);
     dom.btnClearLog.addEventListener('click', () => { dom.logOutput.innerHTML = ''; });
+    dom.btnLangToggle.addEventListener('click', onLangToggle);
 
     // Hue preset buttons
     $$('.hue-btn').forEach(btn => {
@@ -88,48 +93,56 @@
       });
     });
 
-    // Enable scan button if BLE is supported
     if (ProtoTracerBLE.isSupported()) {
       dom.btnScan.disabled = false;
     }
 
-    addLog('info', 'ProtoTracer Remote ready.');
+    addLog('info', I18N.t('log.ready'));
+  }
+
+  // --- Language Toggle ---
+  function onLangToggle() {
+    const next = I18N.getLang() === 'en' ? 'zh' : 'en';
+    I18N.setLang(next);
+    I18N.applyToDOM(document.body);
+    updateLangToggleLabel();
+
+    // Refresh dynamic strings
+    if (state.expressions.length > 0) {
+      dom.exprCount.textContent = I18N.t('ctrl.exprCount', { n: state.expressions.length });
+    }
+    dom.statusText.textContent = state.connected
+      ? I18N.t('status.connected')
+      : I18N.t('status.disconnected');
+  }
+
+  function updateLangToggleLabel() {
+    dom.btnLangToggle.textContent = I18N.getLang() === 'en' ? '中' : 'EN';
   }
 
   // --- BLE Support Check ---
   function checkBLESupport() {
     if (ProtoTracerBLE.isSupported()) {
       dom.bleSupportInfo.className = 'compat-info supported';
-      dom.bleSupportInfo.textContent = '✅ Web Bluetooth is supported in this browser (Chrome / Edge).';
+      dom.bleSupportInfo.textContent = I18N.t('ble.supported');
       dom.btnScan.disabled = false;
       dom.btnManualConnect.disabled = false;
     } else {
       dom.bleSupportInfo.className = 'compat-info unsupported';
-      dom.bleSupportInfo.innerHTML = '⚠️ Web Bluetooth is not supported in this browser.<br>'
-        + 'Please use <strong>Chrome</strong> or <strong>Edge</strong> on desktop or Android.';
+      dom.bleSupportInfo.textContent = I18N.t('ble.unsupported');
     }
   }
 
   // --- Event Handlers: BLE ---
 
   function onStatusChange(data) {
-    dom.statusText.textContent = data.message;
-    dom.statusDot.className = 'dot ' + data.state;
+    dom.statusText.textContent = data.message || '';
+    dom.statusDot.className = 'dot ' + (data.state || '');
 
-    switch (data.state) {
-      case 'scanning':
-        dom.scanStatus.textContent = 'Scanning... select your ProtoTracer from the dialog.';
-        break;
-      case 'connecting':
-        dom.scanStatus.textContent = 'Connecting...';
-        break;
-      case 'connected':
-        dom.scanStatus.textContent = '';
-        break;
-      case 'disconnected':
-      case 'error':
-        dom.scanStatus.textContent = '';
-        break;
+    if (data.state === 'scanning') {
+      dom.scanStatus.textContent = I18N.t('connect.scanHint');
+    } else {
+      dom.scanStatus.textContent = '';
     }
   }
 
@@ -139,8 +152,8 @@
     dom.deviceName.parentElement.classList.remove('hidden');
     dom.connectPanel.classList.add('hidden');
     dom.controlPanel.classList.remove('hidden');
-    addLog('success', `Connected to ${data.name || 'ProtoTracer'}`);
-    showToast(`Connected to ${data.name || 'ProtoTracer'}`, 'success');
+    addLog('success', I18N.t('log.connected', { name: data.name || 'ProtoTracer' }));
+    showToast(I18N.t('ble.connectedToast', { name: data.name || 'ProtoTracer' }), 'success');
   }
 
   function onDisconnected(data) {
@@ -148,35 +161,33 @@
     dom.deviceName.parentElement.classList.add('hidden');
     dom.controlPanel.classList.add('hidden');
     dom.connectPanel.classList.remove('hidden');
-    addLog('warn', data.unexpected ? 'Device disconnected unexpectedly.' : 'Disconnected.');
-    if (data.unexpected) showToast('Device disconnected', 'warning');
+    addLog('warn', data.unexpected ? I18N.t('log.disconnectedUnexp') : I18N.t('log.disconnected'));
+    if (data.unexpected) showToast(I18N.t('log.disconnectedToast'), 'warning');
   }
 
   function onManifestReceived(manifest) {
-    addLog('success', 'Manifest received.');
+    addLog('success', I18N.t('log.manifestRcvd'));
 
-    // Parse visual / expression info
     const visual = manifest.visual || {};
     const deviceInfo = manifest.device || {};
 
     if (visual.expression_names && visual.expression_names.length > 0) {
       state.expressions = visual.expression_names.map((name, i) => ({ name, index: i }));
     } else if (visual.expression_count) {
-      // Fallback: generate numbered expressions
       state.expressions = Array.from({ length: visual.expression_count }, (_, i) => ({
-        name: `Expression ${i + 1}`,
+        name: I18N.t('log.exprFallback', { n: i + 1 }),
         index: i,
       }));
     }
 
-    dom.exprCount.textContent = `${state.expressions.length} exprs`;
+    dom.exprCount.textContent = I18N.t('ctrl.exprCount', { n: state.expressions.length });
     renderExpressionGrid();
 
     if (deviceInfo.display_name) {
       dom.deviceName.textContent = deviceInfo.display_name;
     }
 
-    addLog('info', `Animation: ${visual.animation_name || 'Unknown'}, ${state.expressions.length} expressions`);
+    addLog('info', I18N.t('log.animation', { name: visual.animation_name || 'Unknown', n: state.expressions.length }));
   }
 
   function onControlState(msg) {
@@ -197,26 +208,25 @@
     if (msg.hue_shift !== undefined) {
       state.hue = msg.hue_shift;
       dom.hueSlider.value = Math.round(msg.hue_shift);
-      dom.hueValue.textContent = `${Math.round(msg.hue_shift)}°`;
+      dom.hueValue.textContent = Math.round(msg.hue_shift) + '\u00B0';
     }
 
-    // Update expression grid highlight
     highlightExpression(state.currentExpression);
   }
 
   function onPongReceived(msg) {
-    addLog('success', `Pong from ${msg.name || 'device'}`);
-    showToast('Device is alive! 📡', 'success');
+    addLog('success', I18N.t('log.pong', { name: msg.name || 'device' }));
+    showToast(I18N.t('log.pongToast'), 'success');
   }
 
   function onCommandSent(data) {
-    addLog('data', `→ Sent: ${data.op} (${data.payload.length} bytes)`);
+    addLog('data', I18N.t('log.sent', { op: data.op, n: data.payload.length }));
   }
 
   function onDataReceived(data) {
-    if (data.op === 'control.state' || data.op === 'pong') return; // logged separately
+    if (data.op === 'control.state' || data.op === 'pong') return;
     const preview = JSON.stringify(data).substring(0, 120);
-    addLog('data', `← Recv: ${preview}${preview.length >= 120 ? '...' : ''}`);
+    addLog('data', I18N.t('log.recv', { preview: preview + (preview.length >= 120 ? '\u2026' : '') }));
   }
 
   // --- Event Handlers: UI ---
@@ -224,19 +234,17 @@
   async function onScanClick() {
     try {
       const dev = await ProtoTracerBLE.scan();
-      if (dev) {
-        await ProtoTracerBLE.connect();
-      }
+      if (dev) { await ProtoTracerBLE.connect(); }
     } catch (err) {
-      addLog('error', `Scan failed: ${err.message}`);
-      showToast(`Scan error: ${err.message}`, 'error');
+      addLog('error', I18N.t('err.scanFailed', { msg: err.message }));
+      showToast(I18N.t('err.scanToast', { msg: err.message }), 'error');
     }
   }
 
   async function onManualConnectClick() {
     const nameFilter = dom.manualDeviceName.value.trim();
     if (!nameFilter) {
-      showToast('Enter a device name first.', 'warning');
+      showToast(I18N.t('err.noDeviceName'), 'warning');
       return;
     }
 
@@ -247,12 +255,12 @@
       });
 
       if (btDevice) {
-        addLog('info', `Found: ${btDevice.name || nameFilter}, connecting...`);
+        addLog('info', I18N.t('log.found', { name: btDevice.name || nameFilter }));
         await ProtoTracerBLE.connectToDevice(btDevice);
       }
     } catch (err) {
-      addLog('error', `Manual connect failed: ${err.message}`);
-      showToast(`Connection failed: ${err.message}`, 'error');
+      addLog('error', I18N.t('err.manualFailed', { msg: err.message }));
+      showToast(I18N.t('err.connectToast', { msg: err.message }), 'error');
     }
   }
 
@@ -268,30 +276,29 @@
       try {
         await ProtoTracerBLE.controlSet({ brightness: val });
       } catch (e) {
-        addLog('error', `Brightness set failed: ${e.message}`);
+        addLog('error', I18N.t('err.brightness', { msg: e.message }));
       }
     }
   }
 
   function onHueInput() {
-    dom.hueValue.textContent = `${dom.hueSlider.value}°`;
+    dom.hueValue.textContent = dom.hueSlider.value + '\u00B0';
   }
 
   async function onHueChange() {
     const degrees = parseInt(dom.hueSlider.value, 10);
     state.hue = degrees;
-    dom.hueValue.textContent = `${degrees}°`;
+    dom.hueValue.textContent = degrees + '\u00B0';
 
-    // Highlight active preset
     $$('.hue-btn').forEach(b => b.classList.remove('active'));
-    const preset = document.querySelector(`.hue-btn[data-hue="${degrees}"]`);
+    const preset = document.querySelector('.hue-btn[data-hue="' + degrees + '"]');
     if (preset) preset.classList.add('active');
 
     if (state.connected) {
       try {
         await ProtoTracerBLE.controlSet({ hue_shift: degrees });
       } catch (e) {
-        addLog('error', `Hue set failed: ${e.message}`);
+        addLog('error', I18N.t('err.hue', { msg: e.message }));
       }
     }
   }
@@ -301,9 +308,9 @@
     if (state.connected) {
       try {
         await ProtoTracerBLE.controlSet({ voice_enabled: state.voiceEnabled });
-        addLog('info', `Voice ${state.voiceEnabled ? 'enabled' : 'disabled'}`);
+        addLog('info', state.voiceEnabled ? I18N.t('log.voiceOn') : I18N.t('log.voiceOff'));
       } catch (e) {
-        addLog('error', `Voice toggle failed: ${e.message}`);
+        addLog('error', I18N.t('err.voice', { msg: e.message }));
       }
     }
   }
@@ -313,9 +320,9 @@
     if (state.connected) {
       try {
         await ProtoTracerBLE.controlSet({ display_mode: state.displayMode });
-        addLog('info', `Display mode ${state.displayMode ? 'on' : 'off'}`);
+        addLog('info', state.displayMode ? I18N.t('log.dispOn') : I18N.t('log.dispOff'));
       } catch (e) {
-        addLog('error', `Display mode toggle failed: ${e.message}`);
+        addLog('error', I18N.t('err.displayMode', { msg: e.message }));
       }
     }
   }
@@ -324,9 +331,9 @@
     if (!state.connected) return;
     try {
       await ProtoTracerBLE.ping();
-      addLog('info', 'Ping sent...');
+      addLog('info', I18N.t('log.pingSent'));
     } catch (e) {
-      addLog('error', `Ping failed: ${e.message}`);
+      addLog('error', I18N.t('err.ping', { msg: e.message }));
     }
   }
 
@@ -334,9 +341,9 @@
     if (!state.connected) return;
     try {
       await ProtoTracerBLE.requestManifest();
-      addLog('info', 'Manifest refresh requested...');
+      addLog('info', I18N.t('log.manifestRefresh'));
     } catch (e) {
-      addLog('error', `Manifest refresh failed: ${e.message}`);
+      addLog('error', I18N.t('err.manifestRefresh', { msg: e.message }));
     }
   }
 
@@ -344,7 +351,7 @@
     try {
       await ProtoTracerBLE.disconnect();
     } catch (e) {
-      addLog('error', `Disconnect failed: ${e.message}`);
+      addLog('error', I18N.t('err.disconnect', { msg: e.message }));
     }
   }
 
@@ -357,7 +364,7 @@
       const btn = document.createElement('button');
       btn.className = 'expr-btn';
       btn.textContent = expr.name;
-      btn.title = `${expr.name} (index ${i})`;
+      btn.title = expr.name;
       btn.addEventListener('click', () => selectExpression(i));
       dom.expressionGrid.appendChild(btn);
     });
@@ -372,8 +379,8 @@
 
     if (state.connected) {
       ProtoTracerBLE.controlSet({ expression: index })
-        .then(() => addLog('info', `Expression set: ${state.expressions[index]?.name || index}`))
-        .catch(e => addLog('error', `Expression set failed: ${e.message}`));
+        .then(() => addLog('info', I18N.t('log.exprSet', { name: state.expressions[index]?.name || index })))
+        .catch(e => addLog('error', I18N.t('err.exprSet', { msg: e.message })));
     }
   }
 
@@ -386,13 +393,13 @@
 
   // --- Toast Notifications ---
 
-  function showToast(message, type = 'info') {
+  function showToast(message, type) {
+    type = type || 'info';
     const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
+    toast.className = 'toast ' + type;
     toast.textContent = message;
     dom.toastContainer.appendChild(toast);
 
-    // Auto-remove after animation
     setTimeout(() => {
       if (toast.parentNode) toast.parentNode.removeChild(toast);
     }, 3200);
@@ -404,12 +411,11 @@
     const now = new Date();
     const ts = now.toLocaleTimeString('en-US', { hour12: false });
     const entry = document.createElement('div');
-    entry.className = `log-entry ${level}`;
-    entry.innerHTML = `<span class="ts">${ts}</span>${escapeHtml(message)}`;
+    entry.className = 'log-entry ' + level;
+    entry.innerHTML = '<span class="ts">' + ts + '</span>' + escapeHtml(message);
     dom.logOutput.appendChild(entry);
     dom.logOutput.scrollTop = dom.logOutput.scrollHeight;
 
-    // Cap log entries
     while (dom.logOutput.children.length > 200) {
       dom.logOutput.firstChild.remove();
     }

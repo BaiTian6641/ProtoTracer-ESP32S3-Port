@@ -64,7 +64,7 @@ const ProtoTracerBLE = (() => {
    * Opens the browser's device picker dialog filtered by the service UUID.
    */
   async function scan(timeoutMs = SCAN_TIMEOUT_MS) {
-    emit('status', { state: 'scanning', message: 'Scanning for ProtoTracer devices...' });
+    emit('status', { state: 'scanning', message: I18N.t('ble.scanning') });
 
     try {
       device = await navigator.bluetooth.requestDevice({
@@ -74,18 +74,18 @@ const ProtoTracerBLE = (() => {
       });
     } catch (err) {
       if (err.name === 'NotFoundError') {
-        emit('status', { state: 'error', message: 'No ProtoTracer device selected.' });
+        emit('status', { state: 'error', message: I18N.t('ble.noDeviceSelected') });
         return null;
       }
       throw err;
     }
 
     if (!device) {
-      emit('status', { state: 'error', message: 'No device selected.' });
+      emit('status', { state: 'error', message: I18N.t('ble.noDevice') });
       return null;
     }
 
-    emit('status', { state: 'found', message: `Found: ${device.name || 'Unknown'}` });
+    emit('status', { state: 'found', message: I18N.t('ble.found', { name: device.name || 'Unknown' }) });
     return device;
   }
 
@@ -103,7 +103,7 @@ const ProtoTracerBLE = (() => {
    * Public wrapper — calls the internal retry-capable implementation.
    */
   async function connect() {
-    if (!device) throw new Error('No device to connect to. Scan first.');
+    if (!device) throw new Error(I18N.t('err.noDevice'));
     return connectInternal();
   }
 
@@ -116,9 +116,9 @@ const ProtoTracerBLE = (() => {
    * then retry the full service-discovery handshake up to 3 times.
    */
   async function connectInternal(retries = 3) {
-    if (!device) throw new Error('No device to connect to.');
+    if (!device) throw new Error(I18N.t('err.noDevice'));
 
-    emit('status', { state: 'connecting', message: `Connecting to ${device.name || 'device'}...` });
+    emit('status', { state: 'connecting', message: I18N.t('ble.connecting', { name: device.name || 'device' }) });
 
     // Remove any stale disconnect listener from a previous attempt.
     device.removeEventListener('gattserverdisconnected', onDisconnected);
@@ -176,13 +176,13 @@ const ProtoTracerBLE = (() => {
         }
 
         if (!rxCharacteristic || !txCharacteristic) {
-          throw new Error('Could not find required BLE characteristics.');
+          throw new Error(I18N.t('err.noCharacteristics'));
         }
 
         // Success — finalise state.
         connected = true;
         txBuffer = '';
-        emit('status', { state: 'connected', message: `Connected to ${device.name || 'ProtoTracer'}` });
+        emit('status', { state: 'connected', message: I18N.t('ble.connected', { name: device.name || 'ProtoTracer' }) });
         emit('connected', { name: device.name || 'ProtoTracer', id: device.id });
 
         // Request the manifest (animations, expressions, etc.)
@@ -197,7 +197,7 @@ const ProtoTracerBLE = (() => {
         if (msg.includes('disconnected') || msg.includes('gatt') || msg.includes('retrieve services')) {
           if (attempt < retries) {
             const delay = 400 * attempt;
-            emit('status', { state: 'connecting', message: `Retry ${attempt}/${retries} in ${delay}ms...` });
+            emit('status', { state: 'connecting', message: I18N.t('ble.retry', { n: attempt, total: retries, ms: delay }) });
             await sleep(delay);
 
             // Ensure server is fully torn down before next attempt.
@@ -217,8 +217,8 @@ const ProtoTracerBLE = (() => {
 
     // All retries exhausted — report the failure.
     resetState();
-    emit('status', { state: 'error', message: `Connection failed: ${lastError ? lastError.message : 'Unknown error'}` });
-    throw lastError || new Error('Connection failed after retries.');
+    emit('status', { state: 'error', message: I18N.t('err.connectionFailed', { msg: lastError ? lastError.message : 'Unknown error' }) });
+    throw lastError || new Error(I18N.t('err.connectionRetries'));
   }
 
   /** Disconnect from the device */
@@ -234,7 +234,7 @@ const ProtoTracerBLE = (() => {
       try { server.disconnect(); } catch (e) { /* ignore */ }
     }
     resetState();
-    emit('status', { state: 'disconnected', message: 'Disconnected' });
+    emit('status', { state: 'disconnected', message: I18N.t('ble.disconnected') });
     emit('disconnected', {});
   }
 
@@ -256,7 +256,7 @@ const ProtoTracerBLE = (() => {
    */
   async function sendCommand(jsonObj) {
     if (!connected || !rxCharacteristic) {
-      throw new Error('Not connected to device.');
+      throw new Error(I18N.t('err.notConnected'));
     }
 
     const payload = JSON.stringify(jsonObj);
@@ -282,7 +282,7 @@ const ProtoTracerBLE = (() => {
 
   /** Request device manifest (config.get) */
   async function requestManifest() {
-    emit('status', { state: 'loading', message: 'Requesting device manifest...' });
+    emit('status', { state: 'loading', message: I18N.t('ble.manifestLoading') });
     await sendCommand({ op: 'config.get' });
   }
 
@@ -375,7 +375,7 @@ const ProtoTracerBLE = (() => {
         if (msg.visual || msg.pairing || msg.device) {
           cachedManifest = msg;
           emit('manifest', msg);
-          emit('status', { state: 'ready', message: 'Manifest loaded' });
+          emit('status', { state: 'ready', message: I18N.t('ble.manifestLoaded') });
         } else {
           emit('unknown', msg);
         }
@@ -397,7 +397,7 @@ const ProtoTracerBLE = (() => {
     txBuffer = '';
 
     if (wasConnected) {
-      emit('status', { state: 'disconnected', message: 'Device disconnected' });
+      emit('status', { state: 'disconnected', message: I18N.t('ble.deviceDisconnected') });
       emit('disconnected', { unexpected: true });
     }
   }
