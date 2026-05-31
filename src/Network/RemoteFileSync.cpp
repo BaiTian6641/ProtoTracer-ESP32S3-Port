@@ -12,8 +12,8 @@ namespace
     constexpr uint32_t kHttpProbeConnectTimeoutMs = 2000;
     constexpr uint32_t kHttpProbeRequestTimeoutMs = 3000;
     constexpr uint32_t kHttpConnectTimeoutMs = 5000;
-    constexpr uint32_t kHttpRequestTimeoutMs = 10000;
-    constexpr uint32_t kHttpMd5ConnectTimeoutMs = 3000;
+    constexpr uint32_t kHttpRequestTimeoutMs = 7000;
+    constexpr uint32_t kHttpMd5ConnectTimeoutMs = 2000;
     constexpr uint32_t kHttpMd5RequestTimeoutMs = 5000;
     constexpr uint32_t kHttpIdleTimeoutMs = 5000;
     constexpr size_t kMaxSelectableSourceCount = 4;
