@@ -5,6 +5,7 @@
 #include <Adafruit_NeoPixel.h>
 #include <Wire.h>
 
+#include <esp_bt.h>
 #include <BLE2902.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -1097,6 +1098,11 @@ private:
 
     void startBluetooth()
     {
+        // Release ~50-70KB of classic BT (BR/EDR) memory before BLE init.
+        // The pre-compiled BLE controller reserves this by default; we only
+        // use BLE so the classic memory is wasted internal DRAM.
+        esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+
         BLEDevice::init(user_name.c_str());
         bleServer = BLEDevice::createServer();
         bleServer->setCallbacks(new MenuBleServerCallbacks());
