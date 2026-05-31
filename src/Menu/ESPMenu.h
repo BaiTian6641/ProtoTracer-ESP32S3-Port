@@ -1111,7 +1111,8 @@ private:
         BLEService *service = bleServer->createService(BLE_SERIAL2_SERVICE_UUID);
 
         bleTxCharacteristic = service->createCharacteristic(BLE_TX2_UUID.c_str(), BLECharacteristic::PROPERTY_NOTIFY);
-        bleTxCharacteristic->addDescriptor(new BLE2902());
+        // BLE2902 descriptor auto-added by NimBLE when notifications are enabled — no manual add needed
+        // bleTxCharacteristic->addDescriptor(new BLE2902());
 
         BLECharacteristic *rxCharacteristic = service->createCharacteristic(BLE_RX2_UUID.c_str(), BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
         rxCharacteristic->setCallbacks(new MenuBleRxCallbacks());

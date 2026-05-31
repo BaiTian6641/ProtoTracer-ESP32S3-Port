@@ -142,7 +142,10 @@ constexpr const char *kRelayFirmwareCachePath = "/relay_remote-firmware.bin";
 
 bool gRelayRoutesRegistered = false;
 bool gRuntimeServerStarted = false;
-static bool gRelayRefreshPending = false; // set by async handler, cleared by main loop after refresh
+static bool gRelayRefreshPending = false;
+
+// Forward declaration — defined below
+bool RefreshRelayAsset(const char *remoteFilename, const char *localPath);
 
 // Non-blocking relay asset serve: returns cached copy immediately if available,
 // defers remote refresh to main loop via gRelayRefreshPending flag.
