@@ -6,7 +6,7 @@
 
 class FFTFilter{
 private:
-    RunningAverageFilter<20> minKF = RunningAverageFilter<20>(0.05f);
+    RunningAverageFilter<8> minKF = RunningAverageFilter<8>(0.05f);
     float outputValue = 0.0f;
 
 public:
