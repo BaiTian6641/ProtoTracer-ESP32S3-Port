@@ -69,8 +69,9 @@ private:
     static DerivativeFilter peakFilterRate;
 
     static uint16_t frequencyBins[OutputBins];
-    static float* SampleArray;
-    static float* inputStorage;
+    static uint16_t rawSamples[FFTSize];   // ISR-safe int buffer for timer callback
+    static float* SampleArray;             // FFT working buffer — MUST be internal DRAM
+    static float* inputStorage;            // PSRAM: converted float samples
     static float* outputData;
     static float* outputDataFilt;
     static float* pendingInputStorage;
@@ -98,13 +99,15 @@ private:
     }
 
     static void SamplerCallback(void*){
+        // ESP32-S3 timer callback: floating-point is NOT safe here.
+        // Store raw ADC uint16_t; convert to float later in ProcessReadySamples().
         if (samplesReady || samplesStorage >= FFTSize) {
             samplerDropCount = samplerDropCount + 1;
             return;
         }
 
         const uint16_t storageIndex = samplesStorage;
-        inputStorage[storageIndex] = (float)analogRead(pin);
+        rawSamples[storageIndex] = (uint16_t)analogRead(pin);
         samplesStorage = storageIndex + 1;
 
         if(samplesStorage >= FFTSize){
@@ -137,9 +140,9 @@ private:
 
     static void PublishOutputFrame(){
         portENTER_CRITICAL(&outputMux);
-        memcpy(pendingInputStorage, inputStorage, sizeof(pendingInputStorage));
-        memcpy(pendingOutputData, outputData, sizeof(pendingOutputData));
-        memcpy(pendingOutputDataFilt, outputDataFilt, sizeof(pendingOutputDataFilt));
+        memcpy(pendingInputStorage, inputStorage, FFTSize * sizeof(float));
+        memcpy(pendingOutputData, outputData, OutputBins * sizeof(float));
+        memcpy(pendingOutputDataFilt, outputDataFilt, OutputBins * sizeof(float));
         pendingThreshold = threshold;
         outputPending = true;
         portEXIT_CRITICAL(&outputMux);
@@ -149,9 +152,9 @@ private:
         if (!outputPending) return;
 
         portENTER_CRITICAL(&outputMux);
-        memcpy(publishedInputStorage, pendingInputStorage, sizeof(publishedInputStorage));
-        memcpy(publishedOutputData, pendingOutputData, sizeof(publishedOutputData));
-        memcpy(publishedOutputDataFilt, pendingOutputDataFilt, sizeof(publishedOutputDataFilt));
+        memcpy(publishedInputStorage, pendingInputStorage, FFTSize * sizeof(float));
+        memcpy(publishedOutputData, pendingOutputData, OutputBins * sizeof(float));
+        memcpy(publishedOutputDataFilt, pendingOutputDataFilt, OutputBins * sizeof(float));
         publishedThreshold = pendingThreshold;
         outputPending = false;
         portEXIT_CRITICAL(&outputMux);
@@ -159,10 +162,13 @@ private:
 
     static void ProcessReadySamples(){
         if (!samplesReady) return;
+        if (!SampleArray || !inputStorage || !noiseMagnitude || !outputData) return;
 
         samplesReady = false;
 
-        for(int i = 0; i< FFTSize; i++){
+        // Convert ISR-safe raw uint16_t samples to float (safe in task context)
+        for(int i = 0; i < FFTSize; i++){
+            inputStorage[i] = (float)rawSamples[i];
             SampleArray[i*2 + 0] = inputStorage[i];
             SampleArray[i*2 + 1] = 0;
         }
@@ -217,8 +223,9 @@ private:
     
         for (int f = 0; f < noiseFrames; ++f) {
             for (int i = 0; i < FFTSize; ++i) {
-                inputStorage[i] = (float)analogRead(pin);
-                SampleArray[i * 2] = inputStorage[i];
+                float val = (float)analogRead(pin);
+                inputStorage[i] = val;
+                SampleArray[i * 2] = val;
                 SampleArray[i * 2 + 1] = 0.0f;
             }
     
@@ -268,10 +275,11 @@ public:
         MicrophoneFourierIT::pendingThreshold = 0.0f;
         MicrophoneFourierIT::publishedThreshold = 0.0f;
 
-        // Allocate FFT working buffers in PSRAM to reduce internal DRAM pressure.
-        // ESP-DSP FFT uses CPU (not DMA), so PSRAM via cache is safe.
+        // SampleArray is the FFT working buffer — ESP-DSP dsps_fft4r_fc32 on S3
+        // uses DMA internally and MUST reside in internal DRAM. All other buffers
+        // are plain CPU accesses and can live in PSRAM.
+        SampleArray        = (float*)heap_caps_malloc(FFTSize * 2 * sizeof(float), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
         #define MIC_PSRAM_ALLOC(sz) heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
-        SampleArray        = (float*)MIC_PSRAM_ALLOC(FFTSize * 2 * sizeof(float));
         inputStorage       = (float*)MIC_PSRAM_ALLOC(FFTSize * sizeof(float));
         outputData         = (float*)MIC_PSRAM_ALLOC(OutputBins * sizeof(float));
         outputDataFilt     = (float*)MIC_PSRAM_ALLOC(OutputBins * sizeof(float));
@@ -300,10 +308,6 @@ public:
         }
         
         EstimateNoiseProfile();
-        
-        // Free noise profile after estimation — not needed at runtime
-        heap_caps_free(noiseMagnitude);
-        noiseMagnitude = nullptr;
         
         isInitialized = true;
 
@@ -417,6 +421,7 @@ SemaphoreHandle_t MicrophoneFourierIT::samplesReadySemaphore = nullptr;
 portMUX_TYPE MicrophoneFourierIT::outputMux = portMUX_INITIALIZER_UNLOCKED;
 
 uint16_t MicrophoneFourierIT::frequencyBins[];
+uint16_t MicrophoneFourierIT::rawSamples[];
 float* MicrophoneFourierIT::SampleArray = nullptr;
 float* MicrophoneFourierIT::inputStorage = nullptr;
 float* MicrophoneFourierIT::outputData = nullptr;
