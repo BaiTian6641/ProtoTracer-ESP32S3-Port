@@ -55,10 +55,22 @@ public:
         return true;
     }
 
+    bool ensureCapacity(size_t capacityBytes) {
+        if (mBuffer && mCapacity >= capacityBytes) {
+            reset();
+            return true;
+        }
+        return begin(capacityBytes);
+    }
+
     // Allocate from the arena. Returns nullptr if out of space.
     // Alignment defaults to 4 bytes (suitable for float/int/pointer).
     void* alloc(size_t sizeBytes, size_t alignment = 4) {
         if (!mBuffer) return nullptr;
+
+        if ((alignment & (alignment - 1)) != 0) {
+            alignment = 4;
+        }
 
         // Align offset
         const size_t mask = alignment - 1;
@@ -74,18 +86,29 @@ public:
     }
 
     // Reset the arena — all previous allocations are invalidated.
-    void reset() {
+    size_t reset() {
+        const size_t reclaimed = mOffset;
         mOffset     = 0;
         mAllocCount = 0;
+        return reclaimed;
     }
 
     // Release backing buffer entirely.
-    void end() {
+    size_t end() {
+        const size_t released = mBuffer ? mCapacity : 0;
         if (mBuffer) { heap_caps_free(mBuffer); mBuffer = nullptr; }
         mCapacity   = 0;
         mOffset     = 0;
         mPeakOffset = 0;
         mAllocCount = 0;
+        return released;
+    }
+
+    bool owns(void* ptr) const {
+        if (!mBuffer || !ptr) return false;
+        const uintptr_t base = reinterpret_cast<uintptr_t>(mBuffer);
+        const uintptr_t p = reinterpret_cast<uintptr_t>(ptr);
+        return p >= base && p < base + mCapacity;
     }
 
     // Statistics

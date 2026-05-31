@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <M5UnitGLASS2.h>
+#include <ProtoGC.h>
 #include <StreamString.h>
 #include <Update.h>
 #include <WiFi.h>
@@ -144,7 +145,7 @@ namespace
         const String payload = http.getString();
         http.end();
 
-        DynamicJsonDocument doc(payload.length() + 512);
+        BasicJsonDocument<protogc::ProtoJsonPsramAllocator> doc(payload.length() + 512);
         const DeserializationError error = deserializeJson(doc, payload);
         if (error)
         {

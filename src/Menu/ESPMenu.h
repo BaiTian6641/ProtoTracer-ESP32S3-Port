@@ -12,6 +12,7 @@
 #include <BLEUtils.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
+#include <ProtoGC.h>
 #include <esp_attr.h>
 #include <esp_task_wdt.h>
 #include <esp_heap_caps.h>
@@ -221,13 +222,7 @@ namespace
             return metadata;
         }
 
-        // Allocate JSON doc in PSRAM to avoid 65KB internal DRAM pressure.
-        // heap_caps_malloc_extmem_enable(0) prevents automatic fallback, so use explicit SPIRAM alloc.
-        struct PsramAlloc {
-            void* allocate(size_t s) { return heap_caps_malloc(s, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
-            void  deallocate(void* p) { heap_caps_free(p); }
-        };
-        BasicJsonDocument<PsramAlloc> doc(65536);
+        BasicJsonDocument<protogc::ProtoJsonPsramAllocator> doc(65536);
         const DeserializationError err = deserializeJson(doc, animationFile);
         animationFile.close();
         if (err)
@@ -293,8 +288,7 @@ namespace
 
     String BuildRemoteControllerManifestJson()
     {
-        // Manifest JSON - PSRAM-enabled by default
-        DynamicJsonDocument doc(6144);
+        BasicJsonDocument<protogc::ProtoJsonPsramAllocator> doc(6144);
         const AnimationManifestMetadata animation_metadata = LoadAnimationManifestMetadata();
         const String relayBaseUrl = (WiFi.status() == WL_CONNECTED)
                                         ? (String("http://") + WiFi.localIP().toString() + "/api/relay/esp32c6")
@@ -433,7 +427,7 @@ namespace
 
     String BuildRemoteControllerStateJson(const JsonDocument &doc)
     {
-        DynamicJsonDocument response(384);
+        BasicJsonDocument<protogc::ProtoJsonPsramAllocator> response(384);
         response["op"] = "control.state";
         response["accepted"] = true;
 
@@ -631,8 +625,7 @@ namespace
             return false;
         }
 
-        // BLE JSON - PSRAM-enabled by default
-        DynamicJsonDocument doc(rxValue.size() + 512);
+        BasicJsonDocument<protogc::ProtoJsonPsramAllocator> doc(rxValue.size() + 512);
         const DeserializationError err = deserializeJson(doc, rxValue.c_str());
         if (err)
         {
@@ -703,7 +696,7 @@ namespace
         if (op == "ping")
         {
             Serial.println("BLE JSON ping accepted");
-            DynamicJsonDocument pong(256);
+            BasicJsonDocument<protogc::ProtoJsonPsramAllocator> pong(256);
             pong["op"] = "pong";
             pong["name"] = EffectiveBleName();
             pong["service_uuid"] = BLE_SERIAL2_SERVICE_UUID;

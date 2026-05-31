@@ -11,6 +11,7 @@
 #include "Node.h"
 #include <esp_heap_caps.h>
 #include <esp_dsp.h>
+#include <ProtoGC.h>
 
 #ifndef CAMERA_RASTER_WORKER
 #define CAMERA_RASTER_WORKER 0
@@ -92,11 +93,11 @@ private:
         if (desired == 0) return;
 
         if (cachedRayCount != desired || cachedRays == nullptr) {
-            heap_caps_free(cachedRays);
+            protogc::ProtoGC::heapFree(cachedRays);
             // Move to PSRAM — not used during DSP hot path, only for QuadTree intersect loop
-            cachedRays = static_cast<Vector2D*>(heap_caps_malloc(desired * sizeof(Vector2D), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            cachedRays = static_cast<Vector2D*>(protogc::ProtoGC::psramAlloc(desired * sizeof(Vector2D)));
             if (!cachedRays) {
-                cachedRays = static_cast<Vector2D*>(heap_caps_malloc(desired * sizeof(Vector2D), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+                cachedRays = static_cast<Vector2D*>(protogc::ProtoGC::internalAlloc(desired * sizeof(Vector2D)));
             }
             cachedRayCount = desired;
         }
@@ -107,21 +108,21 @@ private:
         if (desired == 0) return;
 
         if (cachedRayCount != desired || tmpX == nullptr) {
-            heap_caps_free(tmpX);
-            heap_caps_free(tmpY);
-            heap_caps_free(rotX);
-            heap_caps_free(rotY);
+            protogc::ProtoGC::heapFree(tmpX);
+            protogc::ProtoGC::heapFree(tmpY);
+            protogc::ProtoGC::heapFree(rotX);
+            protogc::ProtoGC::heapFree(rotY);
 
-            tmpX = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
-            tmpY = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
-            rotX = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
-            rotY = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+            tmpX = static_cast<float*>(protogc::ProtoGC::internalAlloc(desired * sizeof(float)));
+            tmpY = static_cast<float*>(protogc::ProtoGC::internalAlloc(desired * sizeof(float)));
+            rotX = static_cast<float*>(protogc::ProtoGC::internalAlloc(desired * sizeof(float)));
+            rotY = static_cast<float*>(protogc::ProtoGC::internalAlloc(desired * sizeof(float)));
 
             // Fallback to PSRAM if internal allocation fails
-            if (!tmpX) tmpX = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-            if (!tmpY) tmpY = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-            if (!rotX) rotX = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-            if (!rotY) rotY = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (!tmpX) tmpX = static_cast<float*>(protogc::ProtoGC::psramAlloc(desired * sizeof(float)));
+            if (!tmpY) tmpY = static_cast<float*>(protogc::ProtoGC::psramAlloc(desired * sizeof(float)));
+            if (!rotX) rotX = static_cast<float*>(protogc::ProtoGC::psramAlloc(desired * sizeof(float)));
+            if (!rotY) rotY = static_cast<float*>(protogc::ProtoGC::psramAlloc(desired * sizeof(float)));
         }
     }
 
@@ -129,9 +130,9 @@ private:
         if (mArenaNodeRefs) return;
 
         const size_t bytes = kArenaMaxNodeRefs * sizeof(Triangle2D*);
-        mArenaNodeRefs = static_cast<Triangle2D**>(heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        mArenaNodeRefs = static_cast<Triangle2D**>(protogc::ProtoGC::psramAlloc(bytes));
         if (!mArenaNodeRefs) {
-            mArenaNodeRefs = static_cast<Triangle2D**>(heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+            mArenaNodeRefs = static_cast<Triangle2D**>(protogc::ProtoGC::internalAlloc(bytes));
         }
     }
 
@@ -303,12 +304,12 @@ public:
         if (rasterStartSemaphore) vSemaphoreDelete(rasterStartSemaphore);
         if (rasterDoneSemaphore) vSemaphoreDelete(rasterDoneSemaphore);
 #endif
-        heap_caps_free(cachedRays);
-        heap_caps_free(tmpX);
-        heap_caps_free(tmpY);
-        heap_caps_free(rotX);
-        heap_caps_free(rotY);
-        heap_caps_free(mArenaNodeRefs);
+        protogc::ProtoGC::heapFree(cachedRays);
+        protogc::ProtoGC::heapFree(tmpX);
+        protogc::ProtoGC::heapFree(tmpY);
+        protogc::ProtoGC::heapFree(rotX);
+        protogc::ProtoGC::heapFree(rotY);
+        protogc::ProtoGC::heapFree(mArenaNodeRefs);
     }
 
     Transform* GetTransform(){

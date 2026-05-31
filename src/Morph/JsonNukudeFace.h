@@ -5,26 +5,12 @@
 #include <memory>
 #include <vector>
 #include <string>
-#if defined(ESP32)
-#include <esp_heap_caps.h>
-#endif
+#include <ProtoGC.h>
 #include "UniversalFace.h"
 #include "Morph.h"
 #include "../Materials/SimpleMaterial.h"
 #include "../Render/IndexGroup.h"
 #include "../Render/Object3D.h"
-
-#if defined(ESP32)
-// Custom allocator to place ArduinoJson pool in PSRAM to avoid internal heap exhaustion.
-struct FaceJsonPsramAllocator {
-    void *allocate(size_t size) {
-        return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    }
-    void deallocate(void *ptr) {
-        heap_caps_free(ptr);
-    }
-};
-#endif
 
 // Lightweight, runtime-loadable face model that mirrors the NukudeFace interface
 // but sources its mesh and morph targets from a JSON file. This allows updating
@@ -69,7 +55,7 @@ public:
         Serial.printf("[INFO] universal_face.json size=%u bytes, docCapacity=%u\n", (unsigned)fileSize, (unsigned)docCapacity);
 
     #if defined(ESP32) && USE_PSRAM_FOR_FACE_JSON
-        using FaceJsonDocument = BasicJsonDocument<FaceJsonPsramAllocator>;
+        using FaceJsonDocument = BasicJsonDocument<protogc::ProtoJsonPsramAllocator>;
         FaceJsonDocument doc(docCapacity);
     #else
         DynamicJsonDocument doc(docCapacity);

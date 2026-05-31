@@ -6,9 +6,7 @@
 #include <vector>
 #include <utility>
 #include <memory>
-#if defined(ESP32)
-#include <esp_heap_caps.h>
-#endif
+#include <ProtoGC.h>
 
 #include "Animation.h"
 #include "EasyEaseAnimator.h"
@@ -56,12 +54,7 @@
 #endif
 
 #if defined(ESP32) && USE_PSRAM_FOR_ANIM_JSON
-struct AnimJsonPsramAllocator
-{
-    void *allocate(size_t size) { return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
-    void deallocate(void *ptr) { heap_caps_free(ptr); }
-};
-using AnimJsonDocument = BasicJsonDocument<AnimJsonPsramAllocator>;
+using AnimJsonDocument = BasicJsonDocument<protogc::ProtoJsonPsramAllocator>;
 #else
 using AnimJsonDocument = DynamicJsonDocument;
 #endif
@@ -112,7 +105,7 @@ private:
     JsonNukudeFace jsonFace;
     bool jsonFaceLoaded = false;
     Background background;
-    EasyEaseAnimator<128> eEA = EasyEaseAnimator<128>(EasyEaseInterpolation::Overshoot, 1.0f, 0.25f);
+    EasyEaseAnimator<180> eEA = EasyEaseAnimator<180>(EasyEaseInterpolation::Overshoot, 1.0f, 0.25f);
 
     // Materials
     RainbowSpiral rainbowSpiral;

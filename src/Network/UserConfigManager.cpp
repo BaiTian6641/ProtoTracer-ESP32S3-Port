@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <NetWizard.h>
+#include <ProtoGC.h>
 #include <WiFi.h>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
@@ -468,7 +469,7 @@ bool SaveUserConfig(const UserConfig &config)
         return false;
     }
 
-    DynamicJsonDocument doc(640);
+    BasicJsonDocument<protogc::ProtoJsonPsramAllocator> doc(640);
     doc["device_id"] = config.device_id;
     doc["username"] = config.username;
     doc["user_r"] = config.user_r;
@@ -512,7 +513,7 @@ bool EnsureUserConfig(UserConfig &config)
         return SaveUserConfig(config);
     }
 
-    DynamicJsonDocument doc(640);
+    BasicJsonDocument<protogc::ProtoJsonPsramAllocator> doc(640);
     DeserializationError err = deserializeJson(doc, f);
     f.close();
     if (err)

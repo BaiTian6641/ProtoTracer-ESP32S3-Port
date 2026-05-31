@@ -102,7 +102,7 @@ constexpr bool kVerboseStartup = false;
 #endif
 
 #ifndef PROTOTRACER_FW_VERSION
-#define PROTOTRACER_FW_VERSION "1.1.0"
+#define PROTOTRACER_FW_VERSION "1.1.1"
 #endif
 
 #ifndef PROTOTRACER_FW_MANIFEST
@@ -361,17 +361,33 @@ inline size_t GetFreePSRAM() {
   return heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
 }
 
+static void ProtoGcWarnHandler(protogc::HeapGuard::Level, size_t freeBytes, size_t largestBlock) {
+  Serial.printf("[ProtoGC] WARN intFree=%u largestBlk=%u; running light collection\n",
+                static_cast<unsigned>(freeBytes),
+                static_cast<unsigned>(largestBlock));
+  protogc::ProtoGC::collectLight("heap-warn");
+}
+
+static void ProtoGcCriticalHandler(protogc::HeapGuard::Level, size_t freeBytes, size_t largestBlock) {
+  Serial.printf("[ProtoGC] CRITICAL intFree=%u largestBlk=%u; running emergency collection\n",
+                static_cast<unsigned>(freeBytes),
+                static_cast<unsigned>(largestBlock));
+  protogc::ProtoGC::emergency("heap-critical");
+}
+
 void setup()
 {
-  // ProtoGC: cooperative two-level heap strategy.
-  // - Internal DRAM (512 KB) → reserved for DMA (HUB75, BLE, Camera SIMD)
-  // - PSRAM (8 MB)         → all application allocs via pools + arenas
-  // Phase 1 — boot: allow both pools during WiFi/downloads.
+  // ProtoGC: cooperative dual-heap strategy.
+  // - Internal DRAM stays explicit for DMA/ESP-DSP, with ProtoGC managing non-DMA app SRAM.
+  // - PSRAM handles cold app allocations via managed segments, pools, and arenas.
+  // Phase 1: boot allows both heaps during WiFi/downloads.
   heap_caps_malloc_extmem_enable(64);
   protogc::ProtoGC::begin();
 
   pinMode(OTA_BTN, INPUT_PULLUP);
   Serial.begin(115200);
+  protogc::HeapGuard::onWarning(ProtoGcWarnHandler);
+  protogc::HeapGuard::onCritical(ProtoGcCriticalHandler);
   Serial.println("/nStarting...");
   //Wire.begin(41, 42);
   Wire.begin(47, 48);
@@ -572,6 +588,7 @@ void setup()
   {
     Serial.println("[WARN] user_config.json download failed on all configured remotes");
   }
+  protogc::ProtoGC::collectFull("post-user-config");
 
   user_name = userConfig.username.c_str();
   BLE_TX2_UUID = userConfig.ble_tx_uuid.c_str();
@@ -604,6 +621,7 @@ void setup()
   {
     Serial.println("[WARN] Auto firmware update check failed; continuing startup");
   }
+  protogc::ProtoGC::collectFull("post-firmware-check");
 
   FaceUpdateConfig faceConfigs[2] = {
     {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(), user_config_gitee_base_url, user_config_gitee_token, gitee_accept_header, "Bearer ", "Gitee"},
@@ -623,6 +641,7 @@ void setup()
     delay(10);
     ESP.restart();
   }
+  protogc::ProtoGC::collectFull("post-face-sync");
 
 #ifndef VERBOSE_STARTUP
   display.clearDisplay();
@@ -638,6 +657,7 @@ void setup()
                        user_config_gitee_token,
                        &display,
                        kVerboseStartup);
+  protogc::ProtoGC::collectFull("post-animation-init");
 
   // All WiFi-dependent work (config download, firmware check, face model sync,
   // animation JSON download) is complete. Tear down WiFi and its HTTP server
@@ -652,13 +672,14 @@ void setup()
   // Phase 2 — runtime: lock ALL future malloc() to PSRAM.
   // Internal DRAM is now a write-once DMA pool. ProtoGC pools handle
   // fragmentation-free small allocations; arenas handle JSON/String scopes.
-  heap_caps_malloc_extmem_enable(0);
-  protogc::ProtoGC::collectFull();
+  protogc::ProtoGC::lockMallocToPsram(0);
+  protogc::ProtoGC::collectFull("post-wifi-stop");
   Serial.printf("[INFO] ProtoGC locked — intFree=%u largestBlk=%u\n",
                 GetFreeInternalDRAM(), GetLargestFreeInternalBlock());
 
   // Now initialize BLE + gesture sensor on a clean heap.
   animation.InitializeMenuPeripherals(17, animation.GetBoopSensorThreshold());
+  protogc::ProtoGC::collectLight("post-ble-init");
 
   EnsureControllerInitialized();
 
@@ -802,7 +823,7 @@ void loop()
     static uint32_t lastGcPollMs = 0;
     if (now - lastGcPollMs >= 5000) {
       lastGcPollMs = now;
-      protogc::HeapGuard::poll();
+      protogc::ProtoGC::poll();
     }
   }
 

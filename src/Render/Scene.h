@@ -4,12 +4,14 @@
 #include "Object3D.h"
 #include <esp_heap_caps.h> // Required for PSRAM allocation
 #include <cstdint>          // Required for uint8_t
+#include <ProtoGC.h>
 
 class Scene {
 private:
     const int maxObjects;
     Object3D** objects; // This will point to PSRAM (aligned for faster bursts)
     Object3D** objectsShadow = nullptr; // Optional internal-RAM mirror for iteration speed
+    bool objectsManaged = false;
     bool shadowOwned = false; // track whether shadow was allocated
     unsigned int numObjects = 0;
     Effect* effect;
@@ -25,25 +27,27 @@ public:
         // ALWAYS check if allocation succeeded.
         if (objects == nullptr) {
             // Fallback to a non-aligned PSRAM block.
-            objects = (Object3D**)heap_caps_malloc(maxObjects * sizeof(Object3D*), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            objects = (Object3D**)protogc::ProtoGC::psramAlloc(maxObjects * sizeof(Object3D*));
+            objectsManaged = objects != nullptr;
         }
 
         if (objects == nullptr) {
             // Final fallback to internal heap to avoid null deref crashes; may fail if not enough RAM.
-            objects = (Object3D**)heap_caps_malloc(maxObjects * sizeof(Object3D*), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+            objects = (Object3D**)protogc::ProtoGC::internalAlloc(maxObjects * sizeof(Object3D*));
+            objectsManaged = objects != nullptr;
         }
 
         // Optional internal shadow to keep iteration off PSRAM; falls back silently if not available.
-        objectsShadow = (Object3D**)heap_caps_malloc(maxObjects * sizeof(Object3D*), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+        objectsShadow = (Object3D**)protogc::ProtoGC::internalAlloc(maxObjects * sizeof(Object3D*));
         shadowOwned = objectsShadow != nullptr;
     }
 
     // Destructor: Free the PSRAM-allocated memory
     ~Scene(){
-        // Use heap_caps_free for memory allocated with heap_caps_malloc.
-        heap_caps_free(objects);
+        if (objectsManaged) protogc::ProtoGC::heapFree(objects);
+        else heap_caps_free(objects);
         if (shadowOwned) {
-            heap_caps_free(objectsShadow);
+            protogc::ProtoGC::heapFree(objectsShadow);
         }
     }
 
@@ -60,7 +64,7 @@ public:
         } else {
             // Cache full: free shadow to reclaim internal RAM; PSRAM backing remains
             if (shadowOwned) {
-                heap_caps_free(objectsShadow);
+                protogc::ProtoGC::heapFree(objectsShadow);
                 objectsShadow = nullptr;
                 shadowOwned = false;
             }
@@ -85,7 +89,7 @@ public:
 
         // If many objects were removed and a shadow exists, consider freeing the shadow to reclaim internal RAM
         if (shadowOwned && numObjects == 0) {
-            heap_caps_free(objectsShadow);
+            protogc::ProtoGC::heapFree(objectsShadow);
             objectsShadow = nullptr;
             shadowOwned = false;
         }

@@ -2,6 +2,8 @@
 
 #include "IPixelGroup.h"
 #include <esp_heap_caps.h>
+#include <new>
+#include <ProtoGC.h>
 
 // Define a sentinel value to indicate no neighbor exists.
 // uint16_t saves 16 KB over unsigned int for the four 2048-entry neighbor arrays.
@@ -19,6 +21,8 @@ private:
     // --- MODIFIED: All large arrays are now pointers ---
   	ProtoRGBColor* pixelColors;
   	ProtoRGBColor* pixelBuffer;
+    bool pixelColorsManaged = false;
+    bool pixelBufferManaged = false;
     uint16_t* up;
     uint16_t* down;
     uint16_t* left;
@@ -39,8 +43,20 @@ private:
     //Allocate all array on external PSRAM
     void AllocateMemory() {
         // Try to keep hot color buffers in internal RAM for steadier bandwidth; fall back to PSRAM/new on failure.
-        pixelColors = static_cast<ProtoRGBColor*>(heap_caps_malloc(pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
-        pixelBuffer = static_cast<ProtoRGBColor*>(heap_caps_malloc(pixelCount * sizeof(ProtoRGBColor), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        const size_t colorBytes = pixelCount * sizeof(ProtoRGBColor);
+        pixelColors = static_cast<ProtoRGBColor*>(protogc::ProtoGC::internalAlloc(colorBytes));
+        pixelColorsManaged = pixelColors != nullptr;
+        pixelBuffer = static_cast<ProtoRGBColor*>(protogc::ProtoGC::internalAlloc(colorBytes));
+        pixelBufferManaged = pixelBuffer != nullptr;
+
+        if (!pixelColors) {
+            pixelColors = static_cast<ProtoRGBColor*>(protogc::ProtoGC::psramAlloc(colorBytes));
+            pixelColorsManaged = pixelColors != nullptr;
+        }
+        if (!pixelBuffer) {
+            pixelBuffer = static_cast<ProtoRGBColor*>(protogc::ProtoGC::psramAlloc(colorBytes));
+            pixelBufferManaged = pixelBuffer != nullptr;
+        }
         if (!pixelColors) pixelColors = new ProtoRGBColor[pixelCount];
         if (!pixelBuffer) pixelBuffer = new ProtoRGBColor[pixelCount];
 
@@ -52,8 +68,10 @@ private:
 
     //Deallocate those arrays
     void DeallocateMemory() {
-        heap_caps_free(pixelColors);
-        heap_caps_free(pixelBuffer);
+        if (pixelColorsManaged) protogc::ProtoGC::heapFree(pixelColors);
+        else delete[] pixelColors;
+        if (pixelBufferManaged) protogc::ProtoGC::heapFree(pixelBuffer);
+        else delete[] pixelBuffer;
         delete[] up;
         delete[] down;
         delete[] left;
