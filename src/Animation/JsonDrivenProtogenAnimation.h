@@ -1605,10 +1605,13 @@ public:
         #elif defined(TASESP32P4)
         MicrophoneFourierIT::Initialize(23, 8000, 68.0f, 120.0f);
         #endif
-        InitializeMenuPeripherals(17, boopSensorThreshold);
+        // BLE + gesture are initialized from main.cpp after WiFi shutdown so the
+        // controller has a clean internal-DRAM heap.
         ChangeInterpolationMethods();
         return true;
     }
+
+    uint8_t GetBoopSensorThreshold() const { return boopSensorThreshold; }
 
     uint8_t GetAccentBrightness()
     {

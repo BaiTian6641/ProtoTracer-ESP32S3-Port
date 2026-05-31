@@ -566,8 +566,8 @@ void setup()
     display.display();
   }
 
-  RegisterC6RelayRoutes();
-  EnsureRuntimeServerStarted();
+  // WiFi-dependent relay routes are not registered — WiFi is torn down after
+  // firmware/face/animation downloads to free internal DRAM for BLE.
 
   // Attempt to pull remote user_config.json named by device_id, preferring the lower-latency remote.
   RemoteFileSource userConfigSources[2];
@@ -599,11 +599,6 @@ void setup()
   User_R = userConfig.user_r;
   User_G = userConfig.user_g;
   User_B = userConfig.user_b;
-
-  // Reserve BLE controller/internal DMA memory before firmware, face, animation,
-  // and microphone startup fragment the internal heap. The animation JSON can
-  // later update the boop threshold without reinitializing BLE.
-  animation.InitializeMenuPeripherals(17, 180);
 
   FirmwareUpdateConfig firmwareUpdateConfig;
   firmwareUpdateConfig.primarySource.baseUrl = user_config_gitee_base_url;
@@ -662,6 +657,20 @@ void setup()
                        user_config_gitee_token,
                        &display,
                        kVerboseStartup);
+
+  // All WiFi-dependent work (config download, firmware check, face model sync,
+  // animation JSON download) is complete. Tear down WiFi and its HTTP server
+  // to free ~50-70 KB of internal DRAM for the BLE controller.
+  Serial.println("[INFO] Shutting down WiFi to free memory for BLE...");
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(200);
+  Serial.printf("[INFO] WiFi off — intFree=%u largestBlk=%u psramFree=%u\n",
+                GetFreeInternalDRAM(), GetLargestFreeInternalBlock(), GetFreePSRAM());
+
+  // Now initialize BLE + gesture sensor on a clean heap.
+  animation.InitializeMenuPeripherals(17, animation.GetBoopSensorThreshold());
+
   EnsureControllerInitialized();
 
 #if ANIM_RENDER_PIPELINE
