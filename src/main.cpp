@@ -422,7 +422,7 @@ void setup()
     }
   }
 
-  bool wifiConnected = ConnectWifiWithNetWizard(userConfig, server, 3000, &display);
+  bool wifiConnected = ConnectWifiWithNetWizard(userConfig, server, 15000, &display);
   if (!wifiConnected)
   {
     Serial.println("[WARN] WiFi not connected via NetWizard; downloads may fail");

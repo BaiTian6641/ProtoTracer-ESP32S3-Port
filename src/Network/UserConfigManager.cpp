@@ -267,7 +267,51 @@ namespace
         config.wifi_ssid = wizard.getSSID();
         config.wifi_password = wizard.getPassword();
 
-        bool connected = ConnectAndStabilizeWifi(config.wifi_ssid, config.wifi_password, reconnectTimeoutMs, resolvedIp);
+        // autoConnect in BLOCKING mode should already have WiFi connected.
+        // Calling WiFi.begin() again would tear down the existing connection and
+        // restart DHCP, which can fail to re-assign an IP. Only fall back to a
+        // manual connect if the wizard's internal connection didn't stabilize.
+        bool connected = (WiFi.status() == WL_CONNECTED);
+        if (connected)
+        {
+            IPAddress ip = WiFi.localIP();
+            if (ip != IPAddress((uint32_t)0))
+            {
+                if (resolvedIp)
+                {
+                    *resolvedIp = ip;
+                }
+                Serial.printf("[INFO] NetWizard portal handoff OK, IP=%s\n", ip.toString().c_str());
+            }
+            else
+            {
+                // DHCP may be pending; give it a short settle window.
+                delay(500);
+                ip = WiFi.localIP();
+                if (ip != IPAddress((uint32_t)0))
+                {
+                    if (resolvedIp)
+                    {
+                        *resolvedIp = ip;
+                    }
+                    Serial.printf("[INFO] NetWizard portal handoff OK (delayed DHCP), IP=%s\n", ip.toString().c_str());
+                }
+                else
+                {
+                    connected = false;
+                    Serial.println("[WARN] NetWizard portal handoff: no IP after settle; falling back to manual connect");
+                }
+            }
+        }
+        else
+        {
+            Serial.println("[INFO] NetWizard portal handoff: STA not connected; attempting manual connect");
+        }
+
+        if (!connected)
+        {
+            connected = ConnectAndStabilizeWifi(config.wifi_ssid, config.wifi_password, reconnectTimeoutMs, resolvedIp);
+        }
         SaveUserConfig(config);
 
         if (display)

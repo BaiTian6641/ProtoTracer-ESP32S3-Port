@@ -83,18 +83,38 @@ bool EnsureFaceModelJson(const FaceUpdateConfig *configs, size_t sourceCount, co
         return false;
     }
 
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.disconnect(true, true);
-    WiFi.begin(configs[0].download_ssid, configs[0].download_password);
-
-    const unsigned long connectTimeoutMs = 15000;
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < connectTimeoutMs)
+    // If already connected to the target SSID, skip the disconnect/reconnect cycle
+    // to avoid tearing down an active NetWizard connection (which can cause IP loss).
+    bool alreadyConnected = (WiFi.status() == WL_CONNECTED);
+    if (alreadyConnected && configs[0].download_ssid != nullptr)
     {
-        delay(500);
-        Serial.print('.');
+        String currentSsid = WiFi.SSID();
+        String targetSsid = String(configs[0].download_ssid);
+        if (currentSsid != targetSsid)
+        {
+            alreadyConnected = false;
+        }
     }
-    Serial.println();
+
+    if (!alreadyConnected)
+    {
+        WiFi.mode(WIFI_AP_STA);
+        WiFi.disconnect(false, false);  // keep radio on; only drop STA association
+        WiFi.begin(configs[0].download_ssid, configs[0].download_password);
+
+        const unsigned long connectTimeoutMs = 15000;
+        unsigned long start = millis();
+        while (WiFi.status() != WL_CONNECTED && millis() - start < connectTimeoutMs)
+        {
+            delay(500);
+            Serial.print('.');
+        }
+        Serial.println();
+    }
+    else
+    {
+        Serial.printf("[INFO] WiFi already connected to %s, skipping reconnect\n", WiFi.SSID().c_str());
+    }
 
     if (WiFi.status() != WL_CONNECTED)
     {
