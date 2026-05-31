@@ -45,6 +45,7 @@ uint8_t maxAccentBrightness = 100;
 #include <M5UnitGLASS2.h>
 #include <Wire.h>
 #include <LittleFS.h>
+#include <ProtoGC.h>
 #include "Network/FaceModelUpdater.h"
 #include "Network/FirmwareUpdater.h"
 #include "Network/UserConfigManager.h"
@@ -362,12 +363,13 @@ inline size_t GetFreePSRAM() {
 
 void setup()
 {
-  // Allow malloc() to use PSRAM for allocations > 64 bytes.
-  // Only tiny allocs (<= 64 B) stay in internal DRAM. The BLE / WiFi
-  // controllers request internal DMA memory via heap_caps_malloc(CAP_INTERNAL)
-  // and are unaffected. Nearly all application malloc() goes to PSRAM, leaving
-  // the internal 512 KB DRAM for the radio stacks.
+  // ProtoGC: cooperative two-level heap strategy.
+  // - Internal DRAM (512 KB) → reserved for DMA (HUB75, BLE, Camera SIMD)
+  // - PSRAM (8 MB)         → all application allocs via pools + arenas
+  // Phase 1 — boot: allow both pools during WiFi/downloads.
   heap_caps_malloc_extmem_enable(64);
+  protogc::ProtoGC::begin();
+
   pinMode(OTA_BTN, INPUT_PULLUP);
   Serial.begin(115200);
   Serial.println("/nStarting...");
@@ -647,12 +649,12 @@ void setup()
   Serial.printf("[INFO] WiFi off — intFree=%u largestBlk=%u psramFree=%u\n",
                 GetFreeInternalDRAM(), GetLargestFreeInternalBlock(), GetFreePSRAM());
 
-  // Redirect ALL future malloc() to PSRAM. Internal DRAM is now reserved
-  // exclusively for DMA-capable allocations (BLE controller, HUB75, Camera SIMD).
-  // This is the closest thing to a "garbage collector" on bare-metal — it stops
-  // internal DRAM fragmentation dead by preventing any new application allocs.
+  // Phase 2 — runtime: lock ALL future malloc() to PSRAM.
+  // Internal DRAM is now a write-once DMA pool. ProtoGC pools handle
+  // fragmentation-free small allocations; arenas handle JSON/String scopes.
   heap_caps_malloc_extmem_enable(0);
-  Serial.printf("[INFO] malloc→PSRAM lock engaged — intFree=%u largestBlk=%u\n",
+  protogc::ProtoGC::collectFull();
+  Serial.printf("[INFO] ProtoGC locked — intFree=%u largestBlk=%u\n",
                 GetFreeInternalDRAM(), GetLargestFreeInternalBlock());
 
   // Now initialize BLE + gesture sensor on a clean heap.
@@ -794,6 +796,15 @@ void loop()
 
   // Yield to background WiFi/BLE/LWIP tasks to reduce starvation risk under sustained rendering load.
   delay(1);
+
+  // ProtoGC: poll internal DRAM health every ~5 seconds
+  {
+    static uint32_t lastGcPollMs = 0;
+    if (now - lastGcPollMs >= 5000) {
+      lastGcPollMs = now;
+      protogc::HeapGuard::poll();
+    }
+  }
 
   // controller.
 
