@@ -68,7 +68,7 @@ uint8_t maxAccentBrightness = 100;
 #endif
 
 #ifndef ANIM_TASK_STACK_BYTES
-#define ANIM_TASK_STACK_BYTES 8192
+#define ANIM_TASK_STACK_BYTES 6144
 #endif
 #endif
 
@@ -677,7 +677,10 @@ void setup()
       gPipelineActive = true;
       Serial.printf("[PIPELINE] Animation task started on core %d (serialized publish mode)\n", ANIM_TASK_CORE);
     } else {
-      Serial.println("[PIPELINE] Failed to create animation task; using single-core fallback");
+      Serial.printf("[PIPELINE] Failed to create animation task (stack=%u, intFree=%u, largestBlk=%u); using single-core\n",
+                    ANIM_TASK_STACK_BYTES,
+                    GetFreeInternalDRAM(),
+                    GetLargestFreeInternalBlock());
       gPipelineActive = false;
     }
   } else {
