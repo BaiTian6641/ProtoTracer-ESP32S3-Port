@@ -173,17 +173,27 @@ public:
     void Display() override {
         dma_display->setBrightness8(brightness);
         
+        ProtoRGBColor* colors = camPixels1->GetColors();
+        if (!colors) return;
+        
+#ifdef ENABLE_M5_PIXEL_PREVIEW
         display.startWrite();
         display.drawRect(0,0,66,34,TFT_WHITE);
+#endif
         for (uint16_t y = 0; y < 32; y++) {
             for (uint16_t x = 0; x < 64; x++){
                 uint16_t pixelNum = y * 64 + x;
-                virtualDisp->drawPixelRGB888(63 - x, (y) + 32, (uint16_t)camPixels1->GetColor(pixelNum)->R, (uint16_t)camPixels1->GetColor(pixelNum)->G, (uint16_t)camPixels1->GetColor(pixelNum)->B);
-                virtualDisp->drawPixelRGB888(63 - x, (31 - y), (uint16_t)camPixels1->GetColor(pixelNum)->R, (uint16_t)camPixels1->GetColor(pixelNum)->G, (uint16_t)camPixels1->GetColor(pixelNum)->B);
-                display.drawPixel(64 - x, (32 - y), display.color888((camPixels1->GetColor(pixelNum)->R ? 255 : 0), (camPixels1->GetColor(pixelNum)->G ? 255 : 0), (camPixels1->GetColor(pixelNum)->B ? 255 : 0)));
+                const ProtoRGBColor& c = colors[pixelNum];
+                virtualDisp->drawPixelRGB888(63 - x, (y) + 32, (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
+                virtualDisp->drawPixelRGB888(63 - x, (31 - y), (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
+#ifdef ENABLE_M5_PIXEL_PREVIEW
+                display.drawPixel(64 - x, (32 - y), display.color888((c.R ? 255 : 0), (c.G ? 255 : 0), (c.B ? 255 : 0)));
+#endif
             }
         }
+#ifdef ENABLE_M5_PIXEL_PREVIEW
         display.display();
         display.endWrite();
+#endif
     }
 };

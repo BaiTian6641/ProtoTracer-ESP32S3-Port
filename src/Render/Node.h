@@ -39,9 +39,14 @@ public:
     void Expand(unsigned int newCount) {
         //printf("expanding node, new capacity: %d\n", newCount);
         Triangle2D** tmp = entities;
-        entities = new Triangle2D*[newCount];
+        Triangle2D** newEnts = new Triangle2D*[newCount];
+        if (!newEnts) {
+            // allocation failed — keep existing capacity, skip overflow
+            return;
+        }
+        entities = newEnts;
         for (unsigned int i = 0; i < newCount; ++i) {
-            if (i < count)
+            if (i < count && tmp)
                 entities[i] = tmp[i];
             else
                 entities[i] = NULL;
@@ -81,6 +86,10 @@ public:
                                     {{bbox.GetMinimum().X, mid.Y}, {mid.X, bbox.GetMaximum().Y}}, {mid, bbox.GetMaximum()} };
 
         childNodes = new Node[4];
+        if (!childNodes) {
+            // allocation failed — stop subdividing, keep as leaf
+            return;
+        }
 
         for (int j = 0; j < count; ++j) {
             int entityCount = 0;

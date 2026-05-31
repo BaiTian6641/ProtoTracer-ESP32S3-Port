@@ -187,6 +187,7 @@ private:
         uint8_t times = 1;      // number of boops to trigger this expression
         String name;             // expression name to trigger
         uint32_t periodMs = 2800; // hold duration for this expression after trigger
+        int16_t expressionIndex = -1; // pre-resolved index into expressionOrder (set after JSON load)
     };
     struct HueShiftBinding
     {
@@ -202,7 +203,7 @@ private:
     uint16_t boopCount = 0;              // persistent boop count inside current window
     uint32_t boopWindowMs = 30000;       // configurable boop count window (default 30s)
     uint8_t boopSensorThreshold = 180;   // optional JSON override for Menu boop sensitivity
-    String activeBoopExpression;
+    int16_t activeBoopExpressionIndex = -1;  // pre-resolved expression index, -1 = none (replaces String to avoid heap alloc)
     uint32_t activeBoopUntil = 0;
     static constexpr uint32_t kDefaultBoopHoldMs = 2800;  // fallback hold duration when period_ms is omitted
 
@@ -407,6 +408,26 @@ private:
         }
 
         return String(name);
+    }
+
+    int16_t FindExpressionIndex(const String &name) const
+    {
+        for (size_t i = 0; i < expressionOrder.size(); i++)
+        {
+            if (expressionOrder[i].equalsIgnoreCase(name))
+                return (int16_t)i;
+        }
+        // Try normalized alias
+        const String alias = NormalizeBoopExpressionName(name.c_str());
+        if (alias.length() > 0 && !alias.equalsIgnoreCase(name))
+        {
+            for (size_t i = 0; i < expressionOrder.size(); i++)
+            {
+                if (expressionOrder[i].equalsIgnoreCase(alias))
+                    return (int16_t)i;
+            }
+        }
+        return -1;
     }
 
     ExpressionConfig *FindExpressionConfig(const String &name)
@@ -1328,7 +1349,7 @@ private:
         boopWindowStart = 0;
         boopLastPulseTime = 0;
         boopCount = 0;
-        activeBoopExpression = "";
+        activeBoopExpressionIndex = -1;
         activeBoopUntil = 0;
 
         BOOP_LOG_PRINTF("[BOOP] Count window configured: %lu ms\n", static_cast<unsigned long>(boopWindowMs));
@@ -1364,6 +1385,12 @@ private:
             }
         }
 
+        // Pre-resolve boop morph expression names to indices to avoid per-frame string lookups and heap allocation
+        for (auto &spec : boopMorphSpecs)
+        {
+            spec.expressionIndex = FindExpressionIndex(spec.name);
+        }
+
         return true;
     }
 
@@ -1372,14 +1399,14 @@ private:
         uint32_t now = millis();
         
         // Return active boop expression if still within hold window
-        if (activeBoopExpression.length() > 0)
+        if (activeBoopExpressionIndex >= 0)
         {
             if (now < activeBoopUntil)
             {
-                return &activeBoopExpression;
+                return &expressionOrder[activeBoopExpressionIndex];
             }
             // Hold window expired
-            activeBoopExpression.clear();
+            activeBoopExpressionIndex = -1;
         }
 
         // Only check for new boops if sensor is enabled
@@ -1428,10 +1455,12 @@ private:
                             spec->name.c_str(),
                             static_cast<unsigned long>(spec->periodMs));
 
-            activeBoopExpression = spec->name;
+            activeBoopExpressionIndex = spec->expressionIndex;
             activeBoopUntil = now + spec->periodMs;
 
-            return &activeBoopExpression;
+            if (activeBoopExpressionIndex >= 0 && activeBoopExpressionIndex < (int16_t)expressionOrder.size())
+                return &expressionOrder[activeBoopExpressionIndex];
+            return nullptr;
         }
 
         // No new pulse this frame.
@@ -1443,7 +1472,7 @@ public:
 
     bool Initialize(const UserConfig &config, const char *githubAnimBase = nullptr, const char *giteeAnimBase = nullptr, const char *githubToken = nullptr, const char *giteeToken = nullptr, M5UnitGLASS2 *downloadDisplay = nullptr, bool verboseDownload = true)
     {
-        Serial.begin(115200);
+        // Serial already initialized by main.cpp setup()
         deviceId = config.device_id;
 
         LoadJsonFaceBlocking();

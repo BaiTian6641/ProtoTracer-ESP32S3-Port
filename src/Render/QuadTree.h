@@ -26,13 +26,21 @@ public:
     }
 
     void Expand(int newCapacity) {
-        entities = (Triangle2D*)realloc(entities, newCapacity * sizeof(Triangle2D));
+        Triangle2D* newEntities = (Triangle2D*)realloc(entities, newCapacity * sizeof(Triangle2D));
+        if (!newEntities) {
+            // allocation failed — keep existing capacity, renderer will skip overflow
+            return;
+        }
+        entities = newEntities;
         capacity = newCapacity;
     }
 
     bool Insert(Triangle2D triangle) {
         if (count == capacity)
             Expand(capacity ? (1.5f * capacity) : maxEntities);
+
+        if (!entities)
+            return false;
 
         entities[count] = triangle;
 

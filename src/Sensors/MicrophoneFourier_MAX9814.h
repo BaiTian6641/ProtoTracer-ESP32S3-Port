@@ -76,8 +76,9 @@ private:
         inputStorageInt[samplesStorage++] = inputSample;
 
         if(samplesStorage >= FFTSize){
-            esp_timer_stop(timer);
-            esp_timer_delete(timer);
+            if (timer) {
+                esp_timer_stop(timer);
+            }
             samplesReady = true;
         }
     }
@@ -87,9 +88,16 @@ private:
         samples = 0;
         samplesStorage = 0;
 
-        esp_timer_create(&timerParameters, &timer);
-        esp_timer_start_periodic(timer, 1000000 / sampleRate);
-        //Serial.print("O0K");
+        // Timer is created once during Initialize; only start/stop it per cycle.
+        if (!timer) {
+            // Timer creation must have failed during Initialize — disable audio path
+            samplesReady = true;
+            return;
+        }
+        esp_err_t err = esp_timer_start_periodic(timer, 1000000 / sampleRate);
+        if (err != ESP_OK) {
+            samplesReady = true;
+        }
     }
 
     static void EstimateNoiseProfile() {
@@ -129,14 +137,19 @@ public:
         MicrophoneFourierIT::maxDB = maxDB;
         MicrophoneFourierIT::pin = pin;
         MicrophoneFourierIT::refreshRate = refreshRate;
-        Serial.begin(115200);
+        // Serial already initialized by main.cpp setup()
         dsps_fft4r_init_fc32(NULL, FFTSize);
         //Serial.print("OK");
 
         pinMode(pin, INPUT);
         analogReadResolution(12);
 
-        StartSampler();
+        // Create the timer handle once; StartSampler will start/stop it per cycle.
+        esp_err_t err = esp_timer_create(&timerParameters, &timer);
+        if (err != ESP_OK) {
+            Serial.printf("[MIC] Timer create failed: %d\n", err);
+            timer = nullptr;
+        }
 
         MicrophoneFourierIT::sampleRate = sampleRate;
         MicrophoneFourierIT::samples = 0;
@@ -154,6 +167,12 @@ public:
         EstimateNoiseProfile();
         
         isInitialized = true;
+
+        // Start the first sampling cycle
+        if (timer) {
+            StartSampler();
+        }
+
         Serial.print("MICROPHONE-OK ");
     }
 
@@ -189,8 +208,8 @@ public:
     }
     
     static void Update(){
-        //Serial.print(timeStep.IsReady());
-        if(!samplesReady && timeStep.IsReady()) return;
+        // Only process when samples are ready AND enough time has elapsed since last update
+        if(!samplesReady || !timeStep.IsReady()) return;
 
         for(int i = 0; i< FFTSize; i++){
             inputStorage[i] = (float)inputStorageInt[i];

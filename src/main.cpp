@@ -246,6 +246,17 @@ float FreeMem()
   return temp / 1000000.0f;
 }
 
+// Real heap telemetry: use these in logs instead of FreeMem().
+inline size_t GetFreeInternalDRAM() {
+  return heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+}
+inline size_t GetLargestFreeInternalBlock() {
+  return heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+}
+inline size_t GetFreePSRAM() {
+  return heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+}
+
 void setup()
 {
   heap_caps_malloc_extmem_enable(0);
@@ -616,18 +627,17 @@ void loop()
   yield(); // Feed watchdog after display update
 
 #ifdef PRINTINFO
-  Serial.print("Animated in ");
-  Serial.print(animation.GetAnimationTime(), 4);
-
-  Serial.print("s, Rendered in ");
-  Serial.print(controller.GetRenderTime(), 4);
-
-  Serial.print("s, Free memory ");
-  Serial.print(FreeMem(), 3);
-
-  Serial.println("Kb");
-
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  static uint32_t lastPrintMs = 0;
+  uint32_t nowPrint = millis();
+  // Sample every ~2 seconds to avoid serial bottleneck
+  if (nowPrint - lastPrintMs >= 2000) {
+    lastPrintMs = nowPrint;
+    Serial.printf("anim=%.2fms render=%.2fms intFree=%u largestBlk=%u psramFree=%u\n",
+        animation.GetAnimationTime() * 1000.0f,
+        controller.GetRenderTime() * 1000.0f,
+        GetFreeInternalDRAM(),
+        GetLargestFreeInternalBlock(),
+        GetFreePSRAM());
+  }
 #endif
 }
