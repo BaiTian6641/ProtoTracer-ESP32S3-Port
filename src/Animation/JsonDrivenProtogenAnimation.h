@@ -165,6 +165,7 @@ private:
     bool voiceEnable = true;
     bool ShowMouth = true;
     bool EyeShapeB = true;
+    bool menuInitialized = false;
 
     String deviceId;
     String animationName;
@@ -1552,6 +1553,18 @@ private:
 public:
     JsonDrivenProtogenAnimation() {}
 
+    void InitializeMenuPeripherals(uint8_t faceCount, uint8_t threshold)
+    {
+        if (menuInitialized)
+        {
+            Menu::SetThreshold(threshold);
+            return;
+        }
+
+        espmenu.Initialize(faceCount, threshold);
+        menuInitialized = true;
+    }
+
     bool Initialize(const UserConfig &config, const char *githubAnimBase = nullptr, const char *giteeAnimBase = nullptr, const char *githubToken = nullptr, const char *giteeToken = nullptr, M5UnitGLASS2 *downloadDisplay = nullptr, bool verboseDownload = true)
     {
         // Serial already initialized by main.cpp setup()
@@ -1592,7 +1605,7 @@ public:
         #elif defined(TASESP32P4)
         MicrophoneFourierIT::Initialize(23, 8000, 68.0f, 120.0f);
         #endif
-        espmenu.Initialize(17, boopSensorThreshold);
+        InitializeMenuPeripherals(17, boopSensorThreshold);
         ChangeInterpolationMethods();
         return true;
     }

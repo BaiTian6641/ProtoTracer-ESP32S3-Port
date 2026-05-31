@@ -591,6 +591,19 @@ void setup()
     Serial.println("[WARN] user_config.json download failed on all configured remotes");
   }
 
+  user_name = userConfig.username.c_str();
+  BLE_TX2_UUID = userConfig.ble_tx_uuid.c_str();
+  BLE_RX2_UUID = userConfig.ble_rx_uuid.c_str();
+
+  User_R = userConfig.user_r;
+  User_G = userConfig.user_g;
+  User_B = userConfig.user_b;
+
+  // Reserve BLE controller/internal DMA memory before firmware, face, animation,
+  // and microphone startup fragment the internal heap. The animation JSON can
+  // later update the boop threshold without reinitializing BLE.
+  animation.InitializeMenuPeripherals(17, 180);
+
   FirmwareUpdateConfig firmwareUpdateConfig;
   firmwareUpdateConfig.primarySource.baseUrl = user_config_gitee_base_url;
   firmwareUpdateConfig.primarySource.token = user_config_gitee_token;
@@ -614,14 +627,6 @@ void setup()
   {
     Serial.println("[WARN] Auto firmware update check failed; continuing startup");
   }
-
-  user_name = userConfig.username.c_str();
-  BLE_TX2_UUID = userConfig.ble_tx_uuid.c_str();
-  BLE_RX2_UUID = userConfig.ble_rx_uuid.c_str();
-
-  User_R = userConfig.user_r;
-  User_G = userConfig.user_g;
-  User_B = userConfig.user_b;
 
   FaceUpdateConfig faceConfigs[2] = {
     {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(), user_config_gitee_base_url, user_config_gitee_token, gitee_accept_header, "Bearer ", "Gitee"},

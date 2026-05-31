@@ -1101,10 +1101,30 @@ private:
         // Release ~50-70KB of classic BT (BR/EDR) memory before BLE init.
         // The pre-compiled BLE controller reserves this by default; we only
         // use BLE so the classic memory is wasted internal DRAM.
-        esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+        const esp_err_t releaseResult = esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+        Serial.printf("BLE classic BT memory release result=%d intFree=%u largestBlk=%u psramFree=%u\n",
+                  static_cast<int>(releaseResult),
+                  static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                  static_cast<unsigned int>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)),
+                  static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+
+        constexpr size_t kBleControllerMinLargestBlock = 0x7800;
+        const size_t largestInternalBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+        if (largestInternalBlock < kBleControllerMinLargestBlock)
+        {
+            Serial.printf("[BLE] Skipping BLE init: largest internal block=%u, need at least %u\n",
+                          static_cast<unsigned int>(largestInternalBlock),
+                          static_cast<unsigned int>(kBleControllerMinLargestBlock));
+            return;
+        }
 
         BLEDevice::init(user_name.c_str());
         bleServer = BLEDevice::createServer();
+        if (!bleServer)
+        {
+            Serial.println("[BLE] createServer failed; BLE disabled");
+            return;
+        }
         bleServer->setCallbacks(new MenuBleServerCallbacks());
 
         Serial.printf(
@@ -1115,12 +1135,28 @@ private:
             BLE_TX2_UUID.c_str());
 
         BLEService *service = bleServer->createService(BLE_SERIAL2_SERVICE_UUID);
+        if (!service)
+        {
+            Serial.println("[BLE] createService failed; BLE disabled");
+            return;
+        }
 
         bleTxCharacteristic = service->createCharacteristic(BLE_TX2_UUID.c_str(), BLECharacteristic::PROPERTY_NOTIFY);
+        if (!bleTxCharacteristic)
+        {
+            Serial.println("[BLE] TX characteristic create failed; BLE disabled");
+            return;
+        }
         // BLE2902 descriptor auto-added by NimBLE when notifications are enabled — no manual add needed
         // bleTxCharacteristic->addDescriptor(new BLE2902());
 
         BLECharacteristic *rxCharacteristic = service->createCharacteristic(BLE_RX2_UUID.c_str(), BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+        if (!rxCharacteristic)
+        {
+            Serial.println("[BLE] RX characteristic create failed; BLE disabled");
+            bleTxCharacteristic = nullptr;
+            return;
+        }
         rxCharacteristic->setCallbacks(new MenuBleRxCallbacks());
 
         service->start();
@@ -1132,6 +1168,11 @@ private:
     }
 
 public:
+    static void SetThreshold(uint8_t threshold)
+    {
+        Menu::threshold = threshold;
+    }
+
     void Initialize(uint8_t faceCount, uint8_t threshold)
     {
         #ifdef VERBOSE_STARTUP
