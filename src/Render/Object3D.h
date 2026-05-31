@@ -74,14 +74,50 @@ public:
     }
 
     void UpdateTransform(){
-        for (int i = 0; i < modifiedTriangles->GetVertexCount(); i++) {
-            Vector3D modifiedVector = modifiedTriangles->GetVertices()[i];
+        // Build rotation matrix from quaternion once per frame (avoids per-vertex quaternion ops)
+        Quaternion rot = transform.GetRotation();
+        Quaternion q = rot.UnitQuaternion();
+        
+        const float xx = q.X * q.X, yy = q.Y * q.Y, zz = q.Z * q.Z;
+        const float xy = q.X * q.Y, xz = q.X * q.Z, yz = q.Y * q.Z;
+        const float wx = q.W * q.X, wy = q.W * q.Y, wz = q.W * q.Z;
+        
+        const float m00 = 1.0f - 2.0f * (yy + zz);
+        const float m01 = 2.0f * (xy - wz);
+        const float m02 = 2.0f * (xz + wy);
+        const float m10 = 2.0f * (xy + wz);
+        const float m11 = 1.0f - 2.0f * (xx + zz);
+        const float m12 = 2.0f * (yz - wx);
+        const float m20 = 2.0f * (xz - wy);
+        const float m21 = 2.0f * (yz + wx);
+        const float m22 = 1.0f - 2.0f * (xx + yy);
+        
+        const Vector3D pos = transform.GetPosition();
+        const Vector3D sc = transform.GetScale();
+        const Vector3D scOff = transform.GetScaleOffset();
+        const Vector3D rotOff = transform.GetRotationOffset();
+        
+        Vector3D* verts = modifiedTriangles->GetVertices();
+        const int vCount = modifiedTriangles->GetVertexCount();
+        
+        for (int i = 0; i < vCount; i++) {
+            // Scale: offset → scale → un-offset
+            float sx = (verts[i].X - scOff.X) * sc.X + scOff.X;
+            float sy = (verts[i].Y - scOff.Y) * sc.Y + scOff.Y;
+            float sz = (verts[i].Z - scOff.Z) * sc.Z + scOff.Z;
             
-            modifiedVector = (modifiedVector - transform.GetScaleOffset()) * transform.GetScale() + transform.GetScaleOffset();//offset position, scale, reset position
-            modifiedVector = transform.GetRotation().RotateVector(modifiedVector - transform.GetRotationOffset()) + transform.GetRotationOffset();//offset position, rotate, reset position
-            modifiedVector = modifiedVector + transform.GetPosition();//offset posiition
-
-            modifiedTriangles->GetVertices()[i] = modifiedVector;
+            // Offset for rotation center
+            sx -= rotOff.X; sy -= rotOff.Y; sz -= rotOff.Z;
+            
+            // Rotate via 3x3 matrix (replaces quaternion RotateVector)
+            float rx = m00 * sx + m01 * sy + m02 * sz;
+            float ry = m10 * sx + m11 * sy + m12 * sz;
+            float rz = m20 * sx + m21 * sy + m22 * sz;
+            
+            // Un-offset rotation + translate
+            verts[i].X = rx + rotOff.X + pos.X;
+            verts[i].Y = ry + rotOff.Y + pos.Y;
+            verts[i].Z = rz + rotOff.Z + pos.Z;
         }
     }
 
