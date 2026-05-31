@@ -776,14 +776,7 @@ private:
 
         ApplySceneEffect(resetState.sceneEffect);
 
-        if (resetState.hasBackgroundMat)
-        {
-            background.GetObject()->SetMaterial(ResolveMaterial(resetState.backgroundMat));
-        }
-        else
-        {
-            background.GetObject()->SetMaterial(&backgroundMat);
-        }
+        SetBackgroundMaterial(resetState.hasBackgroundMat ? resetState.backgroundMat : String());
 
         Object3D *faceObject = GetFaceObject();
         if (faceObject)
@@ -804,8 +797,13 @@ private:
         }
     }
 
-    Material *ResolveMaterial(const String &name)
+    Material *ResolveMaterialOrDefault(const String &name, Material *fallback)
     {
+        if (name.length() == 0 || name.equalsIgnoreCase("default"))
+        {
+            return fallback;
+        }
+
         for (auto &entry : materialRegistry)
         {
             if (entry.first.equalsIgnoreCase(name))
@@ -813,7 +811,36 @@ private:
                 return entry.second;
             }
         }
-        return &gradientMat;
+        return fallback;
+    }
+
+    Material *ResolveMaterial(const String &name)
+    {
+        return ResolveMaterialOrDefault(name, &gradientMat);
+    }
+
+    Material *ResolveBackgroundMaterial(const String &name)
+    {
+        return ResolveMaterialOrDefault(name, &backgroundMat);
+    }
+
+    void SetBackgroundMaterial(const String &name)
+    {
+        Object3D *bgObject = background.GetObject();
+        if (!bgObject)
+        {
+            return;
+        }
+
+        if (name.length() == 0 || name.equalsIgnoreCase("default"))
+        {
+            bgObject->SetMaterial(&backgroundMat);
+            bgObject->Disable();
+            return;
+        }
+
+        bgObject->SetMaterial(ResolveBackgroundMaterial(name));
+        bgObject->Enable();
     }
 
     void AddMorphFrame(const String &name, float value)
@@ -1152,7 +1179,7 @@ private:
 
         if (target->hasBackgroundMat)
         {
-            background.GetObject()->SetMaterial(ResolveMaterial(target->backgroundMat));
+            SetBackgroundMaterial(target->backgroundMat);
         }
 
         ApplySceneEffect(target->sceneEffect);
@@ -1544,7 +1571,7 @@ public:
         {
             faceObject->SetMaterial(&gradientMat);
         }
-        background.GetObject()->SetMaterial(&backgroundMat);
+        SetBackgroundMaterial(String());
 
         // Download user animation JSON if remote URLs are provided. AnimationDownloader prefers Gitee, then GitHub.
         String animFilename = config.user_animation.length() > 0 ? config.user_animation : (config.device_id + String("_animation.json"));
