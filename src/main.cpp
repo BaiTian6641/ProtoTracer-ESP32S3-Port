@@ -142,6 +142,42 @@ constexpr const char *kRelayFirmwareCachePath = "/relay_remote-firmware.bin";
 
 bool gRelayRoutesRegistered = false;
 bool gRuntimeServerStarted = false;
+static bool gRelayRefreshPending = false; // set by async handler, cleared by main loop after refresh
+
+// Non-blocking relay asset serve: returns cached copy immediately if available,
+// defers remote refresh to main loop via gRelayRefreshPending flag.
+bool ServeRelayAssetCached(AsyncWebServerRequest *request, const char *remoteFilename, const char *localPath, const char *contentType)
+{
+  // Serve cached copy immediately if it exists (fast path, no HTTP blocking)
+  if (LittleFS.exists(localPath))
+  {
+    request->send(LittleFS, localPath, contentType, false);
+    // Defer background refresh to main loop
+    gRelayRefreshPending = true;
+    return true;
+  }
+
+  // No cache — must fetch now (blocking, but unavoidable on first request)
+  if (RefreshRelayAsset(remoteFilename, localPath))
+  {
+    request->send(LittleFS, localPath, contentType, false);
+    return true;
+  }
+
+  request->send(502, "application/json", "{\"error\":\"Relay asset unavailable\"}");
+  return false;
+}
+
+// Called from main loop to refresh stale relay assets in background
+void RefreshRelayAssetsIfPending()
+{
+  if (!gRelayRefreshPending) return;
+  gRelayRefreshPending = false;
+
+  // Best-effort background refresh — failures are non-fatal (next request retries)
+  RefreshRelayAsset(kRemoteC6ManifestFilename, kRelayManifestCachePath);
+  RefreshRelayAsset(kRemoteC6FirmwareFilename, kRelayFirmwareCachePath);
+}
 
 bool RefreshRelayAsset(const char *remoteFilename, const char *localPath)
 {
@@ -196,23 +232,11 @@ void RegisterC6RelayRoutes()
 
   server.on("/api/relay/esp32c6/manifest", HTTP_GET, [](AsyncWebServerRequest *request)
             {
-              if (!RefreshRelayAsset(kRemoteC6ManifestFilename, kRelayManifestCachePath))
-              {
-                request->send(502, "application/json", "{\"error\":\"Failed to refresh remote-esp32c6.json\"}");
-                return;
-              }
-
-              request->send(LittleFS, kRelayManifestCachePath, "application/json", false); });
+              ServeRelayAssetCached(request, kRemoteC6ManifestFilename, kRelayManifestCachePath, "application/json"); });
 
   server.on("/api/relay/esp32c6/remote-firmware.bin", HTTP_GET, [](AsyncWebServerRequest *request)
             {
-              if (!RefreshRelayAsset(kRemoteC6FirmwareFilename, kRelayFirmwareCachePath))
-              {
-                request->send(502, "application/json", "{\"error\":\"Failed to refresh remote-firmware.bin\"}");
-                return;
-              }
-
-              request->send(LittleFS, kRelayFirmwareCachePath, "application/octet-stream", false); });
+              ServeRelayAssetCached(request, kRemoteC6FirmwareFilename, kRelayFirmwareCachePath, "application/octet-stream"); });
 
   gRelayRoutesRegistered = true;
 }
@@ -625,6 +649,9 @@ void loop()
 
   controller.Display();
   yield(); // Feed watchdog after display update
+
+  // Background relay asset refresh (non-blocking — deferred from async HTTP handlers)
+  RefreshRelayAssetsIfPending();
 
 #ifdef PRINTINFO
   static uint32_t lastPrintMs = 0;

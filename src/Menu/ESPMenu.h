@@ -339,7 +339,12 @@ namespace
             return;
         }
 
-        if (!bleDeviceConnected)
+        bool connected = false;
+        portENTER_CRITICAL(&gBleFlagMux);
+        connected = bleDeviceConnected;
+        portEXIT_CRITICAL(&gBleFlagMux);
+
+        if (!connected)
         {
             sBleNotifyPayload = String("");
             sBleNotifyOffset = 0;
@@ -397,7 +402,11 @@ namespace
                 Serial.println("BLE flush failed: TX characteristic is null");
                 return;
             }
-            if (!bleDeviceConnected)
+            bool connected = false;
+            portENTER_CRITICAL(&gBleFlagMux);
+            connected = bleDeviceConnected;
+            portEXIT_CRITICAL(&gBleFlagMux);
+            if (!connected)
             {
                 Serial.println("BLE flush deferred: re-queuing payload (client not connected yet)");
                 QueueBleJsonPayload(payload);
@@ -786,7 +795,9 @@ namespace
     {
         void onConnect(BLEServer *server) override
         {
+            portENTER_CRITICAL(&gBleFlagMux);
             bleDeviceConnected = true;
+            portEXIT_CRITICAL(&gBleFlagMux);
             bleRxJsonBuffer = String("");
             ClearQueuedLegacyCommands();
             Serial.println("BLE client connected — bleDeviceConnected=true");
@@ -794,7 +805,9 @@ namespace
 
         void onDisconnect(BLEServer *server) override
         {
+            portENTER_CRITICAL(&gBleFlagMux);
             bleDeviceConnected = false;
+            portEXIT_CRITICAL(&gBleFlagMux);
             bleRxJsonBuffer = String("");
             ClearQueuedLegacyCommands();
             Serial.println("BLE client disconnected — bleDeviceConnected=false");
@@ -1272,6 +1285,7 @@ public:
         bleManifestRequested = false;
         portEXIT_CRITICAL(&gBleFlagMux);
         if (manifestReq)
+        {
             if (bleCachedManifestJson.isEmpty())
             {
                 bleCachedManifestJson = BuildRemoteControllerManifestJson();
