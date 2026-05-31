@@ -87,6 +87,15 @@ public:
     void Update(float* readData){
         data = readData;
         
+        // Precompute hue-shifted gradient colors once per frame
+        if (hueAngle != 0.0f) {
+            ProtoRGBColor baseColors[6] = {ProtoRGBColor(255, 0, 0), ProtoRGBColor(255, 255, 0), ProtoRGBColor(0, 255, 0), ProtoRGBColor(0, 255, 255), ProtoRGBColor(0, 0, 255), ProtoRGBColor(255, 0, 255)};
+            for (uint8_t i = 0; i < 6; i++) {
+                rainbowSpectrum[i] = baseColors[i].HueShift(hueAngle);
+            }
+            gM = GradientMaterial<6>(rainbowSpectrum, 1.0f, false);
+        }
+        
         for (uint8_t i = 0; i < 128; i++){
             if(bounce){
                 bounceData[i] = bPhy[i]->Calculate(data[i], 0.1f);
@@ -128,7 +137,8 @@ public:
         if(flipY) yColor = 1.0f - yColor;
 
         if (yColor <= height){
-            return material->GetRGB(Vector3D(1.0f - height - yColor, 0, 0), Vector3D(), Vector3D()).HueShift(hueAngle);
+            // Hue shift is precomputed once per frame in Update(); no per-sample .HueShift() needed
+            return material->GetRGB(Vector3D(1.0f - height - yColor, 0, 0), Vector3D(), Vector3D());
         }
         else{
             return ProtoRGBColor(0, 0, 0);
