@@ -200,7 +200,8 @@ public:
                 virtualDisp->drawPixelRGB888(63 - x, (y) + 32, (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
                 virtualDisp->drawPixelRGB888(63 - x, (31 - y), (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
                 if (doPreview) {
-                    display.drawPixel(64 - x, (32 - y), display.color888((c.R ? 255 : 0), (c.G ? 255 : 0), (c.B ? 255 : 0)));
+                    // Use actual RGB values so the display driver can dither at 1-bit color depth
+                    display.drawPixel(64 - x, (32 - y), display.color888(c.R, c.G, c.B));
                 }
             }
         }
