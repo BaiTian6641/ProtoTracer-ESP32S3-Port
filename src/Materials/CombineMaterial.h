@@ -48,6 +48,20 @@ public:
         ProtoRGBColor temp;
         ProtoRGBColor addtemp;
 
+        // Fast path: if only one active layer at full opacity, return it directly
+        uint8_t activeCount = 0;
+        uint8_t activeIndex = 0;
+        for (int i = 0; i < materialsAdded; i++) {
+            if (opacity[i] > 0.01f) {
+                activeCount++;
+                activeIndex = i;
+                if (activeCount > 1) break;
+            }
+        }
+        if (activeCount == 1 && opacity[activeIndex] > 0.99f) {
+            return materials[activeIndex]->GetRGB(position, normal, uvw);
+        }
+
         for(int i = 0; i < materialsAdded; i++){
             if (opacity[i] > 0.01f){
                 switch(method[i]){

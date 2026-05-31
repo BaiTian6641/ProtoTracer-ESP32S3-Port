@@ -86,6 +86,7 @@ static String bleRxJsonBuffer;
 // Cached manifest built once during init — avoids file I/O + JSON parsing in BLE callbacks.
 static String bleCachedManifestJson;
 static bool bleManifestRequested = false;
+static portMUX_TYPE gBleFlagMux = portMUX_INITIALIZER_UNLOCKED; // guards bleManifestRequested
 
 // Lightweight spinlock for the legacy command queue shared between BLE ISR and main loop.
 static portMUX_TYPE gCommandQueueMux = portMUX_INITIALIZER_UNLOCKED;
@@ -325,31 +326,39 @@ namespace
         return payload;
     }
 
-    void NotifyBleJsonPayload(const String &payload)
+    // Non-blocking BLE notification state: sends one chunk per main-loop iteration
+    static String sBleNotifyPayload;
+    static size_t sBleNotifyOffset;
+
+    void NotifyBleJsonPayloadChunk()
     {
-        if (bleTxCharacteristic == nullptr || payload.isEmpty())
+        if (bleTxCharacteristic == nullptr || sBleNotifyPayload.isEmpty())
         {
+            sBleNotifyPayload = String("");
+            sBleNotifyOffset = 0;
             return;
         }
 
         if (!bleDeviceConnected)
         {
-            // Client not fully connected yet (onConnect hasn't fired).
-            // Don't drop the payload — FlushQueuedBleJsonPayload will re-queue it.
-            Serial.println("BLE notify deferred: client not connected yet");
+            sBleNotifyPayload = String("");
+            sBleNotifyOffset = 0;
             return;
         }
 
-        for (size_t offset = 0; offset < payload.length(); offset += kBleJsonChunkBytes)
+        if (sBleNotifyOffset >= sBleNotifyPayload.length())
         {
-            const size_t chunkLength = std::min(kBleJsonChunkBytes, payload.length() - offset);
-            bleTxCharacteristic->setValue(reinterpret_cast<const uint8_t *>(payload.c_str() + offset), chunkLength);
-            bleTxCharacteristic->notify();
-            // Give the BLE stack time to actually transmit before queuing the next chunk.
-            // 8 ms per chunk keeps the main-loop stall under ~50 ms for typical manifests.
-            delay(8);
+            Serial.printf("BLE notify complete: %u bytes\n", static_cast<unsigned>(sBleNotifyPayload.length()));
+            sBleNotifyPayload = String("");
+            sBleNotifyOffset = 0;
+            return;
         }
-        Serial.printf("BLE notify sent: %u bytes\n", static_cast<unsigned>(payload.length()));
+
+        const size_t chunkLength = std::min(kBleJsonChunkBytes, sBleNotifyPayload.length() - sBleNotifyOffset);
+        bleTxCharacteristic->setValue(reinterpret_cast<const uint8_t *>(sBleNotifyPayload.c_str() + sBleNotifyOffset), chunkLength);
+        bleTxCharacteristic->notify();
+        sBleNotifyOffset += chunkLength;
+        // No delay — caller (Menu::Update) returns after one chunk, next chunk on next loop iteration
     }
 
     void QueueBleJsonPayload(const String &payload)
@@ -380,27 +389,29 @@ namespace
         }
         portEXIT_CRITICAL(&gCommandQueueMux);
 
-        if (!pending)
+        // If a new payload is queued, start sending it
+        if (pending)
         {
-            return;
+            if (bleTxCharacteristic == nullptr)
+            {
+                Serial.println("BLE flush failed: TX characteristic is null");
+                return;
+            }
+            if (!bleDeviceConnected)
+            {
+                Serial.println("BLE flush deferred: re-queuing payload (client not connected yet)");
+                QueueBleJsonPayload(payload);
+                return;
+            }
+            sBleNotifyPayload = payload;
+            sBleNotifyOffset = 0;
         }
 
-        if (bleTxCharacteristic == nullptr)
+        // Continue sending chunks from any in-progress payload
+        if (!sBleNotifyPayload.isEmpty())
         {
-            Serial.println("BLE flush failed: TX characteristic is null");
-            return;
+            NotifyBleJsonPayloadChunk();
         }
-
-        if (!bleDeviceConnected)
-        {
-            // Race: onWrite fired before onConnect. Re-queue the payload
-            // so the next Menu::Update() call can try again.
-            Serial.println("BLE flush deferred: re-queuing payload (client not connected yet)");
-            QueueBleJsonPayload(payload);
-            return;
-        }
-
-        NotifyBleJsonPayload(payload);
     }
 
     String BuildRemoteControllerStateJson(const JsonDocument &doc)
@@ -619,7 +630,9 @@ namespace
             // Defer to the main loop via a flag to avoid file I/O / JSON parsing
             // on the BLE task, which would block further BLE RX and trigger the WDT.
             Serial.println("BLE JSON config request accepted (deferred to main loop)");
+            portENTER_CRITICAL(&gBleFlagMux);
             bleManifestRequested = true;
+            portEXIT_CRITICAL(&gBleFlagMux);
             return true;
         }
 
@@ -1253,9 +1266,12 @@ public:
         // Handle deferred manifest request (set by BLE RX callback).
         // We build/send here in the main loop, NOT in the BLE callback, so that
         // file I/O and JSON parsing never block the BLE task.
-        if (bleManifestRequested)
-        {
-            bleManifestRequested = false;
+        bool manifestReq = false;
+        portENTER_CRITICAL(&gBleFlagMux);
+        manifestReq = bleManifestRequested;
+        bleManifestRequested = false;
+        portEXIT_CRITICAL(&gBleFlagMux);
+        if (manifestReq)
             if (bleCachedManifestJson.isEmpty())
             {
                 bleCachedManifestJson = BuildRemoteControllerManifestJson();
