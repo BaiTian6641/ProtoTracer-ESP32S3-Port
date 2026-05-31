@@ -9,10 +9,12 @@
 
 namespace
 {
-    constexpr uint32_t kHttpProbeConnectTimeoutMs = 2500;
-    constexpr uint32_t kHttpProbeRequestTimeoutMs = 4000;
-    constexpr uint32_t kHttpConnectTimeoutMs = 8000;
-    constexpr uint32_t kHttpRequestTimeoutMs = 12000;
+    constexpr uint32_t kHttpProbeConnectTimeoutMs = 2000;
+    constexpr uint32_t kHttpProbeRequestTimeoutMs = 3000;
+    constexpr uint32_t kHttpConnectTimeoutMs = 5000;
+    constexpr uint32_t kHttpRequestTimeoutMs = 10000;
+    constexpr uint32_t kHttpMd5ConnectTimeoutMs = 3000;
+    constexpr uint32_t kHttpMd5RequestTimeoutMs = 5000;
     constexpr uint32_t kHttpIdleTimeoutMs = 5000;
     constexpr size_t kMaxSelectableSourceCount = 4;
 
@@ -82,8 +84,8 @@ namespace
 
         HTTPClient http;
         String url = BuildUrl(source.baseUrl, DeriveMd5Filename(remoteFilename));
-        http.setConnectTimeout(kHttpConnectTimeoutMs);
-        http.setTimeout(kHttpRequestTimeoutMs);
+        http.setConnectTimeout(kHttpMd5ConnectTimeoutMs);
+        http.setTimeout(kHttpMd5RequestTimeoutMs);
         if (!http.begin(url))
         {
             return String();
@@ -375,7 +377,14 @@ bool RemoteFileSync::Sync(const RemoteFileSource &source,
         localMd5 = ComputeFileMd5(localPath);
     }
 
-    String remoteMd5 = FetchRemoteMd5(source, remoteFilename);
+    // Only fetch remote MD5 when we have a local file to compare against.
+    // If no local file exists, skip the MD5 round-trip and download directly.
+    String remoteMd5;
+    if (localExists)
+    {
+        remoteMd5 = FetchRemoteMd5(source, remoteFilename);
+    }
+
     if (!remoteMd5.isEmpty() && !localMd5.isEmpty())
     {
         ShowStatus(options.display, options.ui.checkingMd5, true);

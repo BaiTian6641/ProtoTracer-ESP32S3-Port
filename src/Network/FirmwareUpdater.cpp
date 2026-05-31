@@ -9,8 +9,10 @@
 
 namespace
 {
-    constexpr uint32_t kHttpConnectTimeoutMs = 8000;
-    constexpr uint32_t kHttpRequestTimeoutMs = 15000;
+    constexpr uint32_t kHttpConnectTimeoutMs = 5000;
+    constexpr uint32_t kHttpRequestTimeoutMs = 10000;
+    constexpr uint32_t kHttpManifestConnectTimeoutMs = 3000;
+    constexpr uint32_t kHttpManifestRequestTimeoutMs = 5000;
     constexpr uint32_t kHttpIdleTimeoutMs = 5000;
 
     struct FirmwareManifest
@@ -121,8 +123,8 @@ namespace
     {
         HTTPClient http;
         const String url = BuildUrl(source, manifestFilename);
-        http.setConnectTimeout(kHttpConnectTimeoutMs);
-        http.setTimeout(kHttpRequestTimeoutMs);
+        http.setConnectTimeout(kHttpManifestConnectTimeoutMs);
+        http.setTimeout(kHttpManifestRequestTimeoutMs);
         if (!http.begin(url))
         {
             Serial.printf("[WARN] Firmware manifest begin failed for %s (%s)\n", sourceName, url.c_str());

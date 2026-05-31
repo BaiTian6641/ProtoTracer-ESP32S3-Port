@@ -102,11 +102,11 @@ bool EnsureFaceModelJson(const FaceUpdateConfig *configs, size_t sourceCount, co
         WiFi.disconnect(false, false);  // keep radio on; only drop STA association
         WiFi.begin(configs[0].download_ssid, configs[0].download_password);
 
-        const unsigned long connectTimeoutMs = 15000;
+        const unsigned long connectTimeoutMs = 8000;
         unsigned long start = millis();
         while (WiFi.status() != WL_CONNECTED && millis() - start < connectTimeoutMs)
         {
-            delay(500);
+            delay(200);
             Serial.print('.');
         }
         Serial.println();
