@@ -11,6 +11,29 @@
 #include "Node.h"
 #include <esp_heap_caps.h>
 #include <esp_dsp.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
+
+#ifndef CAMERA_RASTER_WORKER
+#define CAMERA_RASTER_WORKER 1
+#endif
+
+#ifndef CAMERA_RASTER_WORKER_CORE
+#define CAMERA_RASTER_WORKER_CORE 0
+#endif
+
+#ifndef CAMERA_RASTER_WORKER_PRIORITY
+#define CAMERA_RASTER_WORKER_PRIORITY 1
+#endif
+
+#ifndef CAMERA_RASTER_WORKER_STACK_BYTES
+#define CAMERA_RASTER_WORKER_STACK_BYTES 6144
+#endif
+
+#ifndef CAMERA_RASTER_WORKER_MIN_PIXELS
+#define CAMERA_RASTER_WORKER_MIN_PIXELS 512
+#endif
 
 //template<size_t pixelCount>
 class Camera : public CameraBase{
@@ -42,6 +65,17 @@ private:
     float* tmpY = nullptr;
     float* rotX = nullptr;
     float* rotY = nullptr;
+
+#if CAMERA_RASTER_WORKER
+    TaskHandle_t rasterTaskHandle = nullptr;
+    SemaphoreHandle_t rasterStartSemaphore = nullptr;
+    SemaphoreHandle_t rasterDoneSemaphore = nullptr;
+    QuadTree* rasterWorkerTree = nullptr;
+    ProtoRGBColor* rasterWorkerColors = nullptr;
+    unsigned int rasterWorkerStart = 0;
+    unsigned int rasterWorkerEnd = 0;
+    volatile bool rasterWorkerStop = false;
+#endif
 
     struct Rotation2D {
         float m00;
@@ -156,6 +190,90 @@ private:
         return color;
     }
 
+    void RasterizePixelRange(QuadTree* tree, ProtoRGBColor* colors, unsigned int begin, unsigned int end) {
+        if (!tree || !colors) return;
+
+        for (unsigned int i = begin; i < end; i++) {
+            const Vector2D& pixelRay = cachedRays[i];
+            Node* leafNode = tree->Intersect(pixelRay);
+
+            if (!leafNode) {
+                colors[i].R = 0;
+                colors[i].G = 0;
+                colors[i].B = 0;
+                continue;
+            }
+
+            ProtoRGBColor color = CheckRasterPixel(leafNode->GetEntities(), leafNode->GetCount(), pixelRay);
+
+            colors[i].R = color.R;
+            colors[i].G = color.G;
+            colors[i].B = color.B;
+        }
+    }
+
+#if CAMERA_RASTER_WORKER
+    static void RasterWorkerThunk(void* arg) {
+        static_cast<Camera*>(arg)->RasterWorkerLoop();
+    }
+
+    void RasterWorkerLoop() {
+        for (;;) {
+            xSemaphoreTake(rasterStartSemaphore, portMAX_DELAY);
+
+            if (rasterWorkerStop) {
+                xSemaphoreGive(rasterDoneSemaphore);
+                break;
+            }
+
+            RasterizePixelRange(rasterWorkerTree, rasterWorkerColors, rasterWorkerStart, rasterWorkerEnd);
+            xSemaphoreGive(rasterDoneSemaphore);
+        }
+
+        vTaskDelete(nullptr);
+    }
+
+    bool EnsureRasterWorker() {
+        if (rasterTaskHandle) return true;
+
+        if (!rasterStartSemaphore) rasterStartSemaphore = xSemaphoreCreateBinary();
+        if (!rasterDoneSemaphore) rasterDoneSemaphore = xSemaphoreCreateBinary();
+        if (!rasterStartSemaphore || !rasterDoneSemaphore) return false;
+
+        rasterWorkerStop = false;
+        BaseType_t created = xTaskCreatePinnedToCore(
+            RasterWorkerThunk,
+            "CamRaster",
+            CAMERA_RASTER_WORKER_STACK_BYTES,
+            this,
+            CAMERA_RASTER_WORKER_PRIORITY,
+            &rasterTaskHandle,
+            CAMERA_RASTER_WORKER_CORE);
+
+        return created == pdPASS;
+    }
+
+    bool DispatchRasterWorker(QuadTree* tree, ProtoRGBColor* colors, unsigned int begin, unsigned int end) {
+        if ((end - begin) < CAMERA_RASTER_WORKER_MIN_PIXELS) return false;
+        if (!EnsureRasterWorker()) return false;
+
+        rasterWorkerTree = tree;
+        rasterWorkerColors = colors;
+        rasterWorkerStart = begin;
+        rasterWorkerEnd = end;
+        xSemaphoreGive(rasterStartSemaphore);
+        return true;
+    }
+
+    void WaitRasterWorker() {
+        if (rasterDoneSemaphore) {
+            xSemaphoreTake(rasterDoneSemaphore, portMAX_DELAY);
+        }
+        rasterWorkerTree = nullptr;
+        rasterWorkerColors = nullptr;
+    }
+#endif
+
 public:
     Camera(Transform* transform, PixelGroup* pixelGroup) {
         this->transform = transform;
@@ -173,6 +291,15 @@ public:
     }
 
     ~Camera() {
+#if CAMERA_RASTER_WORKER
+        if (rasterTaskHandle && rasterStartSemaphore && rasterDoneSemaphore) {
+            rasterWorkerStop = true;
+            xSemaphoreGive(rasterStartSemaphore);
+            xSemaphoreTake(rasterDoneSemaphore, pdMS_TO_TICKS(100));
+        }
+        if (rasterStartSemaphore) vSemaphoreDelete(rasterStartSemaphore);
+        if (rasterDoneSemaphore) vSemaphoreDelete(rasterDoneSemaphore);
+#endif
         heap_caps_free(cachedRays);
         heap_caps_free(tmpX);
         heap_caps_free(tmpY);
@@ -298,24 +425,16 @@ public:
 
             tree.Rebuild();
 
-            for (unsigned int i = 0; i < pixelCount; i++) {
-                const Vector2D& pixelRay = cachedRays[i];
-                Node* leafNode =  tree.Intersect(pixelRay);
-                
-                if (!leafNode) {
-                    colors[i].R = 0;
-                    colors[i].G = 0;
-                    colors[i].B = 0;
-                    continue;
-                }
-
-                ProtoRGBColor color = CheckRasterPixel(leafNode->GetEntities(), leafNode->GetCount(), pixelRay);
-
-                colors[i].R = color.R;
-                colors[i].G = color.G;
-                colors[i].B = color.B;
-
+#if CAMERA_RASTER_WORKER
+            const unsigned int workerStart = pixelCount / 2;
+            const bool workerDispatched = DispatchRasterWorker(&tree, colors, workerStart, pixelCount);
+            RasterizePixelRange(&tree, colors, 0, workerDispatched ? workerStart : pixelCount);
+            if (workerDispatched) {
+                WaitRasterWorker();
             }
+#else
+            RasterizePixelRange(&tree, colors, 0, pixelCount);
+#endif
         }
     }
     

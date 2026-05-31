@@ -65,16 +65,12 @@ class TasESP32S3KitV1 : public Controller {
 private:
     CameraLayout cameraLayout = CameraLayout(CameraLayout::ZForward, CameraLayout::YUp);
     Transform camTransform1 = Transform(Vector3D(), Vector3D(0.0f, 0.0f, -500.0f), Vector3D(1, 1, 1));
-    Transform camTransform2 = Transform(Vector3D(), Vector3D(0.0f, 0.0f, -500.0f), Vector3D(1, 1, 1));
 
     PixelGroup* camPixels1 = new PixelGroup(2048,P3HUB75);
-    PixelGroup* camPixels2 = new PixelGroup(4,P3HUB75);
     
     Camera* camMain1 = new Camera(&camTransform1, &cameraLayout, camPixels1);
-    Camera* camMain2 = new Camera(&camTransform2, &cameraLayout, camPixels2);
 
-    //CameraBase* cameras[1] = { &camMain1 };
-    CameraBase* cameras[2] = { camMain1, camMain2 };
+    CameraBase* cameras[1] = { camMain1 };
     struct RGB{
     uint8_t R;
     uint8_t G;
@@ -82,7 +78,7 @@ private:
     };
 
 public:
-    TasESP32S3KitV1(uint8_t maxBrightness) : Controller(cameras, 2, maxBrightness, 0){}
+    TasESP32S3KitV1(uint8_t maxBrightness) : Controller(cameras, 1, maxBrightness, 0){}
 
     void Initialize() override{
         #ifdef VERBOSE_STARTUP
