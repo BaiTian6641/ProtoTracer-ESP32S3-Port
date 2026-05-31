@@ -1637,7 +1637,8 @@ public:
         float xOffset = fGenMatXMove.Update();
         float yOffset = fGenMatYMove.Update();
 
-        MenuUpdate();
+        // MenuUpdate() is now called from main loop (core 1) to avoid I2C
+        // contention with the animation task on core 0.
 
         blurH.SetRatio(fGenBlur.Update());
         blurV.SetRatio(fGenBlur.Update());

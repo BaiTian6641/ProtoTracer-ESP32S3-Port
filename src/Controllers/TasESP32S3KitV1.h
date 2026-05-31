@@ -231,7 +231,7 @@ public:
         // the internal display functional without starving HUB75 frame time.
         // Set to 1 for every-frame preview (debug), 4-5 for production balance.
         static uint16_t sPreviewFrame = 0;
-        constexpr uint16_t kM5PreviewInterval = 4; // update preview every 4th frame
+        constexpr uint16_t kM5PreviewInterval = 1; // update preview every frame
         const bool doPreview = (++sPreviewFrame % kM5PreviewInterval == 0);
         
         if (doPreview) {

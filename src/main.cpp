@@ -726,30 +726,21 @@ void loop()
       virtualDisp->clearScreen();
       virtualDisp->fillScreenRGB888(255, 255, 255);
     }
-    qrcode_initText(&qrcode, qrcodeData, 3, 0, userConfig.ble_rx_uuid.c_str());
     if (WiFi.getMode() != WIFI_AP)
     {
       WiFi.mode(WIFI_AP);
       WiFi.softAP(userConfig.ota_ssid.c_str(), userConfig.ota_password.c_str());
     }
     Serial.println("");
-    if (virtualDisp) {
-      for (uint8_t y = 0; y < qrcode.size; y++)
-      {
-        for (uint8_t x = 0; x < qrcode.size; x++)
-        {
-          virtualDisp->drawPixelRGB888(60 - x, (y) + 34,
-                                       qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_r,
-                                       qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_g,
-                                       qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_b);
-        }
-      }
-    }
   }
   // controller.SetAccentBrightness(animation.GetAccentBrightness() * 25 + 5);
   // controller.SetBrightness(powf(animation.GetBrightness() + 3, 2) / 3);
   float ratio = (float)(millis() % 5000) / 5000.0f;
   controller.SetBrightness(animation.GetBrightness());
+
+  // Run Menu/BLE/gesture update on core 1 before animation to avoid I2C
+  // contention with the animation task (which may run on core 0).
+  animation.MenuUpdate();
 
 #if ANIM_RENDER_PIPELINE
   if (gPipelineActive) {
