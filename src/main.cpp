@@ -366,7 +366,11 @@ inline size_t GetFreePSRAM() {
 
 void setup()
 {
-  heap_caps_malloc_extmem_enable(0);
+  // Allow malloc() to use PSRAM for allocations >= 1024 bytes.
+  // Small allocs stay in fast internal DRAM; large allocs (BLE stack, JSON
+  // buffers, etc.) can spill to PSRAM to avoid malloc failure.
+  // HUB75 DMA buffers use heap_caps_malloc(CAP_INTERNAL) directly, unaffected.
+  heap_caps_malloc_extmem_enable(1024);
   pinMode(OTA_BTN, INPUT_PULLUP);
   Serial.begin(115200);
   Serial.println("/nStarting...");
