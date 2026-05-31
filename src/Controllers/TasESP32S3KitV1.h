@@ -3,6 +3,7 @@
 #include "Controller.h"
 #include "../Render/Camera.h"
 #include "../Flash/PixelGroups/P3HUB75.h"
+#include <esp_heap_caps.h>
 
 //HUB75
 #include <ESP32-VirtualMatrixPanel-I2S-DMA.h>
@@ -53,6 +54,14 @@ extern M5UnitGLASS2 display;
 
 // Change this to your needs, for details on VirtualPanel pls read the PDF!
 #define SERPENT true
+
+#ifndef HUB75_PIXEL_COLOR_DEPTH_BITS
+#define HUB75_PIXEL_COLOR_DEPTH_BITS 6
+#endif
+
+#ifndef HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS
+#define HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS 4
+#endif
 
 
 // placeholder for the matrix object
@@ -109,6 +118,8 @@ public:
         mxconfig.gpio.lat = LAT_PIN;
         mxconfig.gpio.oe = OE_PIN;
         mxconfig.clkphase = false;
+        mxconfig.double_buff = false;
+        mxconfig.setPixelColorDepthBits(HUB75_PIXEL_COLOR_DEPTH_BITS);
 
         // OK, now we can create our matrix object
         dma_display = new MatrixPanel_I2S_DMA(mxconfig);
@@ -117,14 +128,34 @@ public:
         #endif
 
         // let's adjust default brightness to about 75%
-        dma_display->setBrightness8(125);    // range is 0-255, 0 - 0%, 255 - 100%
+        if (dma_display) {
+            dma_display->setBrightness8(125);    // range is 0-255, 0 - 0%, 255 - 100%
+        }
+
+        Serial.printf("[HUB75] begin depth=%u intFree=%u largestBlk=%u psramFree=%u\n",
+                      mxconfig.getPixelColorDepthBits(),
+                      static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                      static_cast<unsigned int>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)),
+                      static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
 
         // Allocate memory and start DMA display
-        if(!dma_display->begin()){
+        bool dmaBeginOk = dma_display && dma_display->begin();
+        if (!dmaBeginOk && mxconfig.getPixelColorDepthBits() > HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS) {
+            Serial.printf("[HUB75] DMA allocation failed at %u-bit depth, retrying at %u-bit depth\n",
+                          mxconfig.getPixelColorDepthBits(), HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS);
+            delete dma_display;
+            dma_display = nullptr;
+            mxconfig.setPixelColorDepthBits(HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS);
+            dma_display = new MatrixPanel_I2S_DMA(mxconfig);
+            dmaBeginOk = dma_display && dma_display->begin();
+        }
+
+        if(!dmaBeginOk){
             display.clearDisplay();
             display.println("初始化HUB75驱动失败！");
             display.println("I2S 内存分配失败");
             Serial.println("****** I2S memory allocation failed ***********");
+            return;
         }
         #ifdef VERBOSE_STARTUP
         display.println("初始化HUB75驱动完成");
@@ -167,6 +198,8 @@ public:
     }
 
     void Display() override {
+        if (!virtualDisp) return;
+
         // Cache brightness — only push to DMA when it actually changes
         static uint8_t sLastBrightness = 255;
         if (brightness != sLastBrightness) {
@@ -206,5 +239,6 @@ public:
             display.display();
             display.endWrite();
         }
+
     }
 };

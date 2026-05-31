@@ -142,6 +142,7 @@ constexpr const char *kRelayFirmwareCachePath = "/relay_remote-firmware.bin";
 
 bool gRelayRoutesRegistered = false;
 bool gRuntimeServerStarted = false;
+bool gControllerInitialized = false;
 static bool gRelayRefreshPending = false;
 
 // Forward declaration — defined below
@@ -256,6 +257,17 @@ void EnsureRuntimeServerStarted()
   Serial.println("[INFO] Runtime HTTP server started");
 }
 
+void EnsureControllerInitialized()
+{
+  if (gControllerInitialized)
+  {
+    return;
+  }
+
+  controller.Initialize();
+  gControllerInitialized = true;
+}
+
 float FreeMem()
 {
   uint32_t stackT;
@@ -290,7 +302,6 @@ void setup()
   pinMode(OTA_BTN, INPUT_PULLUP);
   Serial.begin(115200);
   Serial.println("/nStarting...");
-  WiFi.mode(WIFI_AP_STA);
   //Wire.begin(41, 42);
   Wire.begin(47, 48);
   delay(100);
@@ -317,6 +328,11 @@ void setup()
   // delay(2000);
   display.println(TXT("Starting...", "启动中..."));
   delay(1000);
+
+#ifdef TASESP32S3
+  // Reserve HUB75 DMA internal SRAM before WiFi/BLE/animation allocate from the same heap.
+  EnsureControllerInitialized();
+#endif
 
   if (!EnsureUserConfig(userConfig))
   {
@@ -377,10 +393,12 @@ void setup()
 
   if (digitalRead(OTA_BTN) == LOW)
   {
-    controller.Initialize();
+    EnsureControllerInitialized();
 #ifdef TASESP32S3
-    virtualDisp->clearScreen();
-    virtualDisp->fillScreenRGB888(255, 255, 255);
+    if (virtualDisp) {
+      virtualDisp->clearScreen();
+      virtualDisp->fillScreenRGB888(255, 255, 255);
+    }
     qrcode_initText(&qrcode, qrcodeData, 3, 0, userConfig.ble_rx_uuid.c_str());
 #endif
     WiFi.mode(WIFI_AP);
@@ -412,18 +430,20 @@ void setup()
     display.display();
 #endif
     Serial.println("");
-    #ifdef TASESP32S3
-    for (uint8_t y = 0; y < qrcode.size; y++)
-    {
-      for (uint8_t x = 0; x < qrcode.size; x++)
+#ifdef TASESP32S3
+    if (virtualDisp) {
+      for (uint8_t y = 0; y < qrcode.size; y++)
       {
-        virtualDisp->drawPixelRGB888(60 - x, (y) + 34,
-                                     qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_r,
-                                     qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_g,
-                                     qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_b);
+        for (uint8_t x = 0; x < qrcode.size; x++)
+        {
+          virtualDisp->drawPixelRGB888(60 - x, (y) + 34,
+                                       qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_r,
+                                       qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_g,
+                                       qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_b);
+        }
       }
     }
-    #endif
+#endif
 
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
               { request->send(200, "text/html", index_html); });
@@ -459,6 +479,8 @@ void setup()
 #endif
     }
   }
+
+  WiFi.mode(WIFI_AP_STA);
 
   bool wifiConnected = ConnectWifiWithNetWizard(userConfig, server, 15000, &display);
   if (!wifiConnected)
@@ -562,7 +584,7 @@ void setup()
                        user_config_gitee_token,
                        &display,
                        kVerboseStartup);
-  controller.Initialize();
+  EnsureControllerInitialized();
 #ifndef VERBOSE_STARTUP
   display.progressBar(14, 50, 100, 8, 100);
 #endif
@@ -594,8 +616,10 @@ void loop()
   if (otaLongPress && otaCooldownElapsed)
   {
     gOtaButtonLastTriggerMs = now;
-    virtualDisp->clearScreen();
-    virtualDisp->fillScreenRGB888(255, 255, 255);
+    if (virtualDisp) {
+      virtualDisp->clearScreen();
+      virtualDisp->fillScreenRGB888(255, 255, 255);
+    }
     qrcode_initText(&qrcode, qrcodeData, 3, 0, userConfig.ble_rx_uuid.c_str());
     if (WiFi.getMode() != WIFI_AP)
     {
@@ -603,14 +627,16 @@ void loop()
       WiFi.softAP(userConfig.ota_ssid.c_str(), userConfig.ota_password.c_str());
     }
     Serial.println("");
-    for (uint8_t y = 0; y < qrcode.size; y++)
-    {
-      for (uint8_t x = 0; x < qrcode.size; x++)
+    if (virtualDisp) {
+      for (uint8_t y = 0; y < qrcode.size; y++)
       {
-        virtualDisp->drawPixelRGB888(60 - x, (y) + 34,
-                                     qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_r,
-                                     qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_g,
-                                     qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_b);
+        for (uint8_t x = 0; x < qrcode.size; x++)
+        {
+          virtualDisp->drawPixelRGB888(60 - x, (y) + 34,
+                                       qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_r,
+                                       qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_g,
+                                       qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_b);
+        }
       }
     }
   }

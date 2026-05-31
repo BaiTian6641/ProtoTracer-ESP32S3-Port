@@ -11,12 +11,15 @@
 #include "Node.h"
 #include <esp_heap_caps.h>
 #include <esp_dsp.h>
+
+#ifndef CAMERA_RASTER_WORKER
+#define CAMERA_RASTER_WORKER 0
+#endif
+
+#if CAMERA_RASTER_WORKER
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
-
-#ifndef CAMERA_RASTER_WORKER
-#define CAMERA_RASTER_WORKER 1
 #endif
 
 #ifndef CAMERA_RASTER_WORKER_CORE
