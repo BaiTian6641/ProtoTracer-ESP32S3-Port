@@ -416,12 +416,22 @@ public:
                               mArenaNodeRefs, &mArenaRefIdx, kArenaMaxNodeRefs);
             }
 
+            Object3D** objects = scene->GetCachedObjects();
+            const unsigned int objectCount = scene->GetCachedObjectCount();
+
             //for each object in the scene, get the triangles
-            for(int i = 0; i < scene->GetObjectCount(); i++){
-                if(scene->GetObjects()[i]->IsEnabled()){
+            for(unsigned int i = 0; i < objectCount; i++){
+                Object3D* object = objects[i];
+                if(object && object->IsEnabled()){
+                    TriangleGroup* triangleGroup = object->GetRenderTriangleGroup();
+                    Material* material = object->GetMaterial();
+                    if (!triangleGroup || !material) continue;
+
+                    Triangle3D* triangles = triangleGroup->GetTriangles();
+                    const int triangleCount = triangleGroup->GetTriangleCount();
                     //for each triangle in object, project onto 2d surface, but pass material
-                    for (int j = 0; j < scene->GetObjects()[i]->GetTriangleGroup()->GetTriangleCount(); j++) {
-                        tree.Insert(Triangle2D(invView, camPos, &scene->GetObjects()[i]->GetTriangleGroup()->GetTriangles()[j], scene->GetObjects()[i]->GetMaterial()));
+                    for (int j = 0; j < triangleCount; j++) {
+                        tree.Insert(Triangle2D(invView, camPos, &triangles[j], material));
                     }
                 }
             }

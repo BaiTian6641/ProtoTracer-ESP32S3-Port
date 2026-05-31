@@ -146,23 +146,24 @@ static volatile float gAnimRatio = 0.0f;
 static volatile bool gAnimTaskStop = false;
 static volatile bool gPipelineActive = false;
 
-// Copy animated vertices from all scene objects to their render buffers.
+// Copy completed animation vertices from all scene objects to their render buffers.
 static void PublishSceneVertices(Scene* scene) {
     if (!scene) return;
     Object3D** objs = scene->GetObjects();
     const unsigned int count = scene->GetObjectCount();
     for (unsigned int i = 0; i < count; i++) {
-        if (objs[i] && objs[i]->IsEnabled()) {
+        if (objs[i]) {
             objs[i]->PublishVertices();
         }
     }
 }
 
-// Animation worker: runs UpdateTime() on ANIM_TASK_CORE,
-// publishes double-buffered vertices, signals render core.
+// Animation worker: runs UpdateTime() on ANIM_TASK_CORE, publishes the finished
+// geometry snapshot, then signals the render core. Render waits for this signal
+// so material/effect state is not raced by an unsafe whole-scene overlap.
 static void AnimationTask(void*) {
     for (;;) {
-        // Wait for render to finish previous frame
+        // Wait for the main loop to request the next animation frame.
         if (xSemaphoreTake(gRenderDoneSemaphore, portMAX_DELAY) != pdTRUE) continue;
 
         if (gAnimTaskStop) {
@@ -652,8 +653,8 @@ void setup()
   EnsureControllerInitialized();
 
 #if ANIM_RENDER_PIPELINE
-  // Enable double-buffered vertex arrays on all scene objects so the render
-  // core reads a stable snapshot while the animation core writes the next frame.
+  // Enable double-buffered vertex arrays on all scene objects. Animation keeps
+  // writing the mutable mesh; Camera reads the explicit render snapshot.
   {
     Scene* scene = animation.GetScene();
     if (scene) {
@@ -674,7 +675,7 @@ void setup()
                                 nullptr, ANIM_TASK_PRIORITY, &gAnimTaskHandle,
                                 ANIM_TASK_CORE) == pdPASS) {
       gPipelineActive = true;
-      Serial.printf("[PIPELINE] Animation task started on core %d\n", ANIM_TASK_CORE);
+      Serial.printf("[PIPELINE] Animation task started on core %d (serialized publish mode)\n", ANIM_TASK_CORE);
     } else {
       Serial.println("[PIPELINE] Failed to create animation task; using single-core fallback");
       gPipelineActive = false;
@@ -747,13 +748,12 @@ void loop()
 
 #if ANIM_RENDER_PIPELINE
   if (gPipelineActive) {
-    // Kick off the animation task for this frame (it waits on renderDoneSemaphore).
-    // On the very first call this starts the pipeline; on subsequent calls
-    // the animation task may already be working on the next frame.
+    // Run animation on core 0 and publish a full geometry snapshot before render.
+    // Keeping the handoff serialized avoids races with material/effect state.
     gAnimRatio = ratio;
     xSemaphoreGive(gRenderDoneSemaphore);
 
-    // Wait for the animation task to finish this frame.
+    // Wait for the animation task to finish this frame before rasterization.
     xSemaphoreTake(gAnimDoneSemaphore, portMAX_DELAY);
   } else
 #endif

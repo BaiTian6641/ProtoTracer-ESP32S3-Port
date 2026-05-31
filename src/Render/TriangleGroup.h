@@ -2,6 +2,7 @@
 
 #include "Triangle3D.h"
 #include "IndexGroup.h"
+#include <cstddef>
 
 class TriangleGroup{
 private:

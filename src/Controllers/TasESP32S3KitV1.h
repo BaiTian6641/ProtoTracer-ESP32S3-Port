@@ -86,6 +86,15 @@ private:
     uint8_t B;
     };
 
+    static void LogHub75Heap(const char* phase, uint8_t depth) {
+        Serial.printf("[HUB75] %s depth=%u intFree=%u largestBlk=%u psramFree=%u\n",
+                      phase,
+                      depth,
+                      static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                      static_cast<unsigned int>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)),
+                      static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+    }
+
 public:
     TasESP32S3KitV1(uint8_t maxBrightness) : Controller(cameras, 1, maxBrightness, 0){}
 
@@ -132,14 +141,16 @@ public:
             dma_display->setBrightness8(125);    // range is 0-255, 0 - 0%, 255 - 100%
         }
 
-        Serial.printf("[HUB75] begin depth=%u intFree=%u largestBlk=%u psramFree=%u\n",
-                      mxconfig.getPixelColorDepthBits(),
-                      static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
-                      static_cast<unsigned int>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)),
-                      static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+        LogHub75Heap("begin", mxconfig.getPixelColorDepthBits());
 
         // Allocate memory and start DMA display
         bool dmaBeginOk = dma_display && dma_display->begin();
+        if (dmaBeginOk) {
+            LogHub75Heap("begin OK", mxconfig.getPixelColorDepthBits());
+        } else {
+            LogHub75Heap("begin failed", mxconfig.getPixelColorDepthBits());
+        }
+
         if (!dmaBeginOk && mxconfig.getPixelColorDepthBits() > HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS) {
             Serial.printf("[HUB75] DMA allocation failed at %u-bit depth, retrying at %u-bit depth\n",
                           mxconfig.getPixelColorDepthBits(), HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS);
@@ -147,7 +158,13 @@ public:
             dma_display = nullptr;
             mxconfig.setPixelColorDepthBits(HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS);
             dma_display = new MatrixPanel_I2S_DMA(mxconfig);
+            LogHub75Heap("retry begin", mxconfig.getPixelColorDepthBits());
             dmaBeginOk = dma_display && dma_display->begin();
+            if (dmaBeginOk) {
+                LogHub75Heap("retry OK", mxconfig.getPixelColorDepthBits());
+            } else {
+                LogHub75Heap("retry failed", mxconfig.getPixelColorDepthBits());
+            }
         }
 
         if(!dmaBeginOk){

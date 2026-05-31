@@ -3,6 +3,7 @@
 #include "../Materials/Material.h"
 #include "../Math/Transform.h"
 #include "TriangleGroup.h"
+#include <cstring>
 
 class Object3D {
 private:
@@ -12,8 +13,8 @@ private:
     Material* material;
     bool enabled = true;
 
-    // Double-buffer render vertices — animation writes modifiedTriangles,
-    // renderer reads this stable copy. Allocated once, published each frame.
+    // Animation mutates modifiedTriangles. The renderer can read this stable
+    // snapshot after PublishVertices() copies the completed frame into it.
     Vector3D* mRenderVertices = nullptr;
     TriangleGroup* mRenderTriangles = nullptr;
     bool mUseDoubleBuffer = false;
@@ -39,9 +40,9 @@ public:
     }
 
     ~Object3D(){
-        delete modifiedTriangles;
-        if (mRenderVertices) delete[] mRenderVertices;
         if (mRenderTriangles) delete mRenderTriangles;
+        if (mRenderVertices) delete[] mRenderVertices;
+        delete modifiedTriangles;
     }
 
     void Enable(){
@@ -130,21 +131,32 @@ public:
     }
 
     TriangleGroup* GetTriangleGroup(){
-        return mUseDoubleBuffer ? mRenderTriangles : modifiedTriangles;
+        return modifiedTriangles;
+    }
+
+    TriangleGroup* GetRenderTriangleGroup(){
+        return (mUseDoubleBuffer && mRenderTriangles) ? mRenderTriangles : modifiedTriangles;
     }
 
     // Allocate the render-side vertex buffer and TriangleGroup once.
-    // After this, GetTriangleGroup() returns the stable render copy.
-    // Call PublishVertices() after animation UpdateTransform() each frame.
+    // GetTriangleGroup() remains the mutable animation mesh; render code must
+    // explicitly call GetRenderTriangleGroup().
     void EnableDoubleBuffer() {
         if (mUseDoubleBuffer || !modifiedTriangles) return;
 
         const int vc = modifiedTriangles->GetVertexCount();
         mRenderVertices = new Vector3D[vc];
-        // Copy current vertices as initial state
+        if (!mRenderVertices) return;
+
         memcpy(mRenderVertices, modifiedTriangles->GetVertices(), vc * sizeof(Vector3D));
 
         mRenderTriangles = new TriangleGroup(mRenderVertices, modifiedTriangles);
+        if (!mRenderTriangles) {
+            delete[] mRenderVertices;
+            mRenderVertices = nullptr;
+            return;
+        }
+
         mUseDoubleBuffer = true;
     }
 
