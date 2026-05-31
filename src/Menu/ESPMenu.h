@@ -220,12 +220,18 @@ namespace
             return metadata;
         }
 
-        // Large JSON allocation - PSRAM-enabled by default via heap_caps_malloc_extmem_enable()
-        DynamicJsonDocument doc(65536);
+        // Allocate JSON doc in PSRAM to avoid 65KB internal DRAM pressure.
+        // heap_caps_malloc_extmem_enable(0) prevents automatic fallback, so use explicit SPIRAM alloc.
+        struct PsramAlloc {
+            void* allocate(size_t s) { return heap_caps_malloc(s, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
+            void  deallocate(void* p) { heap_caps_free(p); }
+        };
+        BasicJsonDocument<PsramAlloc> doc(65536);
         const DeserializationError err = deserializeJson(doc, animationFile);
         animationFile.close();
         if (err)
         {
+            Serial.printf("BLE manifest JSON parse failed: %s\n", err.c_str());
             return metadata;
         }
 
