@@ -11,11 +11,29 @@ private:
     int count = 0;
     int capacity = 0;
 
+    // Arena mode: preallocated triangle array owned by Camera, no heap alloc in render frame
+    bool mArenaMode = false;
+    Triangle2D* mArenaTriangles = nullptr;
+    int mArenaTriCapacity = 0;
+
 public:
     QuadTree(const BoundingBox2D& bounds): bbox(bounds){}
 
     ~QuadTree() {
-        free(entities);
+        if (!mArenaMode)
+            free(entities);
+    }
+
+    // Enable arena mode: use preallocated triangle array, pass node/ref pools to root
+    void UseArena(Triangle2D* triPool, int triCapacity,
+                  Node* nodePool, int* nodePoolIdx, int nodePoolCap,
+                  Triangle2D** refPool, int* refPoolIdx, int refPoolCap) {
+        mArenaMode = true;
+        mArenaTriangles = triPool;
+        mArenaTriCapacity = triCapacity;
+        entities = triPool;
+        capacity = triCapacity;
+        root.UseArena(nodePool, nodePoolIdx, nodePoolCap, refPool, refPoolIdx, refPoolCap);
     }
 
     bool Insert(Triangle2D* triangle){
@@ -26,6 +44,10 @@ public:
     }
 
     void Expand(int newCapacity) {
+        if (mArenaMode) {
+            // Arena is fixed-size; overflow silently degrades (triangles beyond capacity are dropped)
+            return;
+        }
         Triangle2D* newEntities = (Triangle2D*)realloc(entities, newCapacity * sizeof(Triangle2D));
         if (!newEntities) {
             // allocation failed — keep existing capacity, renderer will skip overflow

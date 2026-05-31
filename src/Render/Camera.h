@@ -27,6 +27,16 @@ private:
     Vector2D* cachedRays = nullptr; // reused buffer to avoid per-frame allocations
     unsigned int cachedRayCount = 0;
 
+    // Arena QuadTree pools — preallocated once, reset per frame (zero heap alloc in render path)
+    static constexpr int kArenaMaxTriangles = 350;   // 326 triangles + margin
+    static constexpr int kArenaMaxNodes = 128;        // estimated node pool
+    static constexpr int kArenaMaxNodeRefs = 2048;    // entity pointer slots for all nodes
+    Triangle2D mArenaTriangles[kArenaMaxTriangles];
+    Node mArenaNodes[kArenaMaxNodes];
+    Triangle2D* mArenaNodeRefs[kArenaMaxNodeRefs];
+    int mArenaNodeIdx = 0;
+    int mArenaRefIdx = 0;
+
     // SIMD buffers for batch rotate/scale
     float* tmpX = nullptr;
     float* tmpY = nullptr;
@@ -243,6 +253,12 @@ public:
             }
 
             QuadTree tree(transformedBounds);
+            // Use arena pools to eliminate per-frame heap allocation
+            mArenaNodeIdx = 0;
+            mArenaRefIdx = 0;
+            tree.UseArena(mArenaTriangles, kArenaMaxTriangles,
+                          mArenaNodes, &mArenaNodeIdx, kArenaMaxNodes,
+                          mArenaNodeRefs, &mArenaRefIdx, kArenaMaxNodeRefs);
 
             //for each object in the scene, get the triangles
             for(int i = 0; i < scene->GetObjectCount(); i++){
