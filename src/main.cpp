@@ -41,7 +41,6 @@ uint8_t maxAccentBrightness = 100;
   #include <ElegantOTAPro.h>
   #define USING_ELEGANTOTA_PRO 1
 #endif
-#include "qrcode.h"
 #include <M5Unified.h>
 #include <M5UnitGLASS2.h>
 #include <Wire.h>
@@ -102,7 +101,7 @@ constexpr bool kVerboseStartup = false;
 #endif
 
 #ifndef PROTOTRACER_FW_VERSION
-#define PROTOTRACER_FW_VERSION "1.0.9"
+#define PROTOTRACER_FW_VERSION "1.1.0"
 #endif
 
 #ifndef PROTOTRACER_FW_MANIFEST
@@ -184,9 +183,6 @@ static void AnimationTask(void*) {
     vTaskDelete(nullptr);
 }
 #endif
-
-QRCode qrcode;
-uint8_t qrcodeData[((29 * 29) + 7) / 8];
 
 // Face model updater config is defined here for clarity; logic lives in FaceModelUpdater.*
 
@@ -462,8 +458,6 @@ void setup()
   display.display();
   delay(1500);
 
-  qrcode_initText(&qrcode, qrcodeData, 3, 0, userConfig.ble_rx_uuid.c_str());
-
   if (digitalRead(OTA_BTN) == LOW)
   {
     EnsureControllerInitialized();
@@ -472,7 +466,6 @@ void setup()
       virtualDisp->clearScreen();
       virtualDisp->fillScreenRGB888(255, 255, 255);
     }
-    qrcode_initText(&qrcode, qrcodeData, 3, 0, userConfig.ble_rx_uuid.c_str());
 #endif
     WiFi.mode(WIFI_AP);
     WiFi.softAP(userConfig.ota_ssid.c_str(), userConfig.ota_password.c_str());
@@ -503,20 +496,6 @@ void setup()
     display.display();
 #endif
     Serial.println("");
-#ifdef TASESP32S3
-    if (virtualDisp) {
-      for (uint8_t y = 0; y < qrcode.size; y++)
-      {
-        for (uint8_t x = 0; x < qrcode.size; x++)
-        {
-          virtualDisp->drawPixelRGB888(60 - x, (y) + 34,
-                                       qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_r,
-                                       qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_g,
-                                       qrcode_getModule(&qrcode, x, (28 - y)) ? 0 : userConfig.user_b);
-        }
-      }
-    }
-#endif
 
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
               { request->send(200, "text/html", index_html); });

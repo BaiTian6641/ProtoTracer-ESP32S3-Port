@@ -1698,16 +1698,19 @@ public:
 
         ApplyHueShiftToCurrentFaceMaterial(Menu::GetHueShift());
 
-        if (enableBlink)
-        {
-            blink.Update();
-        }
-
         sA.SetHueAngle(ratio * 360.0f * 4.0f);
         sA.SetMirrorYState(Menu::MirrorSpectrumAnalyzer());
         sA.SetFlipYState(!Menu::MirrorSpectrumAnalyzer());
 
         eEA.Update();
+
+        // Blink must run after eEA so the BlinkTrack overrides the auto-linked
+        // Blink/SEyeBlink morph weights that eEA would otherwise zero out.
+        if (enableBlink)
+        {
+            blink.Update();
+        }
+
         UpdateFace();
 
         rainbowNoise.Update(ratio);
