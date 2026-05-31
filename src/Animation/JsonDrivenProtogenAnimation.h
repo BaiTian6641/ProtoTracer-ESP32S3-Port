@@ -695,8 +695,33 @@ private:
         RegisterMaterial("whiteMat", &expressionColor);
         RegisterMaterial("orangeMat", &expressionColor);
 
+        RegisterHueShiftable(&gradientMat);
+        RegisterHueShiftable(&rainbowMat);
+        RegisterHueShiftable(&backgroundMat);
         RegisterHueShiftable(&expressionColor);
         RegisterHueShiftable(&rainbowSpiral);
+    }
+
+    // Auto-switch the shared expressionColor material's RGB when a named color
+    // alias is selected. Returns true if the name matched a known color.
+    bool ApplyExpressionColorByName(const String &name) {
+        struct ColorEntry { const char* alias; uint8_t r, g, b; };
+        static const ColorEntry kColorMap[] = {
+            {"redMat",    255,   0,   0},
+            {"orangeMat", 255, 165,   0},
+            {"whiteMat",  255, 255, 255},
+            {"greenMat",    0, 255,   0},
+            {"blueMat",     0,   0, 255},
+            {"yellowMat", 255, 255,   0},
+            {"purpleMat", 255,   0, 255},
+        };
+        for (const auto &e : kColorMap) {
+            if (name.equalsIgnoreCase(e.alias)) {
+                expressionColor.SetRGB(ProtoRGBColor(e.r, e.g, e.b));
+                return true;
+            }
+        }
+        return false;
     }
 
     void RegisterDefaultEffects()
@@ -1159,7 +1184,13 @@ private:
             Object3D *faceObject = GetFaceObject();
             if (faceObject)
             {
-                faceObject->SetMaterial(ResolveMaterial(target->faceMat));
+                Material *mat = ResolveMaterial(target->faceMat);
+                faceObject->SetMaterial(mat);
+                // Auto-switch the shared expressionColor's RGB when a color
+                // alias is selected (redMat→red, blueMat→blue, etc.)
+                if (mat == &expressionColor) {
+                    ApplyExpressionColorByName(target->faceMat);
+                }
             }
         }
 
