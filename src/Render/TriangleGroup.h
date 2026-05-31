@@ -14,6 +14,8 @@ private:
     int triangleCount;
     int uvVertexCount;
     bool hasUV = false;
+    bool ownsVertices = true;
+    bool ownsIndexGroup = true;
 
 public:
     TriangleGroup(Vector3D* vertices, IndexGroup* indexGroup, int vertexCount, int triangleCount) : vertexCount(vertexCount), triangleCount(triangleCount){
@@ -26,6 +28,41 @@ public:
             triangles[i].p1 = &vertices[indexGroup[i].A];
             triangles[i].p2 = &vertices[indexGroup[i].B];
             triangles[i].p3 = &vertices[indexGroup[i].C];
+        }
+    }
+
+    // External-vertex constructor: caller owns the vertex buffer and index/UV data.
+    // Triangle pointers are wired to externalVertices using the same offsets as source.
+    TriangleGroup(Vector3D* externalVertices, TriangleGroup* source)
+        : vertexCount(source->GetVertexCount()), triangleCount(source->GetTriangleCount()) {
+        vertices = externalVertices;
+        ownsVertices = false;
+        indexGroup = source->GetIndexGroup();
+        ownsIndexGroup = false;
+
+        if (source->hasUV) {
+            hasUV = true;
+            uvVertexCount = source->uvVertexCount;
+            uvIndexGroup = source->uvIndexGroup;
+            uvVertices = source->uvVertices;
+        }
+
+        triangles = new Triangle3D[triangleCount];
+        Triangle3D* srcTris = source->GetTriangles();
+        Vector3D* srcVerts = source->GetVertices();
+        for (int i = 0; i < triangleCount; i++) {
+            ptrdiff_t off1 = srcTris[i].p1 - srcVerts;
+            ptrdiff_t off2 = srcTris[i].p2 - srcVerts;
+            ptrdiff_t off3 = srcTris[i].p3 - srcVerts;
+            triangles[i].p1 = &vertices[off1];
+            triangles[i].p2 = &vertices[off2];
+            triangles[i].p3 = &vertices[off3];
+            if (hasUV) {
+                triangles[i].p1UV = srcTris[i].p1UV;
+                triangles[i].p2UV = srcTris[i].p2UV;
+                triangles[i].p3UV = srcTris[i].p3UV;
+                triangles[i].hasUV = true;
+            }
         }
     }
 
@@ -119,9 +156,9 @@ public:
     }
 
     ~TriangleGroup(){
-        delete[] vertices;
+        if (ownsVertices) delete[] vertices;
         delete[] triangles;
-        delete[] indexGroup;
+        if (ownsIndexGroup) delete[] indexGroup;
     }
 
     IndexGroup* GetIndexGroup(){

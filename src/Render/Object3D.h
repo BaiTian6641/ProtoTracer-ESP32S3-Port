@@ -12,6 +12,12 @@ private:
     Material* material;
     bool enabled = true;
 
+    // Double-buffer render vertices — animation writes modifiedTriangles,
+    // renderer reads this stable copy. Allocated once, published each frame.
+    Vector3D* mRenderVertices = nullptr;
+    TriangleGroup* mRenderTriangles = nullptr;
+    bool mUseDoubleBuffer = false;
+
 public:
     Object3D(TriangleGroup* originalTriangles, Material* material){
         this->originalTriangles = originalTriangles;
@@ -34,6 +40,8 @@ public:
 
     ~Object3D(){
         delete modifiedTriangles;
+        if (mRenderVertices) delete[] mRenderVertices;
+        if (mRenderTriangles) delete mRenderTriangles;
     }
 
     void Enable(){
@@ -122,7 +130,29 @@ public:
     }
 
     TriangleGroup* GetTriangleGroup(){
-        return modifiedTriangles;
+        return mUseDoubleBuffer ? mRenderTriangles : modifiedTriangles;
+    }
+
+    // Allocate the render-side vertex buffer and TriangleGroup once.
+    // After this, GetTriangleGroup() returns the stable render copy.
+    // Call PublishVertices() after animation UpdateTransform() each frame.
+    void EnableDoubleBuffer() {
+        if (mUseDoubleBuffer || !modifiedTriangles) return;
+
+        const int vc = modifiedTriangles->GetVertexCount();
+        mRenderVertices = new Vector3D[vc];
+        // Copy current vertices as initial state
+        memcpy(mRenderVertices, modifiedTriangles->GetVertices(), vc * sizeof(Vector3D));
+
+        mRenderTriangles = new TriangleGroup(mRenderVertices, modifiedTriangles);
+        mUseDoubleBuffer = true;
+    }
+
+    // Copy animated vertices to the stable render buffer (call from animation core).
+    void PublishVertices() {
+        if (!mUseDoubleBuffer || !mRenderVertices || !modifiedTriangles) return;
+        memcpy(mRenderVertices, modifiedTriangles->GetVertices(),
+               modifiedTriangles->GetVertexCount() * sizeof(Vector3D));
     }
 
     Material* GetMaterial(){

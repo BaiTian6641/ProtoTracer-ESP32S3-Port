@@ -50,6 +50,28 @@ uint8_t maxAccentBrightness = 100;
 #include "Network/FirmwareUpdater.h"
 #include "Network/UserConfigManager.h"
 
+#ifndef ANIM_RENDER_PIPELINE
+#define ANIM_RENDER_PIPELINE 1
+#endif
+
+#if ANIM_RENDER_PIPELINE
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
+
+#ifndef ANIM_TASK_CORE
+#define ANIM_TASK_CORE 0
+#endif
+
+#ifndef ANIM_TASK_PRIORITY
+#define ANIM_TASK_PRIORITY 1
+#endif
+
+#ifndef ANIM_TASK_STACK_BYTES
+#define ANIM_TASK_STACK_BYTES 8192
+#endif
+#endif
+
 #ifdef LANG_CN
 #define TXT(en, cn) cn
 #else
@@ -116,6 +138,49 @@ Adafruit_NeoPixel nowpixels(1, 20, NEO_GRB + NEO_KHZ800);
 
 JsonDrivenProtogenAnimation animation = JsonDrivenProtogenAnimation();
 
+#if ANIM_RENDER_PIPELINE
+static SemaphoreHandle_t gAnimDoneSemaphore = nullptr;
+static SemaphoreHandle_t gRenderDoneSemaphore = nullptr;
+static TaskHandle_t gAnimTaskHandle = nullptr;
+static volatile float gAnimRatio = 0.0f;
+static volatile bool gAnimTaskStop = false;
+static volatile bool gPipelineActive = false;
+
+// Copy animated vertices from all scene objects to their render buffers.
+static void PublishSceneVertices(Scene* scene) {
+    if (!scene) return;
+    Object3D** objs = scene->GetObjects();
+    const unsigned int count = scene->GetObjectCount();
+    for (unsigned int i = 0; i < count; i++) {
+        if (objs[i] && objs[i]->IsEnabled()) {
+            objs[i]->PublishVertices();
+        }
+    }
+}
+
+// Animation worker: runs UpdateTime() on ANIM_TASK_CORE,
+// publishes double-buffered vertices, signals render core.
+static void AnimationTask(void*) {
+    for (;;) {
+        // Wait for render to finish previous frame
+        if (xSemaphoreTake(gRenderDoneSemaphore, portMAX_DELAY) != pdTRUE) continue;
+
+        if (gAnimTaskStop) {
+            xSemaphoreGive(gAnimDoneSemaphore);
+            break;
+        }
+
+        const float ratio = gAnimRatio;
+        animation.UpdateTime(ratio);
+
+        // Publish stable vertex snapshots for the render core
+        PublishSceneVertices(animation.GetScene());
+
+        xSemaphoreGive(gAnimDoneSemaphore);
+    }
+    vTaskDelete(nullptr);
+}
+#endif
 
 QRCode qrcode;
 uint8_t qrcodeData[((29 * 29) + 7) / 8];
@@ -585,6 +650,41 @@ void setup()
                        &display,
                        kVerboseStartup);
   EnsureControllerInitialized();
+
+#if ANIM_RENDER_PIPELINE
+  // Enable double-buffered vertex arrays on all scene objects so the render
+  // core reads a stable snapshot while the animation core writes the next frame.
+  {
+    Scene* scene = animation.GetScene();
+    if (scene) {
+      Object3D** objs = scene->GetObjects();
+      const unsigned int count = scene->GetObjectCount();
+      for (unsigned int i = 0; i < count; i++) {
+        if (objs[i]) objs[i]->EnableDoubleBuffer();
+      }
+    }
+  }
+
+  // Create pipeline semaphores and launch the animation task on ANIM_TASK_CORE.
+  gAnimDoneSemaphore = xSemaphoreCreateBinary();
+  gRenderDoneSemaphore = xSemaphoreCreateBinary();
+  if (gAnimDoneSemaphore && gRenderDoneSemaphore) {
+    gAnimTaskStop = false;
+    if (xTaskCreatePinnedToCore(AnimationTask, "ProtoAnim", ANIM_TASK_STACK_BYTES,
+                                nullptr, ANIM_TASK_PRIORITY, &gAnimTaskHandle,
+                                ANIM_TASK_CORE) == pdPASS) {
+      gPipelineActive = true;
+      Serial.printf("[PIPELINE] Animation task started on core %d\n", ANIM_TASK_CORE);
+    } else {
+      Serial.println("[PIPELINE] Failed to create animation task; using single-core fallback");
+      gPipelineActive = false;
+    }
+  } else {
+    Serial.println("[PIPELINE] Failed to create semaphores; using single-core fallback");
+    gPipelineActive = false;
+  }
+#endif
+
 #ifndef VERBOSE_STARTUP
   display.progressBar(14, 50, 100, 8, 100);
 #endif
@@ -644,9 +744,25 @@ void loop()
   // controller.SetBrightness(powf(animation.GetBrightness() + 3, 2) / 3);
   float ratio = (float)(millis() % 5000) / 5000.0f;
   controller.SetBrightness(animation.GetBrightness());
-  yield(); // Feed watchdog before animation update
-  animation.UpdateTime(ratio);
-  yield(); // Feed watchdog before render
+
+#if ANIM_RENDER_PIPELINE
+  if (gPipelineActive) {
+    // Kick off the animation task for this frame (it waits on renderDoneSemaphore).
+    // On the very first call this starts the pipeline; on subsequent calls
+    // the animation task may already be working on the next frame.
+    gAnimRatio = ratio;
+    xSemaphoreGive(gRenderDoneSemaphore);
+
+    // Wait for the animation task to finish this frame.
+    xSemaphoreTake(gAnimDoneSemaphore, portMAX_DELAY);
+  } else
+#endif
+  {
+    yield(); // Feed watchdog before animation update
+    animation.UpdateTime(ratio);
+    yield(); // Feed watchdog before render
+  }
+
   controller.Render(animation.GetScene());
   yield(); // Feed watchdog before display
 #elif defined(TASESP32P4)
