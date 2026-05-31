@@ -662,12 +662,15 @@ void loop()
   // Sample every ~2 seconds to avoid serial bottleneck
   if (nowPrint - lastPrintMs >= 2000) {
     lastPrintMs = nowPrint;
-    Serial.printf("anim=%.2fms render=%.2fms intFree=%u largestBlk=%u psramFree=%u\n",
+    Serial.printf("anim=%.2fms render=%.2fms intFree=%u largestBlk=%u psramFree=%u micFrames=%lu micDrops=%lu micStack=%lu\n",
         animation.GetAnimationTime() * 1000.0f,
         controller.GetRenderTime() * 1000.0f,
         GetFreeInternalDRAM(),
         GetLargestFreeInternalBlock(),
-        GetFreePSRAM());
+        GetFreePSRAM(),
+        static_cast<unsigned long>(MicrophoneFourierIT::GetProcessedFrameCount()),
+        static_cast<unsigned long>(MicrophoneFourierIT::GetSamplerDropCount()),
+        static_cast<unsigned long>(MicrophoneFourierIT::GetTaskStackHighWater()));
   }
 #endif
 }
