@@ -647,6 +647,14 @@ void setup()
   Serial.printf("[INFO] WiFi off — intFree=%u largestBlk=%u psramFree=%u\n",
                 GetFreeInternalDRAM(), GetLargestFreeInternalBlock(), GetFreePSRAM());
 
+  // Redirect ALL future malloc() to PSRAM. Internal DRAM is now reserved
+  // exclusively for DMA-capable allocations (BLE controller, HUB75, Camera SIMD).
+  // This is the closest thing to a "garbage collector" on bare-metal — it stops
+  // internal DRAM fragmentation dead by preventing any new application allocs.
+  heap_caps_malloc_extmem_enable(0);
+  Serial.printf("[INFO] malloc→PSRAM lock engaged — intFree=%u largestBlk=%u\n",
+                GetFreeInternalDRAM(), GetLargestFreeInternalBlock());
+
   // Now initialize BLE + gesture sensor on a clean heap.
   animation.InitializeMenuPeripherals(17, animation.GetBoopSensorThreshold());
 
