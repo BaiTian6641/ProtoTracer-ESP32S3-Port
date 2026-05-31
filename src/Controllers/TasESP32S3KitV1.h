@@ -249,7 +249,7 @@ public:
                     // Hard luminance threshold for crisp 1-bit preview (no dithering).
                     // Midpoint of 0-765 range: >= 384 → white, else black.
                     const uint16_t lum = (uint16_t)c.R + (uint16_t)c.G + (uint16_t)c.B;
-                    display.drawPixel(64 - x, (32 - y), lum >= 384 ? TFT_WHITE : TFT_BLACK);
+                    display.drawPixel(64 - x, (32 - y), lum >= 100 ? TFT_WHITE : TFT_BLACK);
                 }
             }
         }
