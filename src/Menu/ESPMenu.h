@@ -329,6 +329,7 @@ namespace
         repo["asset_base_url"] = relayBaseUrl;
 
         String payload;
+        payload.reserve(measureJson(doc) + 1);
         serializeJson(doc, payload);
         return payload;
     }
@@ -458,6 +459,7 @@ namespace
         }
 
         String payload;
+        payload.reserve(measureJson(response) + 1);
         serializeJson(response, payload);
         return payload;
     }
@@ -707,6 +709,7 @@ namespace
             pong["service_uuid"] = BLE_SERIAL2_SERVICE_UUID;
 
             String payload;
+            payload.reserve(measureJson(pong) + 1);
             serializeJson(pong, payload);
             QueueBleJsonPayload(payload);
             return true;
@@ -1165,6 +1168,10 @@ private:
         advertising->setScanResponse(true);
         advertising->start();
         Serial.println("BLE UART ready, waiting for client...");
+
+        // Pre-allocate the RX buffer while internal DRAM is still clean — avoids
+        // fragmenting the heap with incremental String growth on first RX write.
+        bleRxJsonBuffer.reserve(kBleRxJsonBufferBytes);
     }
 
 public:

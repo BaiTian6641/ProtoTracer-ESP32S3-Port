@@ -366,11 +366,12 @@ inline size_t GetFreePSRAM() {
 
 void setup()
 {
-  // Allow malloc() to use PSRAM for allocations >= 256 bytes.
-  // The BLE/WiFi controllers need internal DRAM for DMA buffers — those use
-  // heap_caps_malloc(CAP_INTERNAL) directly and are unaffected. Nearly all
-  // plain malloc() goes to PSRAM to preserve internal DRAM for DMA subsystems.
-  heap_caps_malloc_extmem_enable(256);
+  // Allow malloc() to use PSRAM for allocations > 64 bytes.
+  // Only tiny allocs (<= 64 B) stay in internal DRAM. The BLE / WiFi
+  // controllers request internal DMA memory via heap_caps_malloc(CAP_INTERNAL)
+  // and are unaffected. Nearly all application malloc() goes to PSRAM, leaving
+  // the internal 512 KB DRAM for the radio stacks.
+  heap_caps_malloc_extmem_enable(64);
   pinMode(OTA_BTN, INPUT_PULLUP);
   Serial.begin(115200);
   Serial.println("/nStarting...");
