@@ -69,23 +69,20 @@ private:
     static DerivativeFilter peakFilterRate;
 
     static uint16_t frequencyBins[OutputBins];
-    static float SampleArray[FFTSize*2];
-    static int SampleArrayInt[FFTSize * 2];
-    static float inputStorage[FFTSize];
-    static int inputStorageInt[FFTSize];
-    static float outputMagn[FFTSize];
-    static float outputData[OutputBins];
-    static float outputDataFilt[OutputBins];
-    static float pendingInputStorage[FFTSize];
-    static float pendingOutputData[OutputBins];
-    static float pendingOutputDataFilt[OutputBins];
-    static float publishedInputStorage[FFTSize];
-    static float publishedOutputData[OutputBins];
-    static float publishedOutputDataFilt[OutputBins];
+    static float* SampleArray;
+    static float* inputStorage;
+    static float* outputData;
+    static float* outputDataFilt;
+    static float* pendingInputStorage;
+    static float* pendingOutputData;
+    static float* pendingOutputDataFilt;
+    static float* publishedInputStorage;
+    static float* publishedOutputData;
+    static float* publishedOutputDataFilt;
+    static float* noiseMagnitude;
     static float pendingThreshold;
     static float publishedThreshold;
     static FFTFilter fftFilters[OutputBins];
-    static float noiseMagnitude[FFTSize];
 
     
     //static arm_cfft_radix4_instance_f32 RadixFFT;
@@ -106,10 +103,8 @@ private:
             return;
         }
 
-        int inputSample = analogRead(pin);
-
         const uint16_t storageIndex = samplesStorage;
-        inputStorageInt[storageIndex] = inputSample;
+        inputStorage[storageIndex] = (float)analogRead(pin);
         samplesStorage = storageIndex + 1;
 
         if(samplesStorage >= FFTSize){
@@ -168,8 +163,7 @@ private:
         samplesReady = false;
 
         for(int i = 0; i< FFTSize; i++){
-            inputStorage[i] = (float)inputStorageInt[i];
-            SampleArray[i*2 + 0] = (float)inputStorageInt[i];
+            SampleArray[i*2 + 0] = inputStorage[i];
             SampleArray[i*2 + 1] = 0;
         }
 
@@ -218,22 +212,19 @@ private:
     }
 
     static void EstimateNoiseProfile() {
-        const int noiseFrames = 50; // Number of frames to average
-        memset(noiseMagnitude, 0, sizeof(noiseMagnitude));
+        const int noiseFrames = 50;
+        memset(noiseMagnitude, 0, FFTSize * sizeof(float));
     
         for (int f = 0; f < noiseFrames; ++f) {
-            // Capture a frame
             for (int i = 0; i < FFTSize; ++i) {
                 inputStorage[i] = (float)analogRead(pin);
                 SampleArray[i * 2] = inputStorage[i];
                 SampleArray[i * 2 + 1] = 0.0f;
             }
     
-            // Perform FFT
             dsps_fft4r_fc32(SampleArray, FFTSize);
             dsps_bit_rev4r_fc32(SampleArray, FFTSize);
     
-            // Accumulate magnitude
             for (int i = 0; i < FFTSize; ++i) {
                 float real = SampleArray[i * 2];
                 float imag = SampleArray[i * 2 + 1];
@@ -241,7 +232,6 @@ private:
             }
         }
     
-        // Average the accumulated magnitudes
         for (int i = 0; i < FFTSize; ++i) {
             noiseMagnitude[i] /= noiseFrames;
         }
@@ -278,6 +268,28 @@ public:
         MicrophoneFourierIT::pendingThreshold = 0.0f;
         MicrophoneFourierIT::publishedThreshold = 0.0f;
 
+        // Allocate FFT working buffers in PSRAM to reduce internal DRAM pressure.
+        // ESP-DSP FFT uses CPU (not DMA), so PSRAM via cache is safe.
+        #define MIC_PSRAM_ALLOC(sz) heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+        SampleArray        = (float*)MIC_PSRAM_ALLOC(FFTSize * 2 * sizeof(float));
+        inputStorage       = (float*)MIC_PSRAM_ALLOC(FFTSize * sizeof(float));
+        outputData         = (float*)MIC_PSRAM_ALLOC(OutputBins * sizeof(float));
+        outputDataFilt     = (float*)MIC_PSRAM_ALLOC(OutputBins * sizeof(float));
+        pendingInputStorage  = (float*)MIC_PSRAM_ALLOC(FFTSize * sizeof(float));
+        pendingOutputData    = (float*)MIC_PSRAM_ALLOC(OutputBins * sizeof(float));
+        pendingOutputDataFilt= (float*)MIC_PSRAM_ALLOC(OutputBins * sizeof(float));
+        publishedInputStorage  = (float*)MIC_PSRAM_ALLOC(FFTSize * sizeof(float));
+        publishedOutputData    = (float*)MIC_PSRAM_ALLOC(OutputBins * sizeof(float));
+        publishedOutputDataFilt= (float*)MIC_PSRAM_ALLOC(OutputBins * sizeof(float));
+        noiseMagnitude     = (float*)MIC_PSRAM_ALLOC(FFTSize * sizeof(float));
+        #undef MIC_PSRAM_ALLOC
+
+        if (!SampleArray || !inputStorage || !outputData || !noiseMagnitude) {
+            Serial.println("[MIC] PSRAM alloc failed — audio disabled");
+            isInitialized = false;
+            return;
+        }
+
         float windowRange = float(sampleRate) / 2.0f / float(OutputBins);
 
         timeStep.SetFrequency(refreshRate);
@@ -288,6 +300,10 @@ public:
         }
         
         EstimateNoiseProfile();
+        
+        // Free noise profile after estimation — not needed at runtime
+        heap_caps_free(noiseMagnitude);
+        noiseMagnitude = nullptr;
         
         isInitialized = true;
 
@@ -401,23 +417,20 @@ SemaphoreHandle_t MicrophoneFourierIT::samplesReadySemaphore = nullptr;
 portMUX_TYPE MicrophoneFourierIT::outputMux = portMUX_INITIALIZER_UNLOCKED;
 
 uint16_t MicrophoneFourierIT::frequencyBins[];
-float MicrophoneFourierIT::SampleArray[];
-int MicrophoneFourierIT::SampleArrayInt[];
-float MicrophoneFourierIT::inputStorage[];
-int MicrophoneFourierIT::inputStorageInt[];
-float MicrophoneFourierIT::outputMagn[];
-float MicrophoneFourierIT::outputData[];
-float MicrophoneFourierIT::outputDataFilt[];
-float MicrophoneFourierIT::pendingInputStorage[];
-float MicrophoneFourierIT::pendingOutputData[];
-float MicrophoneFourierIT::pendingOutputDataFilt[];
-float MicrophoneFourierIT::publishedInputStorage[];
-float MicrophoneFourierIT::publishedOutputData[];
-float MicrophoneFourierIT::publishedOutputDataFilt[];
+float* MicrophoneFourierIT::SampleArray = nullptr;
+float* MicrophoneFourierIT::inputStorage = nullptr;
+float* MicrophoneFourierIT::outputData = nullptr;
+float* MicrophoneFourierIT::outputDataFilt = nullptr;
+float* MicrophoneFourierIT::pendingInputStorage = nullptr;
+float* MicrophoneFourierIT::pendingOutputData = nullptr;
+float* MicrophoneFourierIT::pendingOutputDataFilt = nullptr;
+float* MicrophoneFourierIT::publishedInputStorage = nullptr;
+float* MicrophoneFourierIT::publishedOutputData = nullptr;
+float* MicrophoneFourierIT::publishedOutputDataFilt = nullptr;
+float* MicrophoneFourierIT::noiseMagnitude = nullptr;
 float MicrophoneFourierIT::pendingThreshold = 0.0f;
 float MicrophoneFourierIT::publishedThreshold = 0.0f;
 FFTFilter MicrophoneFourierIT::fftFilters[];
-float MicrophoneFourierIT::noiseMagnitude[];
 
 //arm_cfft_radix4_instance_f32 MicrophoneFourierIT::RadixFFT;
 

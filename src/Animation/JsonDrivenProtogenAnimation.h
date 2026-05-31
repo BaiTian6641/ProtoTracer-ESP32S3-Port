@@ -20,7 +20,6 @@
 #include "../Signals/FunctionGenerator.h"
 #include "../Materials/GradientMaterial.h"
 #include "../Materials/SimpleMaterial.h"
-#include "../Materials/Animated/RainbowNoise.h"
 #include "../Materials/Animated/RainbowSpiral.h"
 #include "../Materials/Animated/SpectrumAnalyzer.h"
 #include "../Materials/MaterialAnimator.h"
@@ -113,18 +112,11 @@ private:
     JsonNukudeFace jsonFace;
     bool jsonFaceLoaded = false;
     Background background;
-    EasyEaseAnimator<180> eEA = EasyEaseAnimator<180>(EasyEaseInterpolation::Overshoot, 1.0f, 0.25f);
+    EasyEaseAnimator<128> eEA = EasyEaseAnimator<128>(EasyEaseInterpolation::Overshoot, 1.0f, 0.25f);
 
     // Materials
-    RainbowNoise rainbowNoise;
     RainbowSpiral rainbowSpiral;
-    SimpleMaterial redMaterial = SimpleMaterial(ProtoRGBColor(255, 0, 0));
-    SimpleMaterial orangeMaterial = SimpleMaterial(ProtoRGBColor(255, 165, 0));
-    SimpleMaterial whiteMaterial = SimpleMaterial(ProtoRGBColor(255, 255, 255));
-    SimpleMaterial greenMaterial = SimpleMaterial(ProtoRGBColor(0, 255, 0));
-    SimpleMaterial blueMaterial = SimpleMaterial(ProtoRGBColor(0, 0, 255));
-    SimpleMaterial yellowMaterial = SimpleMaterial(ProtoRGBColor(255, 255, 0));
-    SimpleMaterial purpleMaterial = SimpleMaterial(ProtoRGBColor(255, 0, 255));
+    SimpleMaterial expressionColor = SimpleMaterial(ProtoRGBColor(User_R, User_G, User_B));
 
     ProtoRGBColor gradientSpectrum[3] = {ProtoRGBColor(User_R, User_G, User_B), ProtoRGBColor(User_R, User_G, User_B), ProtoRGBColor(User_R, User_G, User_B)};
     ProtoRGBColor rainbowSpectrum[6] = {ProtoRGBColor(255, 0, 0), ProtoRGBColor(255, 255, 0), ProtoRGBColor(0, 255, 0), ProtoRGBColor(0, 255, 255), ProtoRGBColor(0, 0, 255), ProtoRGBColor(255, 0, 255)};
@@ -676,41 +668,34 @@ private:
 
         // Base + stock palette materials
         materialAnimator.SetBaseMaterial(Material::Add, &gradientMat);
-        materialAnimator.AddMaterial(Material::Replace, &orangeMaterial, 40, 0.0f, 1.0f); // layer 1
-        materialAnimator.AddMaterial(Material::Replace, &whiteMaterial, 40, 0.0f, 1.0f);  // layer 2
-        materialAnimator.AddMaterial(Material::Replace, &greenMaterial, 40, 0.0f, 1.0f);  // layer 3
-        materialAnimator.AddMaterial(Material::Replace, &yellowMaterial, 40, 0.0f, 1.0f); // layer 4
-        materialAnimator.AddMaterial(Material::Replace, &purpleMaterial, 40, 0.0f, 1.0f); // layer 5
-        materialAnimator.AddMaterial(Material::Replace, &redMaterial, 40, 0.0f, 1.0f);    // layer 6
-        materialAnimator.AddMaterial(Material::Replace, &blueMaterial, 40, 0.0f, 1.0f);   // layer 7
+        // All expression color layers share one SimpleMaterial — ApplyExpression()
+        // changes its RGB to match the active expression's color.
+        materialAnimator.AddMaterial(Material::Replace, &expressionColor, 40, 0.0f, 1.0f); // layer 1 — orange
+        materialAnimator.AddMaterial(Material::Replace, &expressionColor, 40, 0.0f, 1.0f); // layer 2 — white
+        materialAnimator.AddMaterial(Material::Replace, &expressionColor, 40, 0.0f, 1.0f); // layer 3 — green
+        materialAnimator.AddMaterial(Material::Replace, &expressionColor, 40, 0.0f, 1.0f); // layer 4 — yellow
+        materialAnimator.AddMaterial(Material::Replace, &expressionColor, 40, 0.0f, 1.0f); // layer 5 — purple
+        materialAnimator.AddMaterial(Material::Replace, &expressionColor, 40, 0.0f, 1.0f); // layer 6 — red
+        materialAnimator.AddMaterial(Material::Replace, &expressionColor, 40, 0.0f, 1.0f); // layer 7 — blue
         materialAnimator.AddMaterial(Material::Replace, &rainbowSpiral, 40, 0.0f, 1.0f);  // layer 8
-        materialAnimator.AddMaterial(Material::Replace, &rainbowNoise, 40, 0.0f, 1.0f);  // layer 9 (0.0 min — only active when expression enables it)
+        // layer 9 removed (was rainbowNoise)
 
         // Registry for name lookup
         RegisterMaterial("gradientSpectrum", &gradientMat);
         RegisterMaterial("rainbowMat", &rainbowMat);
         RegisterMaterial("backgroundMat", &backgroundMat);
-        RegisterMaterial("rainbowNoise", &rainbowNoise);
         RegisterMaterial("rainbowSpiral", &rainbowSpiral);
         RegisterMaterial("SpectrumAnalyzer", &sA);
-        RegisterMaterial("redMat", &redMaterial);
-        RegisterMaterial("greenMat", &greenMaterial);
-        RegisterMaterial("blueMat", &blueMaterial);
-        RegisterMaterial("yellowMat", &yellowMaterial);
-        RegisterMaterial("purpleMat", &purpleMaterial);
-        RegisterMaterial("whiteMat", &whiteMaterial);
-        RegisterMaterial("orangeMat", &orangeMaterial);
+        // Color aliases — all point to the single expressionColor material
+        RegisterMaterial("redMat", &expressionColor);
+        RegisterMaterial("greenMat", &expressionColor);
+        RegisterMaterial("blueMat", &expressionColor);
+        RegisterMaterial("yellowMat", &expressionColor);
+        RegisterMaterial("purpleMat", &expressionColor);
+        RegisterMaterial("whiteMat", &expressionColor);
+        RegisterMaterial("orangeMat", &expressionColor);
 
-        RegisterHueShiftable(&gradientMat);
-        RegisterHueShiftable(&rainbowMat);
-        RegisterHueShiftable(&backgroundMat);
-        RegisterHueShiftable(&redMaterial);
-        RegisterHueShiftable(&orangeMaterial);
-        RegisterHueShiftable(&whiteMaterial);
-        RegisterHueShiftable(&greenMaterial);
-        RegisterHueShiftable(&blueMaterial);
-        RegisterHueShiftable(&yellowMaterial);
-        RegisterHueShiftable(&purpleMaterial);
+        RegisterHueShiftable(&expressionColor);
         RegisterHueShiftable(&rainbowSpiral);
     }
 
@@ -1713,7 +1698,6 @@ public:
 
         UpdateFace();
 
-        rainbowNoise.Update(ratio);
         rainbowSpiral.Update(ratio);
         Object3D *bgObj = background.GetObject();
         if (bgObj && bgObj->GetMaterial() == &sA)

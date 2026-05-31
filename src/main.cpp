@@ -787,22 +787,6 @@ void loop()
   // Yield to background WiFi/BLE/LWIP tasks to reduce starvation risk under sustained rendering load.
   delay(1);
 
-  // Heap-health NeoPixel indicator — field diagnostics without serial.
-  // Green = OK, Yellow = warning (<64KB largest block), Red = critical (<32KB).
-  {
-    static uint32_t lastHeapLedMs = 0;
-    if (now - lastHeapLedMs >= 3000) {
-      lastHeapLedMs = now;
-      const size_t lb = GetLargestFreeInternalBlock();
-      uint32_t color;
-      if (lb >= 65536)       color = nowpixels.Color(0, 8, 0);      // green
-      else if (lb >= 32768)  color = nowpixels.Color(8, 6, 0);     // yellow
-      else                   color = nowpixels.Color(8, 0, 0);      // red
-      nowpixels.setPixelColor(0, color);
-      nowpixels.show();
-    }
-  }
-
   // controller.
 
   controller.Display();
