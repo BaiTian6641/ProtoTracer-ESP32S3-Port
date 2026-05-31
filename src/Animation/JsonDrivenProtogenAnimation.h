@@ -106,6 +106,8 @@ private:
         SceneEffectConfig sceneEffect;
         std::vector<InterpolationConfig> interpolation;
         std::vector<std::pair<String, float>> animParameters;
+        // Pre-resolved morph IDs — filled after JSON load to avoid per-frame GetMorphId scans
+        std::vector<std::pair<uint16_t, float>> resolvedAnimParams;
     };
 
     JsonNukudeFace jsonFace;
@@ -206,6 +208,17 @@ private:
     int16_t activeBoopExpressionIndex = -1;  // pre-resolved expression index, -1 = none (replaces String to avoid heap alloc)
     uint32_t activeBoopUntil = 0;
     static constexpr uint32_t kDefaultBoopHoldMs = 2800;  // fallback hold duration when period_ms is omitted
+
+    // Cached viseme morph IDs — pre-resolved after face load to avoid per-frame string scans
+    uint16_t mVrcSsId = 0xFFFF;
+    uint16_t mVrcEeId = 0xFFFF;
+    uint16_t mVrcIhId = 0xFFFF;
+    uint16_t mVrcDdId = 0xFFFF;
+    uint16_t mVrcRrId = 0xFFFF;
+    uint16_t mVrcChId = 0xFFFF;
+    uint16_t mVrcAaId = 0xFFFF;
+    uint16_t mVrcOhId = 0xFFFF;
+    uint16_t mHideMouthId = 0xFFFF;
 
     // Helpers
     Object3D *GetFaceObject()
@@ -493,14 +506,15 @@ private:
 
     void ChangeInterpolationMethods()
     {
-        eEA.SetInterpolationMethod(GetMorphId("vrc_v_ee"), EasyEaseInterpolation::Linear);
-        eEA.SetInterpolationMethod(GetMorphId("vrc_v_ih"), EasyEaseInterpolation::Linear);
-        eEA.SetInterpolationMethod(GetMorphId("vrc_v_dd"), EasyEaseInterpolation::Linear);
-        eEA.SetInterpolationMethod(GetMorphId("vrc_v_rr"), EasyEaseInterpolation::Linear);
-        eEA.SetInterpolationMethod(GetMorphId("vrc_v_ch"), EasyEaseInterpolation::Linear);
-        eEA.SetInterpolationMethod(GetMorphId("vrc_v_aa"), EasyEaseInterpolation::Linear);
-        eEA.SetInterpolationMethod(GetMorphId("vrc_v_oh"), EasyEaseInterpolation::Linear);
-        eEA.SetInterpolationMethod(GetMorphId("vrc_v_ss"), EasyEaseInterpolation::Linear);
+        // Use cached morph IDs (pre-resolved in LoadAnimationConfig)
+        eEA.SetInterpolationMethod(mVrcEeId, EasyEaseInterpolation::Linear);
+        eEA.SetInterpolationMethod(mVrcIhId, EasyEaseInterpolation::Linear);
+        eEA.SetInterpolationMethod(mVrcDdId, EasyEaseInterpolation::Linear);
+        eEA.SetInterpolationMethod(mVrcRrId, EasyEaseInterpolation::Linear);
+        eEA.SetInterpolationMethod(mVrcChId, EasyEaseInterpolation::Linear);
+        eEA.SetInterpolationMethod(mVrcAaId, EasyEaseInterpolation::Linear);
+        eEA.SetInterpolationMethod(mVrcOhId, EasyEaseInterpolation::Linear);
+        eEA.SetInterpolationMethod(mVrcSsId, EasyEaseInterpolation::Linear);
     }
 
 
@@ -669,7 +683,7 @@ private:
         materialAnimator.AddMaterial(Material::Replace, &redMaterial, 40, 0.0f, 1.0f);    // layer 6
         materialAnimator.AddMaterial(Material::Replace, &blueMaterial, 40, 0.0f, 1.0f);   // layer 7
         materialAnimator.AddMaterial(Material::Replace, &rainbowSpiral, 40, 0.0f, 1.0f);  // layer 8
-        materialAnimator.AddMaterial(Material::Replace, &rainbowNoise, 40, 0.15f, 1.0f);  // layer 9
+        materialAnimator.AddMaterial(Material::Replace, &rainbowNoise, 40, 0.0f, 1.0f);  // layer 9 (0.0 min — only active when expression enables it)
 
         // Registry for name lookup
         RegisterMaterial("gradientSpectrum", &gradientMat);
@@ -754,11 +768,10 @@ private:
         ShowMouth = resetState.show_mouth;
         EyeShapeB = resetState.eye_shape;
 
-        // Hide/Show mouth.
-        uint16_t hideMouthId = GetMorphId("HideMouth");
-        if (hideMouthId != 0xFFFF)
+        // Hide/Show mouth (use cached morph ID)
+        if (mHideMouthId != 0xFFFF)
         {
-            eEA.AddParameterFrame(hideMouthId, resetState.show_mouth ? 0.0f : 1.0f);
+            eEA.AddParameterFrame(mHideMouthId, resetState.show_mouth ? 0.0f : 1.0f);
         }
 
         ApplySceneEffect(resetState.sceneEffect);
@@ -785,9 +798,9 @@ private:
             }
         }
 
-        for (const auto &ap : resetState.animParameters)
+        for (const auto &ap : resetState.resolvedAnimParams)
         {
-            AddMorphFrame(ap.first, ap.second);
+            eEA.AddParameterFrame(ap.first, ap.second);
         }
     }
 
@@ -1144,9 +1157,9 @@ private:
 
         ApplySceneEffect(target->sceneEffect);
 
-        for (const auto &ap : target->animParameters)
+        for (const auto &ap : target->resolvedAnimParams)
         {
-            AddMorphFrame(ap.first, ap.second);
+            eEA.AddParameterFrame(ap.first, ap.second);
         }
     }
 
@@ -1391,6 +1404,48 @@ private:
             spec.expressionIndex = FindExpressionIndex(spec.name);
         }
 
+        // Pre-resolve all expression anim_parameter morph names to IDs
+        for (auto &expr : expressions)
+        {
+            expr.second.resolvedAnimParams.clear();
+            expr.second.resolvedAnimParams.reserve(expr.second.animParameters.size());
+            for (const auto &ap : expr.second.animParameters)
+            {
+                uint16_t morphId = GetMorphId(ap.first.c_str());
+                expr.second.resolvedAnimParams.push_back({morphId, ap.second});
+            }
+        }
+
+        // Also resolve resetState
+        resetState.resolvedAnimParams.clear();
+        resetState.resolvedAnimParams.reserve(resetState.animParameters.size());
+        for (const auto &ap : resetState.animParameters)
+        {
+            uint16_t morphId = GetMorphId(ap.first.c_str());
+            resetState.resolvedAnimParams.push_back({morphId, ap.second});
+        }
+
+        // Reserve containers to prevent reallocation during animation
+        expressions.reserve(expressions.size() + 4);
+        expressionOrder.reserve(expressionOrder.size() + 4);
+        autoLinkSpecs.reserve(autoLinkSpecs.size());
+        boopMorphSpecs.reserve(boopMorphSpecs.size());
+        flippedMorphs.reserve(flippedMorphs.size());
+
+        // Cache voice viseme and common morph IDs to avoid per-frame string scans
+        if (jsonFaceLoaded && jsonFace.Loaded())
+        {
+            mVrcSsId = GetMorphId("vrc_v_ss");
+            mVrcEeId = GetMorphId("vrc_v_ee");
+            mVrcIhId = GetMorphId("vrc_v_ih");
+            mVrcDdId = GetMorphId("vrc_v_dd");
+            mVrcRrId = GetMorphId("vrc_v_rr");
+            mVrcChId = GetMorphId("vrc_v_ch");
+            mVrcAaId = GetMorphId("vrc_v_aa");
+            mVrcOhId = GetMorphId("vrc_v_oh");
+            mHideMouthId = GetMorphId("HideMouth");
+        }
+
         return true;
     }
 
@@ -1568,19 +1623,19 @@ public:
 
         if (Menu::GetvoiceDetectionEnable() && voiceEnable)
         {
-            eEA.AddParameterFrame(GetMorphId("vrc_v_ss"), MicrophoneFourierIT::GetCurrentMagnitude() / 2.0f);
+            eEA.AddParameterFrame(mVrcSsId, MicrophoneFourierIT::GetCurrentMagnitude() / 2.0f);
 
             if (MicrophoneFourierIT::GetCurrentMagnitude() > 0.05f)
             {
                 voiceDetection.Update(MicrophoneFourierIT::GetFourierFiltered(), MicrophoneFourierIT::GetSampleRate());
 
-                eEA.AddParameterFrame(GetMorphId("vrc_v_ee"), voiceDetection.GetViseme(voiceDetection.EE));
-                eEA.AddParameterFrame(GetMorphId("vrc_v_ih"), voiceDetection.GetViseme(voiceDetection.AH));
-                eEA.AddParameterFrame(GetMorphId("vrc_v_dd"), voiceDetection.GetViseme(voiceDetection.UH));
-                eEA.AddParameterFrame(GetMorphId("vrc_v_rr"), voiceDetection.GetViseme(voiceDetection.AR));
-                eEA.AddParameterFrame(GetMorphId("vrc_v_ch"), voiceDetection.GetViseme(voiceDetection.ER));
-                eEA.AddParameterFrame(GetMorphId("vrc_v_aa"), voiceDetection.GetViseme(voiceDetection.AH));
-                eEA.AddParameterFrame(GetMorphId("vrc_v_oh"), voiceDetection.GetViseme(voiceDetection.OO));
+                eEA.AddParameterFrame(mVrcEeId, voiceDetection.GetViseme(voiceDetection.EE));
+                eEA.AddParameterFrame(mVrcIhId, voiceDetection.GetViseme(voiceDetection.AH));
+                eEA.AddParameterFrame(mVrcDdId, voiceDetection.GetViseme(voiceDetection.UH));
+                eEA.AddParameterFrame(mVrcRrId, voiceDetection.GetViseme(voiceDetection.AR));
+                eEA.AddParameterFrame(mVrcChId, voiceDetection.GetViseme(voiceDetection.ER));
+                eEA.AddParameterFrame(mVrcAaId, voiceDetection.GetViseme(voiceDetection.AH));
+                eEA.AddParameterFrame(mVrcOhId, voiceDetection.GetViseme(voiceDetection.OO));
             }
         }
 

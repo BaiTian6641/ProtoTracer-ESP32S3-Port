@@ -4,7 +4,8 @@
 #include <esp_heap_caps.h>
 
 // Define a sentinel value to indicate no neighbor exists.
-#define NO_NEIGHBOR (static_cast<unsigned int>(-1))
+// uint16_t saves 16 KB over unsigned int for the four 2048-entry neighbor arrays.
+#define NO_NEIGHBOR (static_cast<uint16_t>(-1))
 
 class PixelGroup : public IPixelGroup{
 private:
@@ -18,10 +19,10 @@ private:
     // --- MODIFIED: All large arrays are now pointers ---
   	ProtoRGBColor* pixelColors;
   	ProtoRGBColor* pixelBuffer;
-    unsigned int* up;
-    unsigned int* down;
-    unsigned int* left;
-    unsigned int* right;
+    uint16_t* up;
+    uint16_t* down;
+    uint16_t* left;
+    uint16_t* right;
 
     Vector2D* rectCoords = nullptr; // precomputed coordinates for rectangular layouts
     bool rectCoordsBuilt = false;
@@ -43,10 +44,10 @@ private:
         if (!pixelColors) pixelColors = new ProtoRGBColor[pixelCount];
         if (!pixelBuffer) pixelBuffer = new ProtoRGBColor[pixelCount];
 
-        up = new unsigned int[pixelCount];
-        down = new unsigned int[pixelCount];
-        left = new unsigned int[pixelCount];
-        right = new unsigned int[pixelCount];
+        up = new uint16_t[pixelCount];
+        down = new uint16_t[pixelCount];
+        left = new uint16_t[pixelCount];
+        right = new uint16_t[pixelCount];
     }
 
     //Deallocate those arrays

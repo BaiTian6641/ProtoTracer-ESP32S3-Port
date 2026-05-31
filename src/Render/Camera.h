@@ -46,7 +46,11 @@ private:
 
         if (cachedRayCount != desired || cachedRays == nullptr) {
             delete[] cachedRays;
-            cachedRays = new Vector2D[desired]; // small; keep on internal heap by default
+            // Move to PSRAM — not used during DSP hot path, only for QuadTree intersect loop
+            cachedRays = static_cast<Vector2D*>(heap_caps_malloc(desired * sizeof(Vector2D), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (!cachedRays) {
+                cachedRays = new Vector2D[desired]; // fallback to internal
+            }
             cachedRayCount = desired;
         }
     }

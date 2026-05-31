@@ -171,7 +171,12 @@ public:
     }
 
     void Display() override {
-        dma_display->setBrightness8(brightness);
+        // Cache brightness — only push to DMA when it actually changes
+        static uint8_t sLastBrightness = 255;
+        if (brightness != sLastBrightness) {
+            dma_display->setBrightness8(brightness);
+            sLastBrightness = brightness;
+        }
         
         ProtoRGBColor* colors = camPixels1->GetColors();
         if (!colors) return;
