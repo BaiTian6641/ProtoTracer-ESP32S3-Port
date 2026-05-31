@@ -12,8 +12,13 @@ public:
     void ApplyEffect(IPixelGroup* pixelGroup){
         ProtoRGBColor* pixelColors = pixelGroup->GetColors();
         ProtoRGBColor* colorBuffer = pixelGroup->GetColorBuffer();
+        unsigned int pixelCount = pixelGroup->GetPixelCount();
 
-        for (unsigned int i = 0; i < pixelGroup->GetPixelCount(); i++){
+        // Compute blur range once — same for all pixels in this pass
+        uint16_t blurRange = (uint16_t)Mathematics::Map(ratio, 0.0f, 1.0f, 1.0f, float(pixels / 2));
+        if (blurRange < 1) blurRange = 1;
+
+        for (unsigned int i = 0; i < pixelCount; i++){
             unsigned int indexUp = i;
             unsigned int indexDown = i;
             unsigned int tIndexUp = 0;
@@ -21,13 +26,10 @@ public:
             bool validL = true;
             bool validR = true;
 
-            uint16_t blurRange = uint16_t(Mathematics::Map(ratio, 0.0f, 1.0f, 1.0f, float(pixels / 2)));
-
-            uint16_t R, G, B;
-
-            R = (uint16_t)pixelColors[i].R;
-            G = (uint16_t)pixelColors[i].G;
-            B = (uint16_t)pixelColors[i].B;
+            uint16_t R = (uint16_t)pixelColors[i].R;
+            uint16_t G = (uint16_t)pixelColors[i].G;
+            uint16_t B = (uint16_t)pixelColors[i].B;
+            uint16_t sampleCount = 1; // start counting with center pixel
             
             for (uint8_t j = 1; j < blurRange + 1; j++){
                 validL = pixelGroup->GetUpIndex(indexUp, &tIndexUp);
@@ -36,19 +38,27 @@ public:
                 indexUp = tIndexUp;
                 indexDown = tIndexDown;
 
-                if (validL && validR){
-                    R = R + (uint16_t)pixelColors[indexUp].R + (uint16_t)pixelColors[indexDown].R;
-                    G = G + (uint16_t)pixelColors[indexUp].G + (uint16_t)pixelColors[indexDown].G;
-                    B = B + (uint16_t)pixelColors[indexUp].B + (uint16_t)pixelColors[indexDown].B;
+                if (validL) {
+                    R += (uint16_t)pixelColors[indexUp].R;
+                    G += (uint16_t)pixelColors[indexUp].G;
+                    B += (uint16_t)pixelColors[indexUp].B;
+                    sampleCount++;
+                }
+                if (validR) {
+                    R += (uint16_t)pixelColors[indexDown].R;
+                    G += (uint16_t)pixelColors[indexDown].G;
+                    B += (uint16_t)pixelColors[indexDown].B;
+                    sampleCount++;
                 }
             }
             
-            colorBuffer[i].R = Mathematics::Constrain(R / (blurRange * 2), 0, 255);
-            colorBuffer[i].B = Mathematics::Constrain(G / (blurRange * 2), 0, 255);
-            colorBuffer[i].G = Mathematics::Constrain(B / (blurRange * 2), 0, 255);
+            // Correct channel order: R→R, G→G, B→B
+            colorBuffer[i].R = (uint8_t)Mathematics::Constrain(R / sampleCount, 0, 255);
+            colorBuffer[i].G = (uint8_t)Mathematics::Constrain(G / sampleCount, 0, 255);
+            colorBuffer[i].B = (uint8_t)Mathematics::Constrain(B / sampleCount, 0, 255);
         }
 
-        for (unsigned int i = 0; i < pixelGroup->GetPixelCount(); i++){
+        for (unsigned int i = 0; i < pixelCount; i++){
             pixelColors[i].R = colorBuffer[i].R;
             pixelColors[i].G = colorBuffer[i].G;
             pixelColors[i].B = colorBuffer[i].B;

@@ -76,7 +76,7 @@ class M5UnitGLASS2;
 // JSON-driven animation that maps morphs/materials/effects from a user-provided
 // <device_id>_animation.json file. Falls back to /example_animation.json or a
 // built-in minimal preset when missing. Designed to keep animation tweaks OTA-ready.
-class JsonDrivenProtogenAnimation : public Animation<1>
+class JsonDrivenProtogenAnimation : public Animation<2>
 {
 private:
     struct SceneEffectConfig

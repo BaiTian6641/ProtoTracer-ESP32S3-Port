@@ -100,15 +100,18 @@ public:
     ProtoRGBColor GetRGB(Vector3D position, Vector3D normal, Vector3D uvw) override {
         Vector2D rPos = Mathematics::IsClose(angle, 0.0f, 0.1f) ? Vector2D(position.X, position.Y) - offset : Vector2D(position.X, position.Y).Rotate(angle, offset) - offset;
 
-        if (-size.X > rPos.X && size.X < rPos.X) return ProtoRGBColor();
-        if (-size.Y > rPos.Y && size.Y < rPos.Y) return ProtoRGBColor();
+        // Fix: use || for out-of-range rejection (was impossible &&)
+        if (-size.X > rPos.X || size.X < rPos.X) return ProtoRGBColor();
+        if (-size.Y > rPos.Y || size.Y < rPos.Y) return ProtoRGBColor();
         
-        uint8_t x = uint8_t(Mathematics::Map(rPos.X, -size.X, size.X, float(bins), 0.0f));
+        // Use int16_t for intermediate bin math to avoid uint8_t overflow and sign issues
+        int16_t x = (int16_t)Mathematics::Map(rPos.X, -size.X, size.X, float(bins), 0.0f);
 
-        if(bins > x && 0 > x) return ProtoRGBColor();
+        // Clamp x to valid range before reading x+1
+        if (x < 0 || x >= (int16_t)(bins - 1)) return ProtoRGBColor();
 
-        float xDistance = size.X / float(bins) * x - size.X;
-        float xDistance2 = size.X / float(bins) * (x + 1) - size.X;
+        float xDistance = size.X / float(bins) * (float)x - size.X;
+        float xDistance2 = size.X / float(bins) * (float)(x + 1) - size.X;
         float ratio = Mathematics::Map(rPos.X, xDistance, xDistance2, 0.0f, 1.0f);//ratio between two bins
         float height = bounce ? Mathematics::CosineInterpolation(bounceData[x], bounceData[x + 1], ratio) : Mathematics::CosineInterpolation(data[x], data[x + 1], ratio);//0->1.0f of max height of color
         float yColor;

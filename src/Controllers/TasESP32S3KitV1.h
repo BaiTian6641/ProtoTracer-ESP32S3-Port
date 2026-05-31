@@ -176,24 +176,33 @@ public:
         ProtoRGBColor* colors = camPixels1->GetColors();
         if (!colors) return;
         
-#ifdef ENABLE_M5_PIXEL_PREVIEW
-        display.startWrite();
-        display.drawRect(0,0,66,34,TFT_WHITE);
-#endif
+        // Throttled M5 HUD preview: update every kM5PreviewInterval frames to keep
+        // the internal display functional without starving HUB75 frame time.
+        // Set to 1 for every-frame preview (debug), 4-5 for production balance.
+        static uint16_t sPreviewFrame = 0;
+        constexpr uint16_t kM5PreviewInterval = 4; // update preview every 4th frame
+        const bool doPreview = (++sPreviewFrame % kM5PreviewInterval == 0);
+        
+        if (doPreview) {
+            display.startWrite();
+            display.drawRect(0, 0, 66, 34, TFT_WHITE);
+        }
+        
         for (uint16_t y = 0; y < 32; y++) {
             for (uint16_t x = 0; x < 64; x++){
                 uint16_t pixelNum = y * 64 + x;
                 const ProtoRGBColor& c = colors[pixelNum];
                 virtualDisp->drawPixelRGB888(63 - x, (y) + 32, (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
                 virtualDisp->drawPixelRGB888(63 - x, (31 - y), (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
-#ifdef ENABLE_M5_PIXEL_PREVIEW
-                display.drawPixel(64 - x, (32 - y), display.color888((c.R ? 255 : 0), (c.G ? 255 : 0), (c.B ? 255 : 0)));
-#endif
+                if (doPreview) {
+                    display.drawPixel(64 - x, (32 - y), display.color888((c.R ? 255 : 0), (c.G ? 255 : 0), (c.B ? 255 : 0)));
+                }
             }
         }
-#ifdef ENABLE_M5_PIXEL_PREVIEW
-        display.display();
-        display.endWrite();
-#endif
+        
+        if (doPreview) {
+            display.display();
+            display.endWrite();
+        }
     }
 };

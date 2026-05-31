@@ -109,7 +109,7 @@ public:
     }
 
     Vector2D GetCoordinate(unsigned int count) override {
-        count = Mathematics::Constrain<int>(count, 0, pixelCount);
+        if (count >= pixelCount) return Vector2D();
 
         if (isRectangular){
             return rectCoordsBuilt ? rectCoords[count] : Vector2D();
@@ -139,6 +139,7 @@ public:
     }
 
     ProtoRGBColor* GetColor(unsigned int count) override {
+        if (count >= pixelCount) return &pixelColors[0]; // safe default for out-of-bounds
         return &pixelColors[count];
     }
 
