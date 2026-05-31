@@ -30,10 +30,10 @@ private:
     // Arena QuadTree pools — preallocated once, reset per frame (zero heap alloc in render path)
     static constexpr int kArenaMaxTriangles = 350;   // 326 triangles + margin
     static constexpr int kArenaMaxNodes = 128;        // estimated node pool
-    static constexpr int kArenaMaxNodeRefs = 2048;    // entity pointer slots for all nodes
+    static constexpr int kArenaMaxNodeRefs = 8192;    // entity pointer slots for all nodes
     Triangle2D mArenaTriangles[kArenaMaxTriangles];
     Node mArenaNodes[kArenaMaxNodes];
-    Triangle2D* mArenaNodeRefs[kArenaMaxNodeRefs];
+    Triangle2D** mArenaNodeRefs = nullptr;
     int mArenaNodeIdx = 0;
     int mArenaRefIdx = 0;
 
@@ -55,11 +55,11 @@ private:
         if (desired == 0) return;
 
         if (cachedRayCount != desired || cachedRays == nullptr) {
-            delete[] cachedRays;
+            heap_caps_free(cachedRays);
             // Move to PSRAM — not used during DSP hot path, only for QuadTree intersect loop
             cachedRays = static_cast<Vector2D*>(heap_caps_malloc(desired * sizeof(Vector2D), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
             if (!cachedRays) {
-                cachedRays = new Vector2D[desired]; // fallback to internal
+                cachedRays = static_cast<Vector2D*>(heap_caps_malloc(desired * sizeof(Vector2D), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
             }
             cachedRayCount = desired;
         }
@@ -80,11 +80,21 @@ private:
             rotX = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
             rotY = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
 
-            // Fallback to heap if internal allocation fails
-            if (!tmpX) tmpX = new float[desired];
-            if (!tmpY) tmpY = new float[desired];
-            if (!rotX) rotX = new float[desired];
-            if (!rotY) rotY = new float[desired];
+            // Fallback to PSRAM if internal allocation fails
+            if (!tmpX) tmpX = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (!tmpY) tmpY = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (!rotX) rotX = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (!rotY) rotY = static_cast<float*>(heap_caps_malloc(desired * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        }
+    }
+
+    void EnsureArenaRefCache() {
+        if (mArenaNodeRefs) return;
+
+        const size_t bytes = kArenaMaxNodeRefs * sizeof(Triangle2D*);
+        mArenaNodeRefs = static_cast<Triangle2D**>(heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!mArenaNodeRefs) {
+            mArenaNodeRefs = static_cast<Triangle2D**>(heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
         }
     }
 
@@ -163,11 +173,12 @@ public:
     }
 
     ~Camera() {
-        delete[] cachedRays;
+        heap_caps_free(cachedRays);
         heap_caps_free(tmpX);
         heap_caps_free(tmpY);
         heap_caps_free(rotX);
         heap_caps_free(rotY);
+        heap_caps_free(mArenaNodeRefs);
     }
 
     Transform* GetTransform(){
@@ -224,8 +235,21 @@ public:
 
             EnsureRayCache();
             EnsureFloatCache();
+            EnsureArenaRefCache();
 
             const unsigned int pixelCount = pixelGroup->GetPixelCount();
+            ProtoRGBColor* colors = pixelGroup->GetColors();
+            if (!cachedRays || !tmpX || !tmpY || !rotX || !rotY || !colors) {
+                if (colors) {
+                    for (unsigned int i = 0; i < pixelCount; i++) {
+                        colors[i].R = 0;
+                        colors[i].G = 0;
+                        colors[i].B = 0;
+                    }
+                }
+                return;
+            }
+
             BoundingBox2D transformedBounds;
             const Vector3D scale = transform->GetScale();
             const Rotation2D rot2 = BuildRotation2D(normLookDir);
@@ -256,9 +280,11 @@ public:
             // Use arena pools to eliminate per-frame heap allocation
             mArenaNodeIdx = 0;
             mArenaRefIdx = 0;
-            tree.UseArena(mArenaTriangles, kArenaMaxTriangles,
-                          mArenaNodes, &mArenaNodeIdx, kArenaMaxNodes,
-                          mArenaNodeRefs, &mArenaRefIdx, kArenaMaxNodeRefs);
+            if (mArenaNodeRefs) {
+                tree.UseArena(mArenaTriangles, kArenaMaxTriangles,
+                              mArenaNodes, &mArenaNodeIdx, kArenaMaxNodes,
+                              mArenaNodeRefs, &mArenaRefIdx, kArenaMaxNodeRefs);
+            }
 
             //for each object in the scene, get the triangles
             for(int i = 0; i < scene->GetObjectCount(); i++){
@@ -271,8 +297,6 @@ public:
             }
 
             tree.Rebuild();
-
-            ProtoRGBColor* colors = pixelGroup->GetColors();
 
             for (unsigned int i = 0; i < pixelCount; i++) {
                 const Vector2D& pixelRay = cachedRays[i];

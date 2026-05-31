@@ -95,7 +95,7 @@ public:
         if (count == capacity)
             Expand(capacity? 2 * capacity : maxEntities);
 
-        if (!entities) return false;
+        if (!entities || count == capacity) return false;
         entities[count] = triangle;
         ++count;
 
