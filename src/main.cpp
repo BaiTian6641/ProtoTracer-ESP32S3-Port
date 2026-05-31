@@ -138,15 +138,9 @@ Adafruit_NeoPixel nowpixels(1, 20, NEO_GRB + NEO_KHZ800);
 
 JsonDrivenProtogenAnimation animation = JsonDrivenProtogenAnimation();
 
-#if ANIM_RENDER_PIPELINE
-static SemaphoreHandle_t gAnimDoneSemaphore = nullptr;
-static SemaphoreHandle_t gRenderDoneSemaphore = nullptr;
-static TaskHandle_t gAnimTaskHandle = nullptr;
-static volatile float gAnimRatio = 0.0f;
-static volatile bool gAnimTaskStop = false;
-static volatile bool gPipelineActive = false;
-
 // Copy completed animation vertices from all scene objects to their render buffers.
+// Defined unconditionally so both the pipeline task and the single-core fallback
+// publish the animated geometry before Camera reads GetRenderTriangleGroup().
 static void PublishSceneVertices(Scene* scene) {
     if (!scene) return;
     Object3D** objs = scene->GetObjects();
@@ -157,6 +151,14 @@ static void PublishSceneVertices(Scene* scene) {
         }
     }
 }
+
+#if ANIM_RENDER_PIPELINE
+static SemaphoreHandle_t gAnimDoneSemaphore = nullptr;
+static SemaphoreHandle_t gRenderDoneSemaphore = nullptr;
+static TaskHandle_t gAnimTaskHandle = nullptr;
+static volatile float gAnimRatio = 0.0f;
+static volatile bool gAnimTaskStop = false;
+static volatile bool gPipelineActive = false;
 
 // Animation worker: runs UpdateTime() on ANIM_TASK_CORE, publishes the finished
 // geometry snapshot, then signals the render core. Render waits for this signal
@@ -763,6 +765,9 @@ void loop()
   {
     yield(); // Feed watchdog before animation update
     animation.UpdateTime(ratio);
+    // Publish the completed frame to the render buffer so Camera reads
+    // the animated geometry, matching the pipeline path's handoff.
+    PublishSceneVertices(animation.GetScene());
     yield(); // Feed watchdog before render
   }
 
