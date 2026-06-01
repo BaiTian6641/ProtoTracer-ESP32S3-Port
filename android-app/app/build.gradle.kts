@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.prototracer.remote"
-        minSdk = 28
+        minSdk = 26 // Android 8.0+ (focused on Android 9 / API 28)
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
@@ -22,6 +22,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

@@ -59,6 +59,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
 }
 
@@ -69,6 +70,8 @@ body {
   font-size: 0.875rem;
   font-weight: 500;
 }
+.status-indicator > * + * { margin-left: 8px; }
+@supports (gap: 8px) { .status-indicator > * + * { margin-left: 0; } }
 
 .dot {
   width: 10px;
@@ -95,12 +98,16 @@ body {
   font-size: 0.8rem;
   color: var(--text-secondary);
 }
+.device-info > * + * { margin-left: 10px; }
+@supports (gap: 10px) { .device-info > * + * { margin-left: 0; } }
 
 .header-right {
   display: flex;
   align-items: center;
   gap: 12px;
 }
+.header-right > * + * { margin-left: 12px; }
+@supports (gap: 12px) { .header-right > * + * { margin-left: 0; } }
 
 .lang-btn {
   min-width: 32px;
@@ -129,7 +136,10 @@ main {
 }
 
 /* Panels */
+/* flex gap fallback for Chrome < 84 on Android 9 */
 .panel { display: flex; flex-direction: column; gap: 16px; }
+.panel > * + * { margin-top: 16px; }
+@supports (gap: 16px) { .panel > * + * { margin-top: 0; } }
 .panel.hidden { display: none; }
 
 /* Hero */

@@ -409,6 +409,7 @@ const ProtoTracerBLE = (() => {
 
   // --- Exports ---
   return {
+    SERVICE_UUID,
     on,
     isSupported,
     isConnected,

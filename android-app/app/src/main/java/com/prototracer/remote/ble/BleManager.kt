@@ -9,7 +9,6 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
-import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
@@ -250,12 +249,14 @@ class BleManager(private val ctx: Context) {
                     val end = minOf(offset + BLE_CHUNK_BYTES, data.size)
                     val chunk = data.copyOfRange(offset, end)
                     characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                    // BluetoothStatusCodes.SUCCESS == 0 (GATT_SUCCESS).
+                    // Use literal 0 to avoid NoClassDefFoundError on API < 33.
                     val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         activeGatt.writeCharacteristic(
                             characteristic,
                             chunk,
                             BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                        ) == BluetoothStatusCodes.SUCCESS
+                        ) == 0
                     } else {
                         @Suppress("DEPRECATION")
                         run {
@@ -293,8 +294,10 @@ class BleManager(private val ctx: Context) {
 
         @Suppress("DEPRECATION")
         descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        // BluetoothStatusCodes.SUCCESS == 0 (GATT_SUCCESS).
+        // Use literal 0 to avoid NoClassDefFoundError on API < 33.
         val writeStarted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            g.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothStatusCodes.SUCCESS
+            g.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == 0
         } else {
             @Suppress("DEPRECATION")
             g.writeDescriptor(descriptor)

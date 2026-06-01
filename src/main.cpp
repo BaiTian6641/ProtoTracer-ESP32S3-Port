@@ -102,7 +102,7 @@ constexpr bool kVerboseStartup = false;
 #endif
 
 #ifndef PROTOTRACER_FW_VERSION
-#define PROTOTRACER_FW_VERSION "1.1.5"
+#define PROTOTRACER_FW_VERSION "1.1.6"
 #endif
 
 #ifndef PROTOTRACER_FW_MANIFEST
@@ -272,6 +272,11 @@ void setup()
   //Wire.begin(41, 42);
   delay(100);
   display.begin();
+
+  // I2C timeout: prevents indefinite hang if PAJ7620 or M5UnitGLASS2
+  // NACKs or holds SDA low. 50ms is long enough for a 1KB framebuffer
+  // transfer at 400kHz (~25ms) with margin for retries.
+  Wire.setTimeOut(50);
   display.setColorDepth(1);
   display.setEpdMode(epd_mode_t::epd_fastest);
   display.setRotation(1);

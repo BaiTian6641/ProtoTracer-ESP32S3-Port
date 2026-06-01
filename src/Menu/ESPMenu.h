@@ -923,7 +923,23 @@ private:
     static void UpdateBoopSensorState()
     {
 #ifdef NEW_GESTURE
-        proximity = PAJ7620_sensor.getProximityDistance();
+        // Read with I2C timeout protection — if the bus is hung (PAJ7620
+        // disconnected or SDA stuck), getProximityDistance() returns 0 after
+        // the 50ms Wire timeout, avoiding an indefinite block that would
+        // deadlock the animation pipeline semaphore.
+        int rawProx = PAJ7620_sensor.getProximityDistance();
+        if (rawProx < 0 || rawProx > 255)
+        {
+            // I2C read failed (timeout or bus error) — keep last valid reading.
+            static uint32_t sLastI2cErrorMs = 0;
+            if (millis() - sLastI2cErrorMs > 5000)
+            {
+                Serial.printf("[I2C] PAJ7620 read error: raw=%d\n", rawProx);
+                sLastI2cErrorMs = millis();
+            }
+            return;
+        }
+        proximity = static_cast<uint8_t>(rawProx);
 #else
         apds.readProximity(proximity);
 #endif
