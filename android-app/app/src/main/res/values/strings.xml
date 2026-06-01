@@ -90,6 +90,7 @@
     <string name="device_unnamed">Unknown Device</string>
     <string name="permission_bluetooth_rationale">Bluetooth access is required to scan and connect to ProtoTracer devices.</string>
     <string name="permission_location_rationale">Location access is required for Bluetooth scanning on this Android version.</string>
+    <string name="err_location_disabled">Location services must be enabled for Bluetooth scanning. Please turn on Location in Settings.</string>
     <string name="permission_camera_rationale">Camera access is required to scan the device QR code.</string>
     <string name="title_qr_scanner">Scan Device QR Code</string>
     <string name="qr_hint">Point camera at the QR code displayed on your ProtoTracer device</string>

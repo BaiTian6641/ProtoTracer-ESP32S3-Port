@@ -90,6 +90,7 @@
     <string name="device_unnamed">未知设备</string>
     <string name="permission_bluetooth_rationale">需要蓝牙权限以扫描和连接 ProtoTracer 设备。</string>
     <string name="permission_location_rationale">在此 Android 版本中，蓝牙扫描需要位置权限。</string>
+    <string name="err_location_disabled">蓝牙扫描需要开启位置服务。请在系统设置中打开位置信息。</string>
     <string name="permission_camera_rationale">需要相机权限以扫描设备二维码。</string>
     <string name="title_qr_scanner">扫描设备二维码</string>
     <string name="qr_hint">将相机对准 ProtoTracer 设备上显示的二维码</string>

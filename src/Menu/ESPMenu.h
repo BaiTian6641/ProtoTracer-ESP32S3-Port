@@ -1227,13 +1227,17 @@ public:
 
         delay(200);
         display.display();
-        if (
-        #ifdef NEW_GESTURE
+        // ── Gesture sensor init ──
+        // Wire is already initialised by M5UnitGLASS2(41,42).
+        // The local lib/RevEng_PAJ7620 has been patched to NOT call
+        // wireHandle->begin() internally, avoiding double I2C peripheral init.
+        if(
+            #ifdef NEW_GESTURE
             !PAJ7620_sensor.begin(&Wire)
         #else
             !apds.init()
         #endif
-    )
+        )
         {
             #ifdef VERBOSE_STARTUP
             display.println(TXT("Failed to initialize gesture sensor", "手势传感器驱动初始化失败"));

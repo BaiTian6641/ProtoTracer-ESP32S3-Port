@@ -8,8 +8,10 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -74,6 +76,15 @@ class MainActivity : AppCompatActivity() {
             startScan(pendingScanFilter, pendingAutoConnect)
         } else {
             Toast.makeText(this, R.string.permission_bluetooth_rationale, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private val locationEnableLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        // Re-check after returning from location settings
+        if (isLocationEnabled()) {
+            checkPermsAndScan(pendingScanFilter, pendingAutoConnect)
+        } else {
+            Toast.makeText(this, R.string.err_location_disabled, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -210,6 +221,13 @@ class MainActivity : AppCompatActivity() {
         }
         if (!ble.isBtEnabled()) {
             btEnableLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+            return
+        }
+
+        // On Android 9–11 (API 28–30), BLE scanning requires Location services to be ON
+        if (!isLocationEnabled()) {
+            Toast.makeText(this, R.string.err_location_disabled, Toast.LENGTH_LONG).show()
+            locationEnableLauncher.launch(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
             return
         }
 
@@ -572,6 +590,17 @@ class MainActivity : AppCompatActivity() {
         } else {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         }
+    }
+
+    /**
+     * Returns true if Location services are enabled.
+     * On Android 12+ (API 31+), BLE scanning no longer requires Location, so we skip the check.
+     */
+    private fun isLocationEnabled(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return true
+        val lm = getSystemService(LOCATION_SERVICE) as? LocationManager ?: return true
+        return lm.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
     }
 
     private fun isMacAddress(value: String): Boolean {

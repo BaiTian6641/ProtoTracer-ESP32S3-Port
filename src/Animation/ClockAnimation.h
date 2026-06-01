@@ -95,7 +95,9 @@ public:
 
         background.GetObject()->SetMaterial(&material);
 
+        #ifndef NEW_GESTURE
         apds.Initialize(100);
+        #endif
     }
 
     uint8_t GetAccentBrightness(){
