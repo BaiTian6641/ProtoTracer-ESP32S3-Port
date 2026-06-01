@@ -36,6 +36,7 @@ class QrScannerActivity : AppCompatActivity() {
         lastScanned = text
 
         // Vibrate to give feedback
+        @Suppress("DEPRECATION")
         try {
             val vibrator = getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator
             vibrator?.vibrate(100)

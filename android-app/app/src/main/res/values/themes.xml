@@ -1,12 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.ProtoTracerRemote" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
-        <item name="colorPrimary">@color/primary</item>
-        <item name="colorPrimaryVariant">@color/primary_dark</item>
+    <style name="Theme.ProtoTracerRemote" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorPrimaryVariant">@color/bg_secondary</item>
         <item name="colorOnPrimary">@color/on_primary</item>
-        <item name="colorSecondary">@color/secondary</item>
+        <item name="colorSecondary">@color/success</item>
         <item name="colorSecondaryVariant">@color/secondary_dark</item>
         <item name="colorOnSecondary">@color/on_secondary</item>
-        <item name="android:statusBarColor">@color/primary_dark</item>
+        <item name="colorSurface">@color/bg_card</item>
+        <item name="colorSurfaceVariant">@color/bg_secondary</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="android:windowBackground">@color/bg_primary</item>
+        <item name="android:navigationBarColor">@color/bg_primary</item>
+        <item name="android:statusBarColor">@color/bg_secondary</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="materialButtonStyle">@style/Widget.MaterialComponents.Button</item>
     </style>
 </resources>

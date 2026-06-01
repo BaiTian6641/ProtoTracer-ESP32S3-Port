@@ -1,47 +1,113 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ProtoTracer Remote</string>
-
-    <!-- Main screen -->
-    <string name="title_scan_devices">Scan BLE Devices</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connecting">Connecting...</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_error">Error</string>
+    <string name="status_scanning">Scanning...</string>
+    <string name="status_loading">Loading...</string>
+    <string name="status_ready">Ready</string>
+    <string name="status_found">Device found</string>
+    <string name="status_pairing">Pairing...</string>
+    <string name="hero_title">ProtoTracer Remote</string>
+    <string name="hero_subtitle">Android BLE Remote Control</string>
+    <string name="connect_title">Connect to Device</string>
+    <string name="connect_desc">Make sure your ProtoTracer is powered on and BLE advertising is active.</string>
+    <string name="connect_scan_btn">Scan for ProtoTracer</string>
+    <string name="connect_scan_hint">Scanning... select your ProtoTracer from the list.</string>
+    <string name="connect_manual_title">Manual Connection</string>
+    <string name="connect_manual_desc">Enter a device name filter or BLE address.</string>
+    <string name="connect_placeholder">Device name or BLE address</string>
+    <string name="connect_manual_btn">Connect</string>
+    <string name="connect_compat_title">BLE Compatibility</string>
+    <string name="ble_supported">Android BLE is available on this device.</string>
+    <string name="ble_unsupported">BLE is not available on this device.</string>
+    <string name="no_devices">No devices yet. Scan to find your ProtoTracer.</string>
+    <string name="ctrl_expressions">Expressions</string>
+    <string name="ctrl_expr_count">%1$d exprs</string>
+    <string name="ctrl_brightness">Brightness</string>
+    <string name="ctrl_hue">Color Hue Shift</string>
+    <string name="ctrl_options">Options</string>
+    <string name="ctrl_lip_sync">Lip Sync</string>
+    <string name="ctrl_display_mode">Display Mode</string>
+    <string name="ctrl_quick_actions">Quick Actions</string>
+    <string name="ctrl_ping">Ping Device</string>
+    <string name="ctrl_refresh_manifest">Refresh Manifest</string>
+    <string name="ctrl_disconnect">Disconnect</string>
+    <string name="ctrl_log">Event Log</string>
+    <string name="ctrl_clear_log">Clear</string>
+    <string name="log_ready">ProtoTracer Remote ready.</string>
+    <string name="log_connected">Connected to %1$s</string>
+    <string name="log_disconnected">Disconnected.</string>
+    <string name="log_disconnected_unexpected">Device disconnected unexpectedly.</string>
+    <string name="log_manifest_received">Manifest received.</string>
+    <string name="log_animation">Animation: %1$s, %2$d expressions</string>
+    <string name="log_expr_fallback">Expression %1$d</string>
+    <string name="log_pong">Pong from %1$s</string>
+    <string name="log_sent">Sent: %1$s (%2$d bytes)</string>
+    <string name="log_recv">Recv: %1$s</string>
+    <string name="log_expr_set">Expression set: %1$s</string>
+    <string name="log_voice_on">Voice enabled</string>
+    <string name="log_voice_off">Voice disabled</string>
+    <string name="log_disp_on">Display mode on</string>
+    <string name="log_disp_off">Display mode off</string>
+    <string name="log_ping_sent">Ping sent...</string>
+    <string name="log_manifest_refresh">Manifest refresh requested...</string>
+    <string name="log_found">Found: %1$s, connecting...</string>
+    <string name="err_scan_failed">Scan failed: %1$s</string>
+    <string name="err_manual_failed">Manual connect failed: %1$s</string>
+    <string name="err_connect_failed">Connection failed: %1$s</string>
+    <string name="err_brightness">Brightness set failed: %1$s</string>
+    <string name="err_hue">Hue set failed: %1$s</string>
+    <string name="err_voice">Voice toggle failed: %1$s</string>
+    <string name="err_display_mode">Display mode toggle failed: %1$s</string>
+    <string name="err_ping">Ping failed: %1$s</string>
+    <string name="err_manifest_refresh">Manifest refresh failed: %1$s</string>
+    <string name="err_disconnect">Disconnect failed: %1$s</string>
+    <string name="err_expr_set">Expression set failed: %1$s</string>
+    <string name="err_no_device_name">Enter a device name or BLE address first.</string>
+    <string name="err_no_device">No device to connect to. Scan first.</string>
+    <string name="err_not_connected">Not connected to device.</string>
+    <string name="err_no_characteristics">Could not find required BLE characteristics.</string>
+    <string name="err_connection_retries">Connection failed after retries.</string>
+    <string name="err_bluetooth_disabled">Bluetooth is disabled. Please enable it.</string>
+    <string name="err_ble_not_supported">BLE is not supported on this device.</string>
+    <string name="ble_scanning">Scanning for ProtoTracer devices...</string>
+    <string name="ble_no_device_selected">No ProtoTracer device selected.</string>
+    <string name="ble_no_device">No device selected.</string>
+    <string name="ble_found">Found: %1$s</string>
+    <string name="ble_connecting">Connecting to %1$s...</string>
+    <string name="ble_connected">Connected to %1$s</string>
+    <string name="ble_manifest_loading">Requesting device manifest...</string>
+    <string name="ble_manifest_loaded">Manifest loaded</string>
+    <string name="ble_device_disconnected">Device disconnected</string>
     <string name="btn_scan">Scan</string>
     <string name="btn_stop_scan">Stop</string>
     <string name="btn_scan_qr">Scan QR Code</string>
-    <string name="scanning">Scanning for devices…</string>
-    <string name="no_devices">No BLE devices found.\nTap Scan to search.</string>
+    <string name="title_scan_devices">Scan BLE Devices</string>
+    <string name="scanning">Scanning for devices...</string>
     <string name="device_unnamed">Unknown Device</string>
-    <string name="status_connecting">Connecting…</string>
-    <string name="status_connected">Connected</string>
-    <string name="status_disconnected">Disconnected</string>
-    <string name="status_pairing">Pairing…</string>
-
-    <!-- Permissions -->
     <string name="permission_bluetooth_rationale">Bluetooth access is required to scan and connect to ProtoTracer devices.</string>
     <string name="permission_location_rationale">Location access is required for Bluetooth scanning on this Android version.</string>
     <string name="permission_camera_rationale">Camera access is required to scan the device QR code.</string>
-
-    <!-- QR Scanner -->
     <string name="title_qr_scanner">Scan Device QR Code</string>
     <string name="qr_hint">Point camera at the QR code displayed on your ProtoTracer device</string>
-    <string name="qr_scanned_format">Scanned: %s</string>
-
-    <!-- Device Control -->
+    <string name="qr_scanned_format">Scanned: %1$s</string>
     <string name="title_device_control">Device Control</string>
     <string name="label_expression">Expression</string>
-    <string name="btn_prev_expression">◀ Prev</string>
-    <string name="btn_next_expression">Next ▶</string>
+    <string name="btn_prev_expression">Prev</string>
+    <string name="btn_next_expression">Next</string>
     <string name="btn_confirm_expression">Confirm</string>
     <string name="label_brightness">Brightness</string>
     <string name="label_hue_shift">Hue Shift</string>
     <string name="label_voice_enable">Voice Detection</string>
-    <string name="label_fan_enable">Fan</string>
+    <string name="label_fan_enable">Display Mode</string>
     <string name="label_device_info">Device Info</string>
     <string name="label_animation">Animation</string>
     <string name="label_color_preview">Color Preview</string>
     <string name="disconnect">Disconnect</string>
     <string name="send_failed">Send failed</string>
-
-    <!-- General -->
     <string name="ok">OK</string>
     <string name="cancel">Cancel</string>
     <string name="error">Error</string>

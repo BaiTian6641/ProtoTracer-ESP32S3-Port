@@ -1,47 +1,113 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ProtoTracer 遥控器</string>
-
-    <!-- Main screen -->
-    <string name="title_scan_devices">扫描 BLE 设备</string>
+    <string name="status_disconnected">未连接</string>
+    <string name="status_connecting">连接中...</string>
+    <string name="status_connected">已连接</string>
+    <string name="status_error">错误</string>
+    <string name="status_scanning">扫描中...</string>
+    <string name="status_loading">加载中...</string>
+    <string name="status_ready">就绪</string>
+    <string name="status_found">已发现设备</string>
+    <string name="status_pairing">配对中...</string>
+    <string name="hero_title">ProtoTracer 遥控器</string>
+    <string name="hero_subtitle">Android BLE 远程控制</string>
+    <string name="connect_title">连接设备</string>
+    <string name="connect_desc">请确保 ProtoTracer 已开机且 BLE 正在广播。</string>
+    <string name="connect_scan_btn">扫描 ProtoTracer</string>
+    <string name="connect_scan_hint">正在扫描... 请从列表中选择您的 ProtoTracer。</string>
+    <string name="connect_manual_title">手动连接</string>
+    <string name="connect_manual_desc">输入设备名称过滤词或 BLE 地址。</string>
+    <string name="connect_placeholder">设备名称或 BLE 地址</string>
+    <string name="connect_manual_btn">连接</string>
+    <string name="connect_compat_title">BLE 兼容性</string>
+    <string name="ble_supported">此设备支持 Android BLE。</string>
+    <string name="ble_unsupported">此设备不支持 BLE。</string>
+    <string name="no_devices">暂无设备。点击扫描查找 ProtoTracer。</string>
+    <string name="ctrl_expressions">表情</string>
+    <string name="ctrl_expr_count">%1$d 个表情</string>
+    <string name="ctrl_brightness">亮度</string>
+    <string name="ctrl_hue">色相偏移</string>
+    <string name="ctrl_options">选项</string>
+    <string name="ctrl_lip_sync">唇音同步</string>
+    <string name="ctrl_display_mode">显示模式</string>
+    <string name="ctrl_quick_actions">快捷操作</string>
+    <string name="ctrl_ping">检测连接</string>
+    <string name="ctrl_refresh_manifest">刷新配置</string>
+    <string name="ctrl_disconnect">断开连接</string>
+    <string name="ctrl_log">事件日志</string>
+    <string name="ctrl_clear_log">清空</string>
+    <string name="log_ready">ProtoTracer 遥控器已就绪。</string>
+    <string name="log_connected">已连接 %1$s</string>
+    <string name="log_disconnected">已断开连接。</string>
+    <string name="log_disconnected_unexpected">设备意外断开。</string>
+    <string name="log_manifest_received">已接收配置清单。</string>
+    <string name="log_animation">动画：%1$s，%2$d 个表情</string>
+    <string name="log_expr_fallback">表情 %1$d</string>
+    <string name="log_pong">来自 %1$s 的响应</string>
+    <string name="log_sent">发送：%1$s（%2$d 字节）</string>
+    <string name="log_recv">接收：%1$s</string>
+    <string name="log_expr_set">表情已切换：%1$s</string>
+    <string name="log_voice_on">唇音同步已开启</string>
+    <string name="log_voice_off">唇音同步已关闭</string>
+    <string name="log_disp_on">显示模式已开启</string>
+    <string name="log_disp_off">显示模式已关闭</string>
+    <string name="log_ping_sent">Ping 已发送...</string>
+    <string name="log_manifest_refresh">配置刷新请求已发送...</string>
+    <string name="log_found">已发现：%1$s，正在连接...</string>
+    <string name="err_scan_failed">扫描失败：%1$s</string>
+    <string name="err_manual_failed">手动连接失败：%1$s</string>
+    <string name="err_connect_failed">连接失败：%1$s</string>
+    <string name="err_brightness">亮度设置失败：%1$s</string>
+    <string name="err_hue">色相设置失败：%1$s</string>
+    <string name="err_voice">唇音同步切换失败：%1$s</string>
+    <string name="err_display_mode">显示模式切换失败：%1$s</string>
+    <string name="err_ping">Ping 失败：%1$s</string>
+    <string name="err_manifest_refresh">配置刷新失败：%1$s</string>
+    <string name="err_disconnect">断开连接失败：%1$s</string>
+    <string name="err_expr_set">表情设置失败：%1$s</string>
+    <string name="err_no_device_name">请先输入设备名称或 BLE 地址。</string>
+    <string name="err_no_device">没有可连接的设备。请先扫描。</string>
+    <string name="err_not_connected">未连接到设备。</string>
+    <string name="err_no_characteristics">未找到所需的 BLE 特征值。</string>
+    <string name="err_connection_retries">多次重试后连接失败。</string>
+    <string name="err_bluetooth_disabled">蓝牙未开启，请先开启蓝牙。</string>
+    <string name="err_ble_not_supported">此设备不支持 BLE。</string>
+    <string name="ble_scanning">正在扫描 ProtoTracer 设备...</string>
+    <string name="ble_no_device_selected">未选择 ProtoTracer 设备。</string>
+    <string name="ble_no_device">未选择设备。</string>
+    <string name="ble_found">已发现：%1$s</string>
+    <string name="ble_connecting">正在连接 %1$s...</string>
+    <string name="ble_connected">已连接 %1$s</string>
+    <string name="ble_manifest_loading">正在请求设备配置...</string>
+    <string name="ble_manifest_loaded">配置清单已加载</string>
+    <string name="ble_device_disconnected">设备已断开</string>
     <string name="btn_scan">扫描</string>
     <string name="btn_stop_scan">停止</string>
     <string name="btn_scan_qr">扫描二维码</string>
-    <string name="scanning">正在扫描设备…</string>
-    <string name="no_devices">未发现 BLE 设备。\n点击"扫描"搜索设备。</string>
+    <string name="title_scan_devices">扫描 BLE 设备</string>
+    <string name="scanning">正在扫描设备...</string>
     <string name="device_unnamed">未知设备</string>
-    <string name="status_connecting">连接中…</string>
-    <string name="status_connected">已连接</string>
-    <string name="status_disconnected">未连接</string>
-    <string name="status_pairing">配对中…</string>
-
-    <!-- Permissions -->
     <string name="permission_bluetooth_rationale">需要蓝牙权限以扫描和连接 ProtoTracer 设备。</string>
     <string name="permission_location_rationale">在此 Android 版本中，蓝牙扫描需要位置权限。</string>
     <string name="permission_camera_rationale">需要相机权限以扫描设备二维码。</string>
-
-    <!-- QR Scanner -->
     <string name="title_qr_scanner">扫描设备二维码</string>
     <string name="qr_hint">将相机对准 ProtoTracer 设备上显示的二维码</string>
-    <string name="qr_scanned_format">已扫描: %s</string>
-
-    <!-- Device Control -->
+    <string name="qr_scanned_format">已扫描：%1$s</string>
     <string name="title_device_control">设备控制</string>
     <string name="label_expression">表情</string>
-    <string name="btn_prev_expression">◀ 上一个</string>
-    <string name="btn_next_expression">下一个 ▶</string>
+    <string name="btn_prev_expression">上一个</string>
+    <string name="btn_next_expression">下一个</string>
     <string name="btn_confirm_expression">确认发送</string>
     <string name="label_brightness">亮度</string>
     <string name="label_hue_shift">色相偏移</string>
     <string name="label_voice_enable">语音检测</string>
-    <string name="label_fan_enable">风扇</string>
+    <string name="label_fan_enable">显示模式</string>
     <string name="label_device_info">设备信息</string>
     <string name="label_animation">动画</string>
     <string name="label_color_preview">颜色预览</string>
     <string name="disconnect">断开连接</string>
     <string name="send_failed">发送失败</string>
-
-    <!-- General -->
     <string name="ok">确定</string>
     <string name="cancel">取消</string>
     <string name="error">错误</string>

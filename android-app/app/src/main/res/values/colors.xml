@@ -1,15 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primary">#FF6200EE</color>
-    <color name="primary_dark">#FF3700B3</color>
+    <color name="bg_primary">#0A0F1A</color>
+    <color name="bg_secondary">#111827</color>
+    <color name="bg_card">#1A2236</color>
+    <color name="bg_card_hover">#1F2A42</color>
+    <color name="border">#2A3450</color>
+    <color name="border_active">#4A6FFF</color>
+    <color name="text_primary">#E0E6F0</color>
+    <color name="text_secondary">#8899BB</color>
+    <color name="text_muted">#556688</color>
+    <color name="accent">#4A6FFF</color>
+    <color name="accent_pressed">#5B7FFF</color>
+    <color name="success">#22C55E</color>
+    <color name="warning">#F59E0B</color>
+    <color name="danger">#EF4444</color>
+    <color name="success_surface">#1A3328</color>
+    <color name="success_border">#335C46</color>
+
+    <color name="primary">@color/accent</color>
+    <color name="primary_dark">@color/bg_secondary</color>
     <color name="on_primary">#FFFFFFFF</color>
-    <color name="secondary">#FF03DAC5</color>
-    <color name="secondary_dark">#FF018786</color>
+    <color name="secondary">@color/success</color>
+    <color name="secondary_dark">#15803D</color>
     <color name="on_secondary">#FF000000</color>
-    <color name="background">#FF1A1A2E</color>
-    <color name="surface">#FF16213E</color>
-    <color name="on_surface">#FFFFFFFF</color>
-    <color name="error">#FFCF6679</color>
-    <color name="ble_connected">#FF4CAF50</color>
-    <color name="ble_disconnected">#FF757575</color>
+    <color name="background">@color/bg_primary</color>
+    <color name="surface">@color/bg_card</color>
+    <color name="on_surface">@color/text_primary</color>
+    <color name="error">@color/danger</color>
+    <color name="ble_connected">@color/success</color>
+    <color name="ble_disconnected">@color/text_muted</color>
 </resources>
