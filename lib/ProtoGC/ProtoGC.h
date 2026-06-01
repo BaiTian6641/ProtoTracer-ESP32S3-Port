@@ -248,6 +248,12 @@ public:
         if (!poolsOk) {
             std::printf("[ProtoGC] warning: one or more PSRAM pools failed; degraded mode\n");
         }
+#if PROTOGC_OVERRIDE_NEW
+        // Default policy: route global operator new through ProtoGC so PSRAM is
+        // preferred for every C++ allocation, with internal SRAM as fallback.
+        // Direct heap_caps_malloc DMA/EXEC paths are unaffected (those bypass new).
+        sNewDeleteTakeoverEnabled = sInitialized;
+#endif
         return sInitialized;
     }
 

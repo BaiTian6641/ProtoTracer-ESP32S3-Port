@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Node.h"
+#include <ProtoGC.h>
+#include <esp_heap_caps.h>
 
 class QuadTree {
 private:
@@ -20,8 +22,8 @@ public:
     QuadTree(const BoundingBox2D& bounds): bbox(bounds){}
 
     ~QuadTree() {
-        if (!mArenaMode)
-            free(entities);
+        if (!mArenaMode && entities)
+            protogc::ProtoGC::heapFree(entities);
     }
 
     // Enable arena mode: use preallocated triangle array, pass node/ref pools to root
@@ -48,7 +50,18 @@ public:
             // Arena is fixed-size; overflow silently degrades (triangles beyond capacity are dropped)
             return;
         }
-        Triangle2D* newEntities = (Triangle2D*)realloc(entities, newCapacity * sizeof(Triangle2D));
+        // Route fallback heap path through ProtoGC so the entity buffer lives in
+        // PSRAM (with internal-SRAM fallback) instead of fragmenting libc DRAM.
+        Triangle2D* newEntities = (Triangle2D*)protogc::ProtoGC::heapRealloc(
+            entities,
+            newCapacity * sizeof(Triangle2D),
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!newEntities) {
+            newEntities = (Triangle2D*)protogc::ProtoGC::heapRealloc(
+                entities,
+                newCapacity * sizeof(Triangle2D),
+                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        }
         if (!newEntities) {
             // allocation failed — keep existing capacity, renderer will skip overflow
             return;
