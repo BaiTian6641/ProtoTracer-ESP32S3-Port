@@ -146,6 +146,7 @@ public:
     uint16_t color565(uint8_t r, uint8_t g, uint8_t b) { return display->color565(r, g, b); }
 
     void flipDMABuffer() { display->flipDMABuffer(); }
+    void flushDMAFramebuffer(bool flushAll = false) { display->flushDMAFramebuffer(flushAll); }
     void drawDisplayTest();
 
     void setPhysicalPanelScanRate(PANEL_SCAN_RATE rate);

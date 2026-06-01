@@ -363,6 +363,8 @@ namespace
         options.display = display;
         options.verbose = verbose;
         options.keepExistingWhenRemoteMd5Unavailable = false;
+        options.enableLatencyProbe = false;
+        options.skipRemoteMd5 = true;
         options.ui.checkingMd5 = TXT("Checking config...", "检查配置中...");
         options.ui.upToDate = TXT("Config up-to-date", "配置已最新");
         options.ui.md5Mismatch = TXT("Config changed, redownloading...", "配置已变更，重新下载");
@@ -715,6 +717,12 @@ bool DownloadUserConfigFromSources(const RemoteFileSource *sources,
 
     if (!EnsureFsMounted())
     {
+        return false;
+    }
+
+    if (WiFi.status() != WL_CONNECTED || WiFi.localIP() == IPAddress((uint32_t)0))
+    {
+        Serial.println("[WARN] Skipping remote user_config.json fetch: WiFi is not ready");
         return false;
     }
 

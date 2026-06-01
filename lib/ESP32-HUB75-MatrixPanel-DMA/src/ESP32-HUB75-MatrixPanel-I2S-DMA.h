@@ -11,6 +11,14 @@
 // #include <Arduino.h>
 #include "platforms/platform_detect.hpp"
 
+#if defined(SPIRAM_DMA_BUFFER)
+#include "rom/cache.h"
+#endif
+
+#if defined(SPIRAM_DMA_BUFFER) && !defined(HUB75_SPIRAM_DEFERRED_CACHE_FLUSH)
+#define HUB75_SPIRAM_DEFERRED_CACHE_FLUSH 0
+#endif
+
 #ifdef USE_GFX_LITE
   // Slimmed version of Adafruit GFX + FastLED: https://github.com/mrcodetastic/GFX_Lite
   #include "GFX_Lite.h" 
@@ -209,6 +217,9 @@ struct frameStruct
 {
   uint8_t rows = 0; // number of rows held in current frame, not used actually, just to keep the idea of struct
   rowBitStruct *rowBits = nullptr;
+#if defined(SPIRAM_DMA_BUFFER)
+  uint64_t dirtyRows = 0;
+#endif
 
   bool allocateRows(uint8_t rowCount, size_t width, uint8_t colourDepth)
   {
@@ -244,7 +255,37 @@ struct frameStruct
     }
     rowBits = nullptr;
     rows = 0;
+#if defined(SPIRAM_DMA_BUFFER)
+    dirtyRows = 0;
+#endif
   }
+
+#if defined(SPIRAM_DMA_BUFFER)
+  void markDirty(uint8_t row)
+  {
+    if (row < rows && row < 64)
+    {
+      dirtyRows |= (1ULL << row);
+    }
+  }
+
+  void markAllDirty()
+  {
+    dirtyRows = rows >= 64 ? ~0ULL : ((1ULL << rows) - 1ULL);
+  }
+
+  void flushDirtyRows()
+  {
+    uint64_t pending = dirtyRows;
+    while (pending)
+    {
+      const uint8_t row = static_cast<uint8_t>(__builtin_ctzll(pending));
+      Cache_WriteBack_Addr(reinterpret_cast<uint32_t>(rowBits[row].getDataPtr(0)), rowBits[row].getColorDepthSize(false));
+      pending &= ~(1ULL << row);
+    }
+    dirtyRows = 0;
+  }
+#endif
 
   ~frameStruct() { release(); }
 };
@@ -647,6 +688,8 @@ public:
 
   void drawIcon(int *ico, int16_t x, int16_t y, int16_t cols, int16_t rows);
 
+  void flushDMAFramebuffer(bool flushAll = false);
+
   // Colour 444 is a 4 bit scale, so 0 to 15, colour 565 takes a 0-255 bit value, so scale up by 255/15 (i.e. 17)!
   static uint16_t color444(uint8_t r, uint8_t g, uint8_t b) { return color565(r * 17, g * 17, b * 17); }
   static uint16_t color565(uint8_t r, uint8_t g, uint8_t b); // This is what is used by Adafruit GFX!
@@ -664,6 +707,10 @@ public:
     {
       return;
     }
+
+#if defined(SPIRAM_DMA_BUFFER) && HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+    flushDMAFramebuffer();
+#endif
 	
     dma_bus.flip_dma_output_buffer(back_buffer_id);
 	

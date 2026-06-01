@@ -3,7 +3,6 @@
 #if defined(SPIRAM_DMA_BUFFER)
 // Sprite_TM saves the day again...
 // https://www.esp32.com/viewtopic.php?f=2&t=30584
-#include "rom/cache.h"
 #endif
 
 /* This replicates same function in rowBitStruct, but due to induced inlining it might be MUCH faster
@@ -449,10 +448,18 @@ void IRAM_ATTR MatrixPanel_I2S_DMA::updateMatrixDMABuffer(uint16_t x_coord, uint
     p[x_coord] |= RGB_output_bits; // set new RGB bits
 
 #if defined(SPIRAM_DMA_BUFFER)
+#if HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+    // Cache writeback is batched per row by flushDMAFramebuffer().
+#else
     Cache_WriteBack_Addr((uint32_t)&p[x_coord], sizeof(ESP32_I2S_DMA_STORAGE_TYPE));
+#endif
 #endif
 
   } while (colour_depth_idx); // end of colour depth loop (8)
+
+#if defined(SPIRAM_DMA_BUFFER) && HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+  fb->markDirty(y_coord);
+#endif
 } // updateMatrixDMABuffer (specific co-ords change)
 
 
@@ -504,14 +511,33 @@ void MatrixPanel_I2S_DMA::updateMatrixDMABuffer(uint8_t red, uint8_t green, uint
         p[x_coord] |= RGB_output_bits;     // set new colour bits
 
 #if defined(SPIRAM_DMA_BUFFER)
+#if HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+  // Cache writeback is batched after the full-frame fill completes.
+#else
         Cache_WriteBack_Addr((uint32_t)&p[x_coord], sizeof(ESP32_I2S_DMA_STORAGE_TYPE));
+#endif
 #endif
 
       } while (x_coord);
 
     } while (matrix_frame_parallel_row); // end row iteration
   }                                      // colour depth loop (8)
+
+#if defined(SPIRAM_DMA_BUFFER) && HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+  flushDMAFramebuffer(true);
+#endif
 } // updateMatrixDMABuffer (full frame paint)
+
+void MatrixPanel_I2S_DMA::flushDMAFramebuffer(bool flushAll)
+{
+#if defined(SPIRAM_DMA_BUFFER)
+  if (!initialized || !fb) return;
+  if (flushAll) fb->markAllDirty();
+  fb->flushDirtyRows();
+#else
+  (void)flushAll;
+#endif
+}
 
 /**
  * @brief - clears and reinitializes colour/control data in DMA buffs
@@ -670,10 +696,18 @@ void MatrixPanel_I2S_DMA::clearFrameBuffer(bool _buff_id)
     } while (colouridx);
 
 #if defined(SPIRAM_DMA_BUFFER)
+#if HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+    fb->markDirty(row_idx);
+#else
     Cache_WriteBack_Addr((uint32_t)row, fb->rowBits[row_idx].getColorDepthSize(false));
+#endif
 #endif
 
   } while (row_idx);
+
+#if defined(SPIRAM_DMA_BUFFER) && HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+  fb->flushDirtyRows();
+#endif
 }
 
 void MatrixPanel_I2S_DMA::setBrightnessOE(uint8_t brt, const int _buff_id)
@@ -750,12 +784,20 @@ void MatrixPanel_I2S_DMA::setBrightnessOE(uint8_t brt, const int _buff_id)
     } while (colouridx);
 
 #if defined(SPIRAM_DMA_BUFFER)
+#if HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+	fb->markDirty(row_idx);
+#else
 	// Force the flush and update of the PSRAM for the memory address range of the 'row data' as
 	// data changes probably aren't being sent out via DMA as they're sitting in a hadrware 'cache' 
     ESP32_I2S_DMA_STORAGE_TYPE *row_ptr = fb->rowBits[row_idx].getDataPtr(0);
     Cache_WriteBack_Addr((uint32_t)row_ptr, fb->rowBits[row_idx].getColorDepthSize(false));
 #endif
+#endif
   } while (row_idx);
+
+#if defined(SPIRAM_DMA_BUFFER) && HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+  fb->flushDirtyRows();
+#endif
 }
 
 
@@ -906,6 +948,14 @@ DO_BRIGHTNESS_COMPENSATION()
       v |= RGB_output_bits;   // set new colour bits
     } while (_l);             // iterate pixels in a row
   } while (colour_depth_idx); // end of colour depth loop (8)
+
+#if defined(SPIRAM_DMA_BUFFER)
+#if HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+  fb->markDirty(y_coord);
+#else
+  Cache_WriteBack_Addr(reinterpret_cast<uint32_t>(fb->rowBits[y_coord].getDataPtr(0)), fb->rowBits[y_coord].getColorDepthSize(false));
+#endif
+#endif
 } // hlineDMA()
 
 /**
@@ -977,6 +1027,13 @@ void MatrixPanel_I2S_DMA::vlineDMA(int16_t x_coord, int16_t y_coord, int16_t l, 
 
       p[x_coord] &= _colourbitclear; // reset RGB bits
       p[x_coord] |= RGB_output_bits; // set new RGB bits
+    #if defined(SPIRAM_DMA_BUFFER)
+    #if HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+      fb->markDirty(_y);
+    #else
+      Cache_WriteBack_Addr(reinterpret_cast<uint32_t>(p), fb->rowBits[_y].getColorDepthSize(false));
+    #endif
+    #endif
       ++_y;
     } while (++_l != l);      // iterate pixels in a col
   } while (colour_depth_idx); // end of colour depth loop (8)

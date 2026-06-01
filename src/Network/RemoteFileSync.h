@@ -31,6 +31,8 @@ struct RemoteFileSyncOptions
     M5UnitGLASS2 *display = nullptr;
     bool verbose = false;
     bool keepExistingWhenRemoteMd5Unavailable = false;
+    bool enableLatencyProbe = true;
+    bool skipRemoteMd5 = false;
     RemoteFileUiText ui;
 };
 

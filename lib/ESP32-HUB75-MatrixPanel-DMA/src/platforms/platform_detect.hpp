@@ -42,8 +42,12 @@ Modified heavily for the ESP32 HUB75 DMA library by:
   #if defined(SPIRAM_DMA_BUFFER) && defined (CONFIG_IDF_TARGET_ESP32S3)       
    #pragma message "Enabling use of PSRAM/SPIRAM based DMA Buffer"
    
-   // Disable fast functions because I don't understand the interaction with DMA PSRAM and the CPU->DMA->SPIRAM Cache implications..
-   #define NO_FAST_FUNCTIONS 1
+   // Historically PSRAM DMA mode disabled fast functions because every write
+   // needed immediate cache writeback. Deferred cache flushing batches those
+   // writebacks per row/frame, so fast functions are safe in that mode.
+   #if !defined(HUB75_SPIRAM_DEFERRED_CACHE_FLUSH) || (HUB75_SPIRAM_DEFERRED_CACHE_FLUSH == 0)
+    #define NO_FAST_FUNCTIONS 1
+   #endif
 
   #endif
 

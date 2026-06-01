@@ -56,11 +56,11 @@ extern M5UnitGLASS2 display;
 #define SERPENT true
 
 #ifndef HUB75_PIXEL_COLOR_DEPTH_BITS
-#define HUB75_PIXEL_COLOR_DEPTH_BITS 6
+#define HUB75_PIXEL_COLOR_DEPTH_BITS 8
 #endif
 
 #ifndef HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS
-#define HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS 4
+#define HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS HUB75_PIXEL_COLOR_DEPTH_BITS
 #endif
 
 
@@ -264,6 +264,9 @@ public:
                 }
             }
         }
+    #if defined(SPIRAM_DMA_BUFFER) && HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+        dma_display->flushDMAFramebuffer();
+    #endif
         
         if (doPreview) {
             display.display();

@@ -11,20 +11,11 @@ public:
 	float X = 0.0f;
 	float Y = 0.0f;
 
-	Vector2D() {
-		this->X = 0.0;
-		this->Y = 0.0;
-	}
+	constexpr Vector2D() : X(0.0f), Y(0.0f) {}
 
-	Vector2D(const Vector2D& vector) {
-		this->X = vector.X;
-		this->Y = vector.Y;
-	}
+	constexpr Vector2D(const Vector2D& vector) : X(vector.X), Y(vector.Y) {}
 
-	Vector2D(float X, float Y) {
-		this->X = X;
-		this->Y = Y;
-	}
+	constexpr Vector2D(float X, float Y) : X(X), Y(Y) {}
 
 	Vector2D(const Vector3D& vector) {
 		this->X = vector.X;

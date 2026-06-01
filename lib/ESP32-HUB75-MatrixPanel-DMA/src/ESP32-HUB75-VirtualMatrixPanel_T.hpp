@@ -332,6 +332,7 @@ public:
 	inline uint16_t color565(uint8_t r, uint8_t g, uint8_t b) { return display->color565(r, g, b); }
 
 	inline void flipDMABuffer() { display->flipDMABuffer(); }
+	inline void flushDMAFramebuffer(bool flushAll = false) { display->flushDMAFramebuffer(flushAll); }
 
 	// ------------------------------------------------------------------
 	// Rotation (runtime)

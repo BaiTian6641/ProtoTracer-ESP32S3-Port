@@ -18,6 +18,11 @@ namespace
     constexpr uint32_t kHttpIdleTimeoutMs = 5000;
     constexpr size_t kMaxSelectableSourceCount = 4;
 
+    bool HasUsableWifi()
+    {
+        return WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress((uint32_t)0);
+    }
+
     const char *SourceName(const RemoteFileSource &source)
     {
         return (source.name != nullptr && source.name[0] != '\0') ? source.name : "remote";
@@ -82,6 +87,12 @@ namespace
             return String();
         }
 
+        if (!HasUsableWifi())
+        {
+            Serial.println("[WARN] Skipping remote MD5 fetch: WiFi is not ready");
+            return String();
+        }
+
         HTTPClient http;
         String url = BuildUrl(source.baseUrl, DeriveMd5Filename(remoteFilename));
         http.setConnectTimeout(kHttpMd5ConnectTimeoutMs);
@@ -113,6 +124,11 @@ namespace
                             uint32_t &latencyMs)
     {
         if (!RemoteFileSync::IsSourceConfigured(source))
+        {
+            return false;
+        }
+
+        if (!HasUsableWifi())
         {
             return false;
         }
@@ -365,6 +381,13 @@ bool RemoteFileSync::Sync(const RemoteFileSource &source,
         return false;
     }
 
+    if (!HasUsableWifi())
+    {
+        Serial.println("[WARN] Remote sync skipped: WiFi is not ready");
+        ShowStatus(options.display, options.ui.httpGetFail, options.verbose);
+        return false;
+    }
+
     if (!EnsureFsMounted())
     {
         return false;
@@ -380,7 +403,7 @@ bool RemoteFileSync::Sync(const RemoteFileSource &source,
     // Only fetch remote MD5 when we have a local file to compare against.
     // If no local file exists, skip the MD5 round-trip and download directly.
     String remoteMd5;
-    if (localExists)
+    if (localExists && !options.skipRemoteMd5)
     {
         remoteMd5 = FetchRemoteMd5(source, remoteFilename);
     }
@@ -565,7 +588,7 @@ bool RemoteFileSync::SyncAny(const RemoteFileSource *sources,
     const size_t cappedSourceCount = sourceCount > kMaxSelectableSourceCount ? kMaxSelectableSourceCount : sourceCount;
     const size_t orderedCount = SelectSourcesByLatency(sources,
                                                        cappedSourceCount,
-                                                       remoteFilename,
+                                                       options.enableLatencyProbe ? remoteFilename : String(),
                                                        orderedSelections,
                                                        kMaxSelectableSourceCount);
 
