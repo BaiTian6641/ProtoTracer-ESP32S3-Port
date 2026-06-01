@@ -389,8 +389,7 @@ void setup()
   protogc::HeapGuard::onWarning(ProtoGcWarnHandler);
   protogc::HeapGuard::onCritical(ProtoGcCriticalHandler);
   Serial.println("/nStarting...");
-  //Wire.begin(41, 42);
-  Wire.begin(47, 48);
+  Wire.begin(41, 42);
   delay(100);
   display.begin();
   display.setColorDepth(1);
