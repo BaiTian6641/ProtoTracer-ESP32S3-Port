@@ -12,6 +12,11 @@
 #include "../Render/IndexGroup.h"
 #include "../Render/Object3D.h"
 
+// Custom deleter for ProtoGC-managed PSRAM arrays used with std::unique_ptr.
+struct ProtoGCArrayDeleter {
+    void operator()(void* p) const noexcept { protogc::ProtoGC::heapFree(p); }
+};
+
 // Lightweight, runtime-loadable face model that mirrors the NukudeFace interface
 // but sources its mesh and morph targets from a JSON file. This allows updating
 // the face without recompiling firmware.
@@ -99,11 +104,11 @@ public:
             return false;
         }
 
-        // Build vertex buffer (owned so transforms and morphs stay valid).
-        vertexBufferStorage.reset(new Vector3D[vertexCount]);
+        // Build vertex buffer in PSRAM (owned so transforms and morphs stay valid).
+        vertexBufferStorage.reset(static_cast<Vector3D*>(protogc::ProtoGC::psramAlloc(vertexCount * sizeof(Vector3D))));
         Vector3D *vertexBuffer = vertexBufferStorage.get();
         if (!vertexBuffer) {
-            Serial.println("[WARN] universal_face.json Failed to alloc vertexBuffer");
+            Serial.println("[WARN] universal_face.json Failed to alloc vertexBuffer (PSRAM)");
             return false;
         }
         for (uint16_t i = 0; i < vertexCount; ++i) {
@@ -114,11 +119,11 @@ public:
                 verticesArray[base + 2].as<float>());
         }
 
-        // Build index buffer (owned like the static model does).
-        indexBufferStorage.reset(new IndexGroup[triangleCount]);
+        // Build index buffer in PSRAM (owned like the static model does).
+        indexBufferStorage.reset(static_cast<IndexGroup*>(protogc::ProtoGC::psramAlloc(triangleCount * sizeof(IndexGroup))));
         IndexGroup *indexBuffer = indexBufferStorage.get();
         if (!indexBuffer) {
-            Serial.println("[WARN] universal_face.json Failed to alloc indexBuffer");
+            Serial.println("[WARN] universal_face.json Failed to alloc indexBuffer (PSRAM)");
             return false;
         }
         for (uint16_t i = 0; i < triangleCount; ++i) {
@@ -155,8 +160,12 @@ public:
                 return false;
             }
 
-            std::unique_ptr<int[]> idxBuf(new int[vCount]);
-            std::unique_ptr<Vector3D[]> vecBuf(new Vector3D[vCount]);
+            std::unique_ptr<int[], ProtoGCArrayDeleter> idxBuf(static_cast<int*>(protogc::ProtoGC::psramAlloc(vCount * sizeof(int))));
+            std::unique_ptr<Vector3D[], ProtoGCArrayDeleter> vecBuf(static_cast<Vector3D*>(protogc::ProtoGC::psramAlloc(vCount * sizeof(Vector3D))));
+            if (!idxBuf || !vecBuf) {
+                Serial.printf("[WARN] universal_face.json Failed to alloc morph '%s' buffers (PSRAM)\n", morphName);
+                return false;
+            }
 
             for (uint16_t i = 0; i < vCount; ++i) {
                 idxBuf[i] = idxArray[i].as<int>();
@@ -282,12 +291,12 @@ public:
 private:
     bool loaded = false;
     SimpleMaterial simpleMaterial = SimpleMaterial(ProtoRGBColor(128, 128, 128));
-    std::unique_ptr<Vector3D[]> vertexBufferStorage;
-    std::unique_ptr<IndexGroup[]> indexBufferStorage;
+    std::unique_ptr<Vector3D[], ProtoGCArrayDeleter> vertexBufferStorage;
+    std::unique_ptr<IndexGroup[], ProtoGCArrayDeleter> indexBufferStorage;
     std::unique_ptr<TriangleGroup> triangleGroup;
     std::unique_ptr<Object3D> basisObj;
     std::vector<Morph> morphs;
-    std::vector<std::unique_ptr<int[]>> morphIndexStorage;
-    std::vector<std::unique_ptr<Vector3D[]>> morphVectorStorage;
+    std::vector<std::unique_ptr<int[], ProtoGCArrayDeleter>> morphIndexStorage;
+    std::vector<std::unique_ptr<Vector3D[], ProtoGCArrayDeleter>> morphVectorStorage;
     std::vector<std::string> morphNames;
 };
