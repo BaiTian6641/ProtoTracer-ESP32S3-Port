@@ -200,127 +200,7 @@ const char *index_html = R"rawliteral(
 </html>
 )rawliteral";
 
-constexpr const char *kRemoteC6ManifestFilename = "remote-esp32c6.json";
-constexpr const char *kRemoteC6FirmwareFilename = "remote-firmware.bin";
-constexpr const char *kRelayManifestCachePath = "/relay_remote-esp32c6.json";
-constexpr const char *kRelayFirmwareCachePath = "/relay_remote-firmware.bin";
-
-bool gRelayRoutesRegistered = false;
-bool gRuntimeServerStarted = false;
 bool gControllerInitialized = false;
-static bool gRelayRefreshPending = false;
-
-// Forward declaration — defined below
-bool RefreshRelayAsset(const char *remoteFilename, const char *localPath);
-
-// Non-blocking relay asset serve: returns cached copy immediately if available,
-// defers remote refresh to main loop via gRelayRefreshPending flag.
-bool ServeRelayAssetCached(AsyncWebServerRequest *request, const char *remoteFilename, const char *localPath, const char *contentType)
-{
-  // Serve cached copy immediately if it exists (fast path, no HTTP blocking)
-  if (LittleFS.exists(localPath))
-  {
-    request->send(LittleFS, localPath, contentType, false);
-    // Defer background refresh to main loop
-    gRelayRefreshPending = true;
-    return true;
-  }
-
-  // No cache — must fetch now (blocking, but unavoidable on first request)
-  if (RefreshRelayAsset(remoteFilename, localPath))
-  {
-    request->send(LittleFS, localPath, contentType, false);
-    return true;
-  }
-
-  request->send(502, "application/json", "{\"error\":\"Relay asset unavailable\"}");
-  return false;
-}
-
-// Called from main loop to refresh stale relay assets in background
-void RefreshRelayAssetsIfPending()
-{
-  if (!gRelayRefreshPending) return;
-  gRelayRefreshPending = false;
-
-  // Best-effort background refresh — failures are non-fatal (next request retries)
-  RefreshRelayAsset(kRemoteC6ManifestFilename, kRelayManifestCachePath);
-  RefreshRelayAsset(kRemoteC6FirmwareFilename, kRelayFirmwareCachePath);
-}
-
-bool RefreshRelayAsset(const char *remoteFilename, const char *localPath)
-{
-  if (remoteFilename == nullptr || localPath == nullptr)
-  {
-    return false;
-  }
-
-  RemoteFileSource sources[2];
-  sources[0].baseUrl = user_config_gitee_base_url;
-  sources[0].token = user_config_gitee_token;
-  sources[0].authScheme = "Bearer ";
-  sources[0].acceptHeader = gitee_accept_header;
-  sources[0].name = "Gitee";
-  sources[1].baseUrl = user_config_base_url;
-  sources[1].token = user_config_github_token;
-  sources[1].authScheme = "token ";
-  sources[1].acceptHeader = nullptr;
-  sources[1].name = "GitHub";
-
-  RemoteFileSyncOptions options;
-  options.verbose = kVerboseStartup;
-  options.keepExistingWhenRemoteMd5Unavailable = false;
-
-  int usedSourceIndex = -1;
-  const bool synced = RemoteFileSync::SyncAny(
-      sources,
-      2,
-      String(remoteFilename),
-      String(localPath),
-      options,
-      &usedSourceIndex);
-
-  if (synced)
-  {
-    Serial.printf("[INFO] Refreshed relay asset %s via source %d\n", remoteFilename, usedSourceIndex);
-    return true;
-  }
-
-  return RemoteFileSync::EnsureFsMounted() && LittleFS.exists(localPath);
-}
-
-void RegisterC6RelayRoutes()
-{
-  if (gRelayRoutesRegistered)
-  {
-    return;
-  }
-
-  server.on("/api/relay/esp32c6/healthz", HTTP_GET, [](AsyncWebServerRequest *request)
-            { request->send(200, "application/json", "{\"status\":\"ok\"}"); });
-
-  server.on("/api/relay/esp32c6/manifest", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-              ServeRelayAssetCached(request, kRemoteC6ManifestFilename, kRelayManifestCachePath, "application/json"); });
-
-  server.on("/api/relay/esp32c6/remote-firmware.bin", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-              ServeRelayAssetCached(request, kRemoteC6FirmwareFilename, kRelayFirmwareCachePath, "application/octet-stream"); });
-
-  gRelayRoutesRegistered = true;
-}
-
-void EnsureRuntimeServerStarted()
-{
-  if (gRuntimeServerStarted)
-  {
-    return;
-  }
-
-  server.begin();
-  gRuntimeServerStarted = true;
-  Serial.println("[INFO] Runtime HTTP server started");
-}
 
 void EnsureControllerInitialized()
 {
@@ -665,7 +545,12 @@ void setup()
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   delay(200);
-  Serial.printf("[INFO] WiFi off — intFree=%u largestBlk=%u psramFree=%u\n",
+
+  // Release AsyncWebServer memory (TCP sockets, route handlers, buffers).
+  // The server is only used during NetWizard/OTA; after WiFi teardown it is dead weight.
+  server.reset();
+  server.end();
+  Serial.printf("[INFO] WiFi + HTTP server off — intFree=%u largestBlk=%u psramFree=%u\n",
                 GetFreeInternalDRAM(), GetLargestFreeInternalBlock(), GetFreePSRAM());
 
   // Phase 2 — runtime: lock ALL future malloc() to PSRAM.
@@ -830,9 +715,6 @@ void loop()
 
   controller.Display();
   yield(); // Feed watchdog after display update
-
-  // Background relay asset refresh (non-blocking — deferred from async HTTP handlers)
-  RefreshRelayAssetsIfPending();
 
 #ifdef PRINTINFO
   static uint32_t lastPrintMs = 0;
