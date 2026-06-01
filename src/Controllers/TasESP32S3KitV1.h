@@ -56,11 +56,11 @@ extern M5UnitGLASS2 display;
 #define SERPENT true
 
 #ifndef HUB75_PIXEL_COLOR_DEPTH_BITS
-#define HUB75_PIXEL_COLOR_DEPTH_BITS 8
+#define HUB75_PIXEL_COLOR_DEPTH_BITS 6
 #endif
 
 #ifndef HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS
-#define HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS 6
+#define HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS 4
 #endif
 
 
@@ -183,7 +183,11 @@ public:
         //Serial1.begin(2048000, SERIAL_8N1, -1, 47);
 
         // create VirtualDisplay object based on our newly created dma_display object
+    #if PANEL_CHAIN > 1
         virtualDisp = new VirtualMatrixPanel((*dma_display), NUM_ROWS, NUM_COLS, PANEL_RES_X, PANEL_RES_Y, CHAIN_BOTTOM_LEFT_UP);
+    #else
+        virtualDisp = nullptr;
+    #endif
         #ifndef VERBOSE_STARTUP 
         display.progressBar(14,50,100,8,65);
         #endif
@@ -215,7 +219,10 @@ public:
     }
 
     void Display() override {
+        if (!dma_display) return;
+    #if PANEL_CHAIN > 1
         if (!virtualDisp) return;
+    #endif
 
         // Cache brightness — only push to DMA when it actually changes
         static uint8_t sLastBrightness = 255;
@@ -243,8 +250,12 @@ public:
             for (uint16_t x = 0; x < 64; x++){
                 uint16_t pixelNum = y * 64 + x;
                 const ProtoRGBColor& c = colors[pixelNum];
+#if PANEL_CHAIN > 1
                 virtualDisp->drawPixelRGB888(63 - x, (y) + 32, (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
                 virtualDisp->drawPixelRGB888(63 - x, (31 - y), (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
+#else
+                dma_display->drawPixelRGB888(63 - x, 31 - y, (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
+#endif
                 if (doPreview) {
                     // Hard luminance threshold for crisp 1-bit preview (no dithering).
                     // Midpoint of 0-765 range: >= 384 → white, else black.

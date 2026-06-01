@@ -2,8 +2,7 @@
 #define _ESP32_RGB_64_32_MATRIX_PANEL_I2S_DMA
 /***************************************************************************************/
 /* Core ESP32 hardware / idf includes!                                                 */
-#include <vector>
-#include <memory>
+#include <new>
 #include <esp_err.h>
 #include <esp_log.h>
 #include "esp_attr.h"
@@ -179,7 +178,7 @@ struct rowBitStruct
 
   // constructor - allocates DMA-capable memory to hold the struct data
   //rowBitStruct(const size_t _width, const uint8_t _depth, const bool _dbuff) : width(_width), colour_depth(_depth), double_buff(_dbuff)
-  rowBitStruct(const size_t _width, const uint8_t _depth) : width(_width), colour_depth(_depth)
+  rowBitStruct(const size_t _width, const uint8_t _depth) : width(_width), colour_depth(_depth), data(nullptr)
   {
 
     // #if defined(SPIRAM_FRAMEBUFFER) && defined (CONFIG_IDF_TARGET_ESP32S3)
@@ -196,7 +195,7 @@ struct rowBitStruct
 
 #endif
   }
-  ~rowBitStruct() { heap_caps_free(data); }
+  ~rowBitStruct() { if (data) heap_caps_free(data); }
 };
 
 /* frameStruct
@@ -209,7 +208,45 @@ struct rowBitStruct
 struct frameStruct
 {
   uint8_t rows = 0; // number of rows held in current frame, not used actually, just to keep the idea of struct
-  std::vector<std::shared_ptr<rowBitStruct>> rowBits;
+  rowBitStruct *rowBits = nullptr;
+
+  bool allocateRows(uint8_t rowCount, size_t width, uint8_t colourDepth)
+  {
+    release();
+    if (rowCount == 0) return false;
+
+    rowBits = static_cast<rowBitStruct *>(heap_caps_malloc(rowCount * sizeof(rowBitStruct), MALLOC_CAP_8BIT));
+    if (!rowBits) return false;
+
+    for (uint8_t row = 0; row < rowCount; ++row)
+    {
+      new (&rowBits[row]) rowBitStruct(width, colourDepth);
+      if (!rowBits[row].data)
+      {
+        rowBits[row].~rowBitStruct();
+        release();
+        return false;
+      }
+      ++rows;
+    }
+    return true;
+  }
+
+  void release()
+  {
+    if (rowBits)
+    {
+      for (uint8_t row = 0; row < rows; ++row)
+      {
+        rowBits[row].~rowBitStruct();
+      }
+      heap_caps_free(rowBits);
+    }
+    rowBits = nullptr;
+    rows = 0;
+  }
+
+  ~frameStruct() { release(); }
 };
 
 /***************************************************************************************/

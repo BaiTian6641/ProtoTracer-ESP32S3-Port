@@ -5,7 +5,7 @@
     "keywords": "hub75, esp32, esp32s2, esp32s3, display, dma, rgb matrix",
     "repository": {
         "type": "git",
-        "url": "https://github.com/mrcodetastic/ESP32-HUB75-MatrixPanel-DMA.git"
+        "url": "https://github.com/BaiTian6641/ESP32-HUB75-MatrixPanel-DMA.git"
     },
     "authors": {
         "name": "MrCodetastic",
