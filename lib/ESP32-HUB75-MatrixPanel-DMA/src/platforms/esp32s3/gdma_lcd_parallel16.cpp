@@ -423,7 +423,8 @@
         LCD_CAM.lcd_user.lcd_reset = 1;        // Trigger LCD DMA transfer
         LCD_CAM.lcd_user.lcd_update = 1;        // Trigger LCD DMA transfer
 
-        gdma_stop(dma_chan);   
+        gdma_stop(dma_chan);
+        gdma_disconnect(dma_chan);
         
   } // end   
 
