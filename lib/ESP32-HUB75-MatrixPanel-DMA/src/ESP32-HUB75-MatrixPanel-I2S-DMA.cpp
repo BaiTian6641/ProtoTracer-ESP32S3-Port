@@ -553,7 +553,8 @@ void MatrixPanel_I2S_DMA::fillBufferRgb888(const uint8_t* rgb888, uint16_t w, ui
 
     for (uint16_t y = 0; y < rows; ++y)
     {
-      const uint8_t* px = rgb888 + (size_t)y * w * 3;
+      const uint16_t srcY = rows - 1 - y;
+      const uint8_t* px = rgb888 + (size_t)srcY * w * 3;
 
       // RGB1 (top half) or RGB2 (bottom half)
       uint16_t colourbitclear  = BITMASK_RGB1_CLEAR;
@@ -627,7 +628,8 @@ void MatrixPanel_I2S_DMA::fillBufferRgb888Chained(const uint8_t* rgb888)
 
     for (uint16_t sy = 0; sy < srcH; ++sy)
     {
-      const uint8_t* srcRow = rgb888 + (size_t)sy * srcW * 3;
+      const uint16_t srcY = srcH - 1 - sy;
+      const uint8_t* srcRow = rgb888 + (size_t)srcY * srcW * 3;
 
       // Determine RGB1 (top half) or RGB2 (bottom half)
       uint16_t colourbitclear  = BITMASK_RGB1_CLEAR;
