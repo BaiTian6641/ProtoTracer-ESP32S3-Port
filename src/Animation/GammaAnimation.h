@@ -318,7 +318,7 @@ public:
 
         forehead.Initialize(5);
         #ifdef FRONTFACE
-        oledDisplay.Initialize();
+        oleddisplay->Initialize();
         #endif
 
         SerialSync::Initialize();
@@ -331,7 +331,7 @@ public:
         #endif
         
         #ifdef FRONTFACE
-        oledDisplay.Display();
+        oleddisplay->Display();
         #endif
     }
 

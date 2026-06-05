@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <M5GFX.h>
 
 class M5UnitGLASS2;
 
@@ -28,7 +29,7 @@ struct RemoteFileUiText
 
 struct RemoteFileSyncOptions
 {
-    M5UnitGLASS2 *display = nullptr;
+    M5GFX *display = nullptr;
     bool verbose = false;
     bool keepExistingWhenRemoteMd5Unavailable = false;
     bool enableLatencyProbe = true;

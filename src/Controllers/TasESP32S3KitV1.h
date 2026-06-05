@@ -10,7 +10,8 @@
 //#include <FastLED.h>
 
 #include <M5UnitGLASS2.h>
-extern M5UnitGLASS2 display;
+extern M5GFX *display;
+extern bool gColoredPreview;
 
 #ifdef NEW_HUB75
 #define R1_PIN   6
@@ -100,9 +101,9 @@ public:
 
     void Initialize() override{
         #ifdef VERBOSE_STARTUP
-        display.println("初始化HUB75驱动...");
+        display->println("初始化HUB75驱动...");
         #else
-        display.progressBar(14,50,100,8,50);
+        display->progressBar(14,50,100,8,50);
         #endif
         delay(400);
         HUB75_I2S_CFG mxconfig(
@@ -133,7 +134,7 @@ public:
         // OK, now we can create our matrix object
         dma_display = new MatrixPanel_I2S_DMA(mxconfig);
         #ifndef VERBOSE_STARTUP 
-        display.progressBar(14,50,100,8,55);
+        display->progressBar(14,50,100,8,55);
         #endif
 
         // let's adjust default brightness to about 75%
@@ -168,16 +169,16 @@ public:
         }
 
         if(!dmaBeginOk){
-            display.clearDisplay();
-            display.println("初始化HUB75驱动失败！");
-            display.println("I2S 内存分配失败");
+            display->clearDisplay();
+            display->println("初始化HUB75驱动失败！");
+            display->println("I2S 内存分配失败");
             Serial.println("****** I2S memory allocation failed ***********");
             return;
         }
         #ifdef VERBOSE_STARTUP
-        display.println("初始化HUB75驱动完成");
+        display->println("初始化HUB75驱动完成");
         #else
-        display.progressBar(14,50,100,8,60);
+        display->progressBar(14,50,100,8,60);
         #endif
         delay(200);
         //Serial1.begin(2048000, SERIAL_8N1, -1, 47);
@@ -189,28 +190,28 @@ public:
         virtualDisp = nullptr;
     #endif
         #ifndef VERBOSE_STARTUP 
-        display.progressBar(14,50,100,8,65);
+        display->progressBar(14,50,100,8,65);
         #endif
 
         dma_display->fillScreenRGB888(100,0,0);
         #ifdef VERBOSE_STARTUP
-        display.println("HUB75测试：红色");
+        display->println("HUB75测试：红色");
         #else
-        display.progressBar(14,50,100,8,70);
+        display->progressBar(14,50,100,8,70);
         #endif
         delay(1000);
         dma_display->fillScreenRGB888(0,100,0);
         #ifdef VERBOSE_STARTUP
-        display.println("HUB75测试：绿色");
+        display->println("HUB75测试：绿色");
         #else
-        display.progressBar(14,50,100,8,75);
+        display->progressBar(14,50,100,8,75);
         #endif
         delay(1000);
         dma_display->fillScreenRGB888(0,0,100);
         #ifdef VERBOSE_STARTUP
-        display.println("HUB75测试：蓝色");
+        display->println("HUB75测试：蓝色");
         #else
-        display.progressBar(14,50,100,8,80);
+        display->progressBar(14,50,100,8,80);
         #endif
         delay(1000);
 
@@ -242,8 +243,8 @@ public:
         const bool doPreview = (++sPreviewFrame % kM5PreviewInterval == 0);
         
         if (doPreview) {
-            display.startWrite();
-            display.drawRect(0, 0, 66, 34, TFT_WHITE);
+            display->startWrite();
+            display->drawRect(0, 0, 66, 34, TFT_WHITE);
         }
         
         for (uint16_t y = 0; y < 32; y++) {
@@ -257,10 +258,14 @@ public:
                 dma_display->drawPixelRGB888(63 - x, 31 - y, (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
 #endif
                 if (doPreview) {
-                    // Hard luminance threshold for crisp 1-bit preview (no dithering).
-                    // Midpoint of 0-765 range: >= 384 → white, else black.
-                    const uint16_t lum = (uint16_t)c.R + (uint16_t)c.G + (uint16_t)c.B;
-                    display.drawPixel(64 - x, (32 - y), lum >= 100 ? TFT_WHITE : TFT_BLACK);
+                    if (gColoredPreview) {
+                        display->drawPixel(64 - x, (32 - y), display->color565(c.R, c.G, c.B));
+                    } else {
+                        // Hard luminance threshold for crisp 1-bit preview.
+                        // Midpoint of 0-765: >= 384 → white, else black.
+                        const uint16_t lum = (uint16_t)c.R + (uint16_t)c.G + (uint16_t)c.B;
+                        display->drawPixel(64 - x, (32 - y), lum >= 384 ? TFT_WHITE : TFT_BLACK);
+                    }
                 }
             }
         }
@@ -269,8 +274,8 @@ public:
     #endif
         
         if (doPreview) {
-            display.display();
-            display.endWrite();
+            display->display();
+            display->endWrite();
         }
 
     }

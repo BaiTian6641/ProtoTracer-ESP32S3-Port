@@ -58,7 +58,7 @@ namespace
         }
     }
 
-    void ShowStatus(M5UnitGLASS2 *display, const String &message, bool shouldShow)
+    void ShowStatus(M5GFX *display, const String &message, bool shouldShow)
     {
         if (!display || !shouldShow)
         {
@@ -173,7 +173,7 @@ namespace
     bool ApplyFirmware(const RemoteFileSource &source,
                        const char *sourceName,
                        const FirmwareManifest &manifest,
-                       M5UnitGLASS2 *display,
+                       M5GFX *display,
                        bool verbose)
     {
         HTTPClient http;

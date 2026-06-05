@@ -1574,7 +1574,7 @@ public:
         menuInitialized = true;
     }
 
-    bool Initialize(const UserConfig &config, const char *githubAnimBase = nullptr, const char *giteeAnimBase = nullptr, const char *githubToken = nullptr, const char *giteeToken = nullptr, M5UnitGLASS2 *downloadDisplay = nullptr, bool verboseDownload = true)
+    bool Initialize(const UserConfig &config, const char *githubAnimBase = nullptr, const char *giteeAnimBase = nullptr, const char *githubToken = nullptr, const char *giteeToken = nullptr, M5GFX *downloadDisplay = nullptr, bool verboseDownload = true)
     {
         // Serial already initialized by main.cpp setup()
         deviceId = config.device_id;
@@ -1645,7 +1645,7 @@ public:
         espmenu.Update();
         //if (!animationName.isEmpty())
         //{
-        //    display.drawString(animationName, 5, 24);
+        //    display->drawString(animationName, 5, 24);
         //}
     }
 

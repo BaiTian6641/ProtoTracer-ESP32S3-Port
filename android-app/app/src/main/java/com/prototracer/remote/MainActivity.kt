@@ -11,6 +11,8 @@ import android.graphics.drawable.GradientDrawable
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
@@ -27,6 +29,7 @@ import androidx.annotation.IdRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
+import androidx.core.os.ConfigurationCompat
 import androidx.core.os.LocaleListCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.slider.Slider
@@ -41,6 +44,12 @@ import kotlin.math.roundToInt
 class MainActivity : AppCompatActivity() {
 
     private data class ExpressionItem(val name: String, val index: Int)
+
+    companion object {
+        private const val MANIFEST_REQUEST_SETTLE_MS = 150L
+        private const val MANIFEST_REQUEST_TIMEOUT_MS = 8000L
+        private const val MAX_MANIFEST_REQUEST_ATTEMPTS = 3
+    }
 
     private lateinit var ble: BleManager
     private val deviceButtons = linkedMapOf<String, MaterialButton>()
@@ -60,6 +69,12 @@ class MainActivity : AppCompatActivity() {
     private var pendingAutoConnect = false
     private var autoConnectFilter: String? = null
     private var connectFlowActive = false
+    private var awaitingManifest = false
+    private var manifestRequestAttempts = 0
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val manifestRequestRunnable = Runnable { requestManifest() }
+    private val manifestTimeoutRunnable = Runnable { onManifestRequestTimedOut() }
 
     private val expressions = mutableListOf<ExpressionItem>()
 
@@ -75,7 +90,12 @@ class MainActivity : AppCompatActivity() {
         if (perms.values.all { it }) {
             startScan(pendingScanFilter, pendingAutoConnect)
         } else {
-            Toast.makeText(this, R.string.permission_bluetooth_rationale, Toast.LENGTH_LONG).show()
+            val rationaleRes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                R.string.permission_bluetooth_rationale
+            } else {
+                R.string.permission_location_rationale
+            }
+            Toast.makeText(this, rationaleRes, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -224,7 +244,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // On Android 9–11 (API 28–30), BLE scanning requires Location services to be ON
+        // On Android 6–11 (API 23–30), BLE scanning requires Location services to be ON.
         if (!isLocationEnabled()) {
             Toast.makeText(this, R.string.err_location_disabled, Toast.LENGTH_LONG).show()
             locationEnableLauncher.launch(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
@@ -326,12 +346,15 @@ class MainActivity : AppCompatActivity() {
         view<LinearLayout>(R.id.control_panel).visibility = View.VISIBLE
         setStatus("connected", getString(R.string.ble_connected, name))
         addLog("success", getString(R.string.log_connected, name))
-        requestManifest()
+        // Match web-app NOTIFICATION_SETTLE_MS: ESP32 needs ~150ms after
+        // CCCD write before it can reliably receive the first RX write.
+        scheduleManifestRequest(MANIFEST_REQUEST_SETTLE_MS)
     }
 
     private fun onBleDisconnected(unexpected: Boolean) {
         connected = false
         connectFlowActive = false
+        resetManifestRequestState()
         autoConnectFilter = null
         deviceButtons.clear()
         view<LinearLayout>(R.id.layout_devices).removeAllViews()
@@ -348,10 +371,46 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
+    private fun scheduleManifestRequest(delayMs: Long = 0L) {
+        mainHandler.removeCallbacks(manifestRequestRunnable)
+        if (delayMs <= 0L) {
+            manifestRequestRunnable.run()
+        } else {
+            mainHandler.postDelayed(manifestRequestRunnable, delayMs)
+        }
+    }
+
+    private fun resetManifestRequestState() {
+        awaitingManifest = false
+        manifestRequestAttempts = 0
+        mainHandler.removeCallbacks(manifestRequestRunnable)
+        mainHandler.removeCallbacks(manifestTimeoutRunnable)
+    }
+
     private fun requestManifest() {
         if (!connected) return
+        awaitingManifest = true
+        manifestRequestAttempts += 1
+        mainHandler.removeCallbacks(manifestTimeoutRunnable)
         setStatus("loading", getString(R.string.ble_manifest_loading))
+        addLog("info", "→ config.get (${manifestRequestAttempts}/${MAX_MANIFEST_REQUEST_ATTEMPTS})")
         ble.send("{\"op\":\"config.get\"}")
+        mainHandler.postDelayed(manifestTimeoutRunnable, MANIFEST_REQUEST_TIMEOUT_MS)
+    }
+
+    private fun onManifestRequestTimedOut() {
+        if (!connected || !awaitingManifest) return
+
+        if (manifestRequestAttempts < MAX_MANIFEST_REQUEST_ATTEMPTS) {
+            addLog("warn", "Manifest request timed out, retrying...")
+            scheduleManifestRequest()
+            return
+        }
+
+        awaitingManifest = false
+        val message = getString(R.string.err_manifest_refresh, "timeout")
+        setStatus("error", message)
+        addLog("error", message)
     }
 
     private fun sendPing() {
@@ -370,11 +429,13 @@ class MainActivity : AppCompatActivity() {
             }
             else -> {
                 if (message.has("visual") || message.has("pairing") || message.has("device")) {
+                    resetManifestRequestState()
+                    addLog("success", "Manifest received, applying…")
                     applyManifest(message)
                     setStatus("ready", getString(R.string.ble_manifest_loaded))
                 } else {
                     val preview = raw.take(120) + if (raw.length > 120) "..." else ""
-                    addLog("data", getString(R.string.log_recv, preview))
+                    addLog("data", "rx unknown: $preview")
                 }
             }
         }
@@ -387,15 +448,19 @@ class MainActivity : AppCompatActivity() {
 
         val names = visual?.getAsJsonArray("expression_names")
         expressions.clear()
+        addLog("info", "expr names array: ${names?.size() ?: "null"}")
         if (names != null && names.size() > 0) {
             names.forEachIndexed { index, element ->
                 expressions.add(ExpressionItem(element.asString, index))
             }
+            addLog("success", "Loaded ${expressions.size} expressions")
         } else {
             val count = visual?.int("expression_count") ?: 0
+            addLog("info", "No names, count=$count")
             for (i in 0 until count) {
                 expressions.add(ExpressionItem(getString(R.string.log_expr_fallback, i + 1), i))
             }
+            addLog("success", "Loaded ${expressions.size} exprs from count")
         }
 
         device?.string("display_name")?.takeIf { it.isNotBlank() }?.let {
@@ -410,6 +475,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyControlState(message: JsonObject) {
+        addLog("data", "ctrlState: ${message.toString().take(100)}")
         suppressControlCallbacks = true
         message.int("expression")?.let {
             currentExpression = it
@@ -581,7 +647,8 @@ class MainActivity : AppCompatActivity() {
     private fun currentLanguage(): String {
         val appLocale = AppCompatDelegate.getApplicationLocales()[0]
         if (appLocale != null) return appLocale.language
-        return resources.configuration.locales[0]?.language ?: Locale.getDefault().language
+        return ConfigurationCompat.getLocales(resources.configuration).get(0)?.language
+            ?: Locale.getDefault().language
     }
 
     private fun requiredBlePermissions(): Array<String> {
@@ -652,6 +719,7 @@ class MainActivity : AppCompatActivity() {
     private fun <T : View> view(@IdRes id: Int): T = findViewById(id)
 
     override fun onDestroy() {
+        resetManifestRequestState()
         ble.disconnect()
         super.onDestroy()
     }

@@ -9,7 +9,7 @@
 //#include <FastLED.h>
 
 #include <M5UnitGLASS2.h>
-extern M5UnitGLASS2 display;
+extern M5GFX *display;
 
 #ifdef NEW_HUB75
 #define R1_PIN   6
@@ -86,9 +86,9 @@ public:
 
     void Initialize() override{
         #ifdef VERBOSE_STARTUP
-        display.println("初始化HUB75驱动...");
+        display->println("初始化HUB75驱动...");
         #else
-        display.progressBar(14,50,100,8,50);
+        display->progressBar(14,50,100,8,50);
         #endif
         delay(400);
         HUB75_I2S_CFG mxconfig(
@@ -117,7 +117,7 @@ public:
         // OK, now we can create our matrix object
         dma_display = new MatrixPanel_I2S_DMA(mxconfig);
         #ifndef VERBOSE_STARTUP 
-        display.progressBar(14,50,100,8,55);
+        display->progressBar(14,50,100,8,55);
         #endif
 
         // let's adjust default brightness to about 75%
@@ -125,15 +125,15 @@ public:
 
         // Allocate memory and start DMA display
         if(!dma_display->begin()){
-            display.clearDisplay();
-            display.println("初始化HUB75驱动失败！");
-            display.println("I2S 内存分配失败");
+            display->clearDisplay();
+            display->println("初始化HUB75驱动失败！");
+            display->println("I2S 内存分配失败");
             Serial.println("****** I2S memory allocation failed ***********");
         }
         #ifdef VERBOSE_STARTUP
-        display.println("初始化HUB75驱动完成");
+        display->println("初始化HUB75驱动完成");
         #else
-        display.progressBar(14,50,100,8,60);
+        display->progressBar(14,50,100,8,60);
         #endif
         delay(200);
         //Serial1.begin(2048000, SERIAL_8N1, -1, 47);
@@ -141,28 +141,28 @@ public:
         // create VirtualDisplay object based on our newly created dma_display object
         virtualDisp = new VirtualMatrixPanel((*dma_display), NUM_ROWS, NUM_COLS, PANEL_RES_X, PANEL_RES_Y, CHAIN_BOTTOM_LEFT_UP);
         #ifndef VERBOSE_STARTUP 
-        display.progressBar(14,50,100,8,65);
+        display->progressBar(14,50,100,8,65);
         #endif
 
         dma_display->fillScreenRGB888(100,0,0);
         #ifdef VERBOSE_STARTUP
-        display.println("HUB75测试：红色");
+        display->println("HUB75测试：红色");
         #else
-        display.progressBar(14,50,100,8,70);
+        display->progressBar(14,50,100,8,70);
         #endif
         delay(1000);
         dma_display->fillScreenRGB888(0,100,0);
         #ifdef VERBOSE_STARTUP
-        display.println("HUB75测试：绿色");
+        display->println("HUB75测试：绿色");
         #else
-        display.progressBar(14,50,100,8,75);
+        display->progressBar(14,50,100,8,75);
         #endif
         delay(1000);
         dma_display->fillScreenRGB888(0,0,100);
         #ifdef VERBOSE_STARTUP
-        display.println("HUB75测试：蓝色");
+        display->println("HUB75测试：蓝色");
         #else
-        display.progressBar(14,50,100,8,80);
+        display->progressBar(14,50,100,8,80);
         #endif
         delay(1000);
 
@@ -173,17 +173,17 @@ public:
     void Display() override {
         dma_display->setBrightness8(brightness);
         
-        display.startWrite();
-        display.drawRect(0,0,66,34,TFT_WHITE);
+        display->startWrite();
+        display->drawRect(0,0,66,34,TFT_WHITE);
         for (uint16_t y = 0; y < 32; y++) {
             for (uint16_t x = 0; x < 64; x++){
                 uint16_t pixelNum = y * 64 + x;
                 virtualDisp->drawPixelRGB888(63 - x, (y) + 32, (uint16_t)camPixels1->GetColor(pixelNum)->R, (uint16_t)camPixels1->GetColor(pixelNum)->G, (uint16_t)camPixels1->GetColor(pixelNum)->B);
                 virtualDisp->drawPixelRGB888(63 - x, (31 - y), (uint16_t)camPixels1->GetColor(pixelNum)->R, (uint16_t)camPixels1->GetColor(pixelNum)->G, (uint16_t)camPixels1->GetColor(pixelNum)->B);
-                display.drawPixel(64 - x, (32 - y), display.color888((camPixels1->GetColor(pixelNum)->R ? 255 : 0), (camPixels1->GetColor(pixelNum)->G ? 255 : 0), (camPixels1->GetColor(pixelNum)->B ? 255 : 0)));
+                display->drawPixel(64 - x, (32 - y), display->color888((camPixels1->GetColor(pixelNum)->R ? 255 : 0), (camPixels1->GetColor(pixelNum)->G ? 255 : 0), (camPixels1->GetColor(pixelNum)->B ? 255 : 0)));
             }
         }
-        display.display();
-        display.endWrite();
+        display->display();
+        display->endWrite();
     }
 };

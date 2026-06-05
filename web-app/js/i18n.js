@@ -100,6 +100,8 @@ const I18N = (() => {
       'err.noCharacteristics':  'Could not find required BLE characteristics.',
       'err.connectionFailed':   'Connection failed: {msg}',
       'err.connectionRetries':  'Connection failed after retries.',
+      'err.connectionStepTimeout':'Connection timed out during {step}.',
+      'err.writeMethodUnavailable':'This browser cannot write to the device BLE characteristic.',
 
       // ── BLE internal status (ble.js → app.js) ──
       'ble.scanning':           'Scanning for ProtoTracer devices…',
@@ -202,6 +204,8 @@ const I18N = (() => {
       'err.noCharacteristics':  '未找到所需的 BLE 特征值。',
       'err.connectionFailed':   '连接失败：{msg}',
       'err.connectionRetries':  '多次重试后连接失败。',
+      'err.connectionStepTimeout':'连接在 {step} 步骤超时。',
+      'err.writeMethodUnavailable':'当前浏览器无法写入设备的 BLE 特征值。',
 
       // ── BLE 内部状态 ──
       'ble.scanning':           '正在扫描 ProtoTracer 设备…',

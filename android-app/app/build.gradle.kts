@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.prototracer.remote"
-        minSdk = 26 // Android 8.0+ (focused on Android 9 / API 28)
+        minSdk = 23 // Android 6.0+ BLE baseline
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"

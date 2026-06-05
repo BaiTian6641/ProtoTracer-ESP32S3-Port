@@ -18,6 +18,10 @@ const ProtoTracerBLE = (() => {
   const BLE_CHUNK_BYTES     = 160;   // Max bytes per BLE notification chunk
   const BLE_RX_BUFFER_BYTES = 1024;  // Device-side RX buffer
   const SCAN_TIMEOUT_MS     = 10000; // BLE scan duration
+  const CONNECT_STEP_TIMEOUT_MS = 12000;
+  const MANIFEST_TIMEOUT_MS = 8000;
+  const RETRY_DELAY_MS = 500;
+  const NOTIFICATION_SETTLE_MS = 150;
 
   // --- Internal State ---
   let device          = null;
@@ -29,6 +33,7 @@ const ProtoTracerBLE = (() => {
   let cachedManifest  = null;
   let txBuffer        = '';     // Accumulator for incoming chunked JSON
   let eventCallbacks  = {};
+  let writeQueue      = Promise.resolve();
 
   // --- Public API ---
 
@@ -138,22 +143,37 @@ const ProtoTracerBLE = (() => {
           await sleep(300);
         }
         device.addEventListener('gattserverdisconnected', onDisconnected);
+        clearCharacteristicRefs();
+        cachedManifest = null;
 
         // Connect (or re-connect) to the GATT server.
-        server = await device.gatt.connect();
+        server = await withTimeout(
+          device.gatt.connect(),
+          CONNECT_STEP_TIMEOUT_MS,
+          I18N.t('err.connectionStepTimeout', { step: 'gatt.connect()' })
+        );
 
         // Small settle delay — some ESP32 BLE stacks need a moment
         // after the GATT connection before service discovery works.
         await sleep(200);
 
         // Discover the primary service.
-        service = await server.getPrimaryService(SERVICE_UUID);
+        service = await withTimeout(
+          server.getPrimaryService(SERVICE_UUID),
+          CONNECT_STEP_TIMEOUT_MS,
+          I18N.t('err.connectionStepTimeout', { step: 'getPrimaryService()' })
+        );
 
         // Discover characteristics.
-        const characteristics = await service.getCharacteristics();
+        const characteristics = await withTimeout(
+          service.getCharacteristics(),
+          CONNECT_STEP_TIMEOUT_MS,
+          I18N.t('err.connectionStepTimeout', { step: 'getCharacteristics()' })
+        );
 
         // Reset previous characteristic references.
         if (txCharacteristic) {
+          try { txCharacteristic.removeEventListener('characteristicvaluechanged', onTxValueChanged); } catch (_) { /* ignore */ }
           try { await txCharacteristic.stopNotifications(); } catch (_) { /* ignore */ }
         }
         txCharacteristic = null;
@@ -165,8 +185,6 @@ const ProtoTracerBLE = (() => {
           // TX = notify (device → app)
           if (props.notify && !txCharacteristic) {
             txCharacteristic = char;
-            await txCharacteristic.startNotifications();
-            txCharacteristic.addEventListener('characteristicvaluechanged', onTxValueChanged);
           }
 
           // RX = write / writeWithoutResponse (app → device)
@@ -179,24 +197,45 @@ const ProtoTracerBLE = (() => {
           throw new Error(I18N.t('err.noCharacteristics'));
         }
 
+        txCharacteristic.removeEventListener('characteristicvaluechanged', onTxValueChanged);
+        txCharacteristic.addEventListener('characteristicvaluechanged', onTxValueChanged);
+        await withTimeout(
+          txCharacteristic.startNotifications(),
+          CONNECT_STEP_TIMEOUT_MS,
+          I18N.t('err.connectionStepTimeout', { step: 'startNotifications()' })
+        );
+        await sleep(NOTIFICATION_SETTLE_MS);
+
         // Success — finalise state.
         connected = true;
         txBuffer = '';
+  writeQueue = Promise.resolve();
         emit('status', { state: 'connected', message: I18N.t('ble.connected', { name: device.name || 'ProtoTracer' }) });
         emit('connected', { name: device.name || 'ProtoTracer', id: device.id });
 
-        // Request the manifest (animations, expressions, etc.)
-        await requestManifest();
+        // On older Android/Chrome stacks the config request can stall or use
+        // an older write API. Keep the BLE link established even if manifest
+        // discovery needs to retry or fall back.
+        requestManifestAfterConnect();
         return; // Done.
 
       } catch (err) {
         lastError = err;
+        clearCharacteristicRefs();
         const msg = (err.message || '').toLowerCase();
+        const retryable = err && (
+          err.name === 'TimeoutError' ||
+          msg.includes('disconnected') ||
+          msg.includes('gatt') ||
+          msg.includes('retrieve services') ||
+          msg.includes('service') ||
+          msg.includes('notification')
+        );
 
         // If the GATT server disconnected underneath us, retry.
-        if (msg.includes('disconnected') || msg.includes('gatt') || msg.includes('retrieve services')) {
+        if (retryable) {
           if (attempt < retries) {
-            const delay = 400 * attempt;
+            const delay = RETRY_DELAY_MS * attempt;
             emit('status', { state: 'connecting', message: I18N.t('ble.retry', { n: attempt, total: retries, ms: delay }) });
             await sleep(delay);
 
@@ -204,8 +243,6 @@ const ProtoTracerBLE = (() => {
             try { if (server && server.connected) server.disconnect(); } catch (_) { /* ignore */ }
             server = null;
             service = null;
-            txCharacteristic = null;
-            rxCharacteristic = null;
             continue;
           }
         }
@@ -228,6 +265,7 @@ const ProtoTracerBLE = (() => {
       device.removeEventListener('gattserverdisconnected', onDisconnected);
     }
     if (txCharacteristic) {
+      try { txCharacteristic.removeEventListener('characteristicvaluechanged', onTxValueChanged); } catch (e) { /* ignore */ }
       try { await txCharacteristic.stopNotifications(); } catch (e) { /* ignore */ }
     }
     if (server && server.connected) {
@@ -245,9 +283,8 @@ const ProtoTracerBLE = (() => {
     // and we may need it for reconnection without re-scanning.
     server = null;
     service = null;
-    rxCharacteristic = null;
-    txCharacteristic = null;
-    txBuffer = '';
+    clearCharacteristicRefs();
+    writeQueue = Promise.resolve();
   }
 
   /**
@@ -263,17 +300,19 @@ const ProtoTracerBLE = (() => {
     const encoder = new TextEncoder();
     const bytes = encoder.encode(payload);
 
-    if (bytes.length <= BLE_CHUNK_BYTES) {
-      await rxCharacteristic.writeValueWithoutResponse(bytes);
-    } else {
-      // Chunked send
-      for (let offset = 0; offset < bytes.length; offset += BLE_CHUNK_BYTES) {
-        const chunk = bytes.slice(offset, Math.min(offset + BLE_CHUNK_BYTES, bytes.length));
-        await rxCharacteristic.writeValueWithoutResponse(chunk);
-        // Small delay between chunks to let device process
-        await sleep(10);
+    await queueWrite(async () => {
+      if (bytes.length <= BLE_CHUNK_BYTES) {
+        await writeChunk(bytes);
+      } else {
+        // Chunked send
+        for (let offset = 0; offset < bytes.length; offset += BLE_CHUNK_BYTES) {
+          const chunk = bytes.slice(offset, Math.min(offset + BLE_CHUNK_BYTES, bytes.length));
+          await writeChunk(chunk);
+          // Small delay between chunks to let device process
+          await sleep(10);
+        }
       }
-    }
+    });
 
     emit('sent', { op: jsonObj.op, payload });
   }
@@ -284,6 +323,21 @@ const ProtoTracerBLE = (() => {
   async function requestManifest() {
     emit('status', { state: 'loading', message: I18N.t('ble.manifestLoading') });
     await sendCommand({ op: 'config.get' });
+  }
+
+  async function requestManifestAfterConnect() {
+    try {
+      await withTimeout(
+        requestManifest(),
+        MANIFEST_TIMEOUT_MS,
+        I18N.t('err.connectionStepTimeout', { step: 'config.get' })
+      );
+    } catch (err) {
+      console.warn('[BLE] Manifest request failed after connect:', err);
+      if (connected) {
+        emit('status', { state: 'error', message: I18N.t('err.manifestRefresh', { msg: err.message }) });
+      }
+    }
   }
 
   /** Send control.set with optional fields */
@@ -392,9 +446,8 @@ const ProtoTracerBLE = (() => {
     connected = false;
     server = null;
     service = null;
-    rxCharacteristic = null;
-    txCharacteristic = null;
-    txBuffer = '';
+    clearCharacteristicRefs();
+    writeQueue = Promise.resolve();
 
     if (wasConnected) {
       emit('status', { state: 'disconnected', message: I18N.t('ble.deviceDisconnected') });
@@ -405,6 +458,84 @@ const ProtoTracerBLE = (() => {
   /** Utility: promise-based sleep */
   function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function clearCharacteristicRefs() {
+    if (txCharacteristic) {
+      try { txCharacteristic.removeEventListener('characteristicvaluechanged', onTxValueChanged); } catch (_) { /* ignore */ }
+    }
+    rxCharacteristic = null;
+    txCharacteristic = null;
+    txBuffer = '';
+  }
+
+  function createTimeoutError(message) {
+    const error = new Error(message);
+    error.name = 'TimeoutError';
+    return error;
+  }
+
+  function withTimeout(promise, timeoutMs, message) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(createTimeoutError(message)), timeoutMs);
+
+      Promise.resolve(promise).then(
+        value => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        error => {
+          clearTimeout(timer);
+          reject(error);
+        }
+      );
+    });
+  }
+
+  function queueWrite(task) {
+    const next = writeQueue.then(task, task);
+    writeQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  async function writeChunk(chunk) {
+    const characteristic = rxCharacteristic;
+
+    if (!characteristic) {
+      throw new Error(I18N.t('err.notConnected'));
+    }
+
+    const canWriteWithoutResponse =
+      characteristic.properties &&
+      characteristic.properties.writeWithoutResponse &&
+      typeof characteristic.writeValueWithoutResponse === 'function';
+
+    if (canWriteWithoutResponse) {
+      try {
+        await withTimeout(
+          characteristic.writeValueWithoutResponse(chunk),
+          MANIFEST_TIMEOUT_MS,
+          I18N.t('err.connectionStepTimeout', { step: 'writeValueWithoutResponse()' })
+        );
+        return;
+      } catch (err) {
+        if (typeof characteristic.writeValue !== 'function') {
+          throw err;
+        }
+        console.warn('[BLE] writeValueWithoutResponse failed, retrying with writeValue:', err);
+      }
+    }
+
+    if (typeof characteristic.writeValue === 'function') {
+      await withTimeout(
+        characteristic.writeValue(chunk),
+        MANIFEST_TIMEOUT_MS,
+        I18N.t('err.connectionStepTimeout', { step: 'writeValue()' })
+      );
+      return;
+    }
+
+    throw new Error(I18N.t('err.writeMethodUnavailable'));
   }
 
   // --- Exports ---
@@ -422,6 +553,5 @@ const ProtoTracerBLE = (() => {
     requestManifest,
     controlSet,
     ping,
-    SERVICE_UUID,
   };
 })();

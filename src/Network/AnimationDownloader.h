@@ -1,8 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
-
-class M5UnitGLASS2;
+#include <M5GFX.h>
 
 struct AnimationDownloadConfig
 {
@@ -10,7 +9,7 @@ struct AnimationDownloadConfig
     const char *giteeBase = nullptr;
     const char *githubToken = nullptr;
     const char *giteeToken = nullptr;
-    M5UnitGLASS2 *progressDisplay = nullptr;
+    M5GFX *progressDisplay = nullptr;
     bool verbose = false;
 };
 

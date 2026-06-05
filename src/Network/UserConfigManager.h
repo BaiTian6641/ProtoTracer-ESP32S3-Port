@@ -35,15 +35,15 @@ String ReadUniqueDeviceId();
 // Connect to Wi-Fi using stored credentials and enter NetWizard captive portal when needed.
 // On first boot with no saved Wi-Fi, setup starts automatically. When a display is provided,
 // the setup AP SSID/password/IP and connection state are shown during the portal flow.
-bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsigned long connectTimeoutMs = 15000, M5UnitGLASS2 *display = nullptr);
+bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsigned long connectTimeoutMs = 15000, M5GFX *display = nullptr);
 
 // Download user_config.json from a GitHub base URL using device_id as filename (<base>/<device_id>.json).
 // Optional: provide a GitHub token for private repos via the Authorization header.
-bool DownloadUserConfigFromGithub(const char *baseUrl, UserConfig &config, bool verbose = false, M5UnitGLASS2 *display = nullptr, const char *githubToken = nullptr);
+bool DownloadUserConfigFromGithub(const char *baseUrl, UserConfig &config, bool verbose = false, M5GFX *display = nullptr, const char *githubToken = nullptr);
 
 // Download user_config.json from a Gitee base URL using device_id as filename (<base>/<device_id>.json).
 // Provide a personal access token for private repos via the Authorization header (Bearer).
-bool DownloadUserConfigFromGitee(const char *baseUrl, UserConfig &config, bool verbose = false, M5UnitGLASS2 *display = nullptr, const char *giteeToken = nullptr);
+bool DownloadUserConfigFromGitee(const char *baseUrl, UserConfig &config, bool verbose = false, M5GFX *display = nullptr, const char *giteeToken = nullptr);
 
 // Probe the configured remotes and download user_config.json from the lower-latency source first.
-bool DownloadUserConfigFromSources(const RemoteFileSource *sources, size_t sourceCount, UserConfig &config, bool verbose = false, M5UnitGLASS2 *display = nullptr);
+bool DownloadUserConfigFromSources(const RemoteFileSource *sources, size_t sourceCount, UserConfig &config, bool verbose = false, M5GFX *display = nullptr);

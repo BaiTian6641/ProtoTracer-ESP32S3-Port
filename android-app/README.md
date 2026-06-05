@@ -54,6 +54,6 @@ This workspace currently has Gradle 8.5 cached under the user Gradle wrapper cac
 ## Requirements
 
 - Android device with BLE support
-- Android 8.0 / API 26 or newer
+- Android 6.0 / API 23 or newer
 - Bluetooth permissions granted at runtime
-- Location permission on Android versions before 12 for BLE scanning
+- Location permission and Location services enabled on Android 6 through 11 for BLE scanning

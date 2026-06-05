@@ -14,5 +14,5 @@ struct FaceUpdateConfig
 };
 
 // Ensure a device-specific or fallback universal face JSON is present and up to date.
-bool EnsureFaceModelJson(const FaceUpdateConfig &config, const String &deviceId, M5UnitGLASS2 &display, bool verbose);
-bool EnsureFaceModelJson(const FaceUpdateConfig *configs, size_t sourceCount, const String &deviceId, M5UnitGLASS2 &display, bool verbose);
+bool EnsureFaceModelJson(const FaceUpdateConfig &config, const String &deviceId, M5GFX *display, bool verbose);
+bool EnsureFaceModelJson(const FaceUpdateConfig *configs, size_t sourceCount, const String &deviceId, M5GFX *display, bool verbose);

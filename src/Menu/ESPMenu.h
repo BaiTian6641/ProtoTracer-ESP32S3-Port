@@ -43,7 +43,7 @@
 #define ESPMENU_LOG_PRINTF(...) do { } while (0)
 #endif
 
-extern M5UnitGLASS2 display;
+extern M5GFX *display;
 
 #ifdef NEW_GESTURE
 #include "RevEng_PAJ7620.h"
@@ -72,6 +72,7 @@ SparkFun_APDS9960 apds = SparkFun_APDS9960();
 
 extern std::string user_name;
 extern UserConfig userConfig;
+extern TwoWire *gGestureWire;  // set by main.cpp after display auto-detection
 
 const char *BLE_SERIAL2_SERVICE_UUID = "73cf57c7-6797-46e8-8202-dc5e7f956b57";
 extern std::string BLE_RX2_UUID;
@@ -1059,8 +1060,8 @@ private:
             {
                 facialexpression = tempvalue;
                 confirm = 0;
-                display.fillRect(65, 37, 14, 12, TFT_BLACK);
-                display.display();
+                display->fillRect(65, 37, 14, 12, TFT_BLACK);
+                display->display();
             }
         }
         else if (data_type == 1)
@@ -1071,8 +1072,8 @@ private:
             {
                 bright = tempvalue;
                 confirm = 0;
-                display.fillRect(40, 50, 20, 12, TFT_BLACK);
-                display.display();
+                display->fillRect(40, 50, 20, 12, TFT_BLACK);
+                display->display();
             }
         }
         else if (data_type == 2)
@@ -1082,8 +1083,8 @@ private:
             if (confirm == 255 && voiceenable != tempvalue)
             {
                 voiceenable = tempvalue;
-                display.fillRect(65, 50, 60, 12, TFT_BLACK);
-                display.display();
+                display->fillRect(65, 50, 60, 12, TFT_BLACK);
+                display->display();
                 confirm = 0;
             }
         }
@@ -1192,11 +1193,11 @@ public:
     void Initialize(uint8_t faceCount, uint8_t threshold)
     {
         #ifdef VERBOSE_STARTUP
-        display.println(TXT("Initialize Bluetooth...", "初始化蓝牙驱动..."));
+        display->println(TXT("Initialize Bluetooth...", "初始化蓝牙驱动..."));
         #else
-        display.progressBar(14,50,100,8,18);
+        display->progressBar(14,50,100,8,18);
         #endif
-        display.display();
+        display->display();
         delay(200);
         Menu::faceCount = faceCount;
         Menu::threshold = threshold;
@@ -1210,7 +1211,7 @@ public:
         //Wire1.setPins(38, 39);
         //Wire.begin();
         #ifndef VERBOSE_STARTUP 
-        display.progressBar(14,50,100,8,20);
+        display->progressBar(14,50,100,8,20);
         #endif
         //Wire.setPins(38, 39);
         //Wire.begin(38, 39);
@@ -1218,7 +1219,7 @@ public:
         Serial.println("IIC OK.");
         pinMode(21,OUTPUT);
         #ifndef VERBOSE_STARTUP 
-        display.progressBar(14,50,100,8,22);
+        display->progressBar(14,50,100,8,22);
         #endif
 
         // InitESPNow();
@@ -1227,38 +1228,38 @@ public:
         nowpixels.clear();
         nowpixels.setPixelColor(0, nowpixels.Color(50, 50, 50));
         #ifndef VERBOSE_STARTUP 
-        display.progressBar(14,50,100,8,25);
+        display->progressBar(14,50,100,8,25);
         #endif
 
         startBluetooth();
         #ifndef VERBOSE_STARTUP 
-        display.progressBar(14,50,100,8,30);
+        display->progressBar(14,50,100,8,30);
         #endif
 
         #ifdef VERBOSE_STARTUP
-        display.println(TXT("Initialize gesture sensor...", "初始化手势传感器驱动..."));
+        display->println(TXT("Initialize gesture sensor...", "初始化手势传感器驱动..."));
         #else
-        display.progressBar(14,50,100,8,35);
+        display->progressBar(14,50,100,8,35);
         #endif
 
         delay(200);
-        display.display();
+        display->display();
         // ── Gesture sensor init ──
         // Wire is already initialised by M5UnitGLASS2(41,42).
         // The local lib/RevEng_PAJ7620 has been patched to NOT call
         // wireHandle->begin() internally, avoiding double I2C peripheral init.
         if(
             #ifdef NEW_GESTURE
-            !PAJ7620_sensor.begin(&Wire)
+            !PAJ7620_sensor.begin(gGestureWire)
         #else
             !apds.init()
         #endif
         )
         {
             #ifdef VERBOSE_STARTUP
-            display.println(TXT("Failed to initialize gesture sensor", "手势传感器驱动初始化失败"));
-            display.println(TXT("Please check connection", "请检查连接"));
-            display.display();
+            display->println(TXT("Failed to initialize gesture sensor", "手势传感器驱动初始化失败"));
+            display->println(TXT("Please check connection", "请检查连接"));
+            display->display();
             #endif
             Serial.println("failed to initialize device! Please check your wiring.");
             didBegin = false;
@@ -1267,9 +1268,9 @@ public:
         else
         {
             #ifdef VERBOSE_STARTUP
-            display.println(TXT("Gesture sensor initialized", "手势传感器驱动初始化成功"));
+            display->println(TXT("Gesture sensor initialized", "手势传感器驱动初始化成功"));
             #else
-            display.progressBar(14,50,100,8,40);
+            display->progressBar(14,50,100,8,40);
             #endif
             Serial.println("Device initialized!");
             didBegin = true;
@@ -1278,9 +1279,9 @@ public:
         #ifndef NEW_GESTURE
         if(apds.setProximityGain(PGAIN_2X)){
             #ifdef VERBOSE_STARTUP
-            display.println(TXT("Gesture sensor gain set", "手势传感器驱动增益设置成功"));
+            display->println(TXT("Gesture sensor gain set", "手势传感器驱动增益设置成功"));
             #else
-            display.progressBar(14,50,100,8,42);
+            display->progressBar(14,50,100,8,42);
             #endif
         }
         #endif
@@ -1292,7 +1293,7 @@ public:
         #endif
 
         #ifndef VERBOSE_STARTUP 
-        display.progressBar(14,50,100,8,45);
+        display->progressBar(14,50,100,8,45);
         #endif
 
         if (DEMO_MODE && demoTimer == nullptr)
@@ -1310,9 +1311,9 @@ public:
             }
         }
         #ifdef VERBOSE_STARTUP
-        display.println(TXT("Peripherals initialized", "外设初始化完成"));
+        display->println(TXT("Peripherals initialized", "外设初始化完成"));
         #else
-        display.progressBar(14,50,100,8,47);
+        display->progressBar(14,50,100,8,47);
         #endif
 
         // Pre-build the remote controller manifest once during init so that
@@ -1321,7 +1322,7 @@ public:
         bleCachedManifestJson = BuildRemoteControllerManifestJson();
         Serial.printf("BLE manifest cached: %u bytes\n", static_cast<unsigned>(bleCachedManifestJson.length()));
 
-        display.display();
+        display->display();
         delay(500);
     }
 
@@ -1372,11 +1373,11 @@ public:
         FlushQueuedBleJsonPayload();
 
         //free_mem = (int)((float)((float)ESP.getFreeHeap() / (float)ESP.getHeapSize())*100.0f);
-        display.startWrite();
-        // display.clearDisplay();
-        // display.drawString("Current: ", 0, 12);
-        // display.drawString("Brightness: ", 0, 24);
-        // display.drawString("Lip Sync: ", 0, 36);
+        display->startWrite();
+        // display->clearDisplay();
+        // display->drawString("Current: ", 0, 12);
+        // display->drawString("Brightness: ", 0, 24);
+        // display->drawString("Lip Sync: ", 0, 36);
 
         uint32_t queuedCommand = 0;
         bool consumedQueuedCommand = false;
@@ -1415,58 +1416,58 @@ public:
 
         if (data_type == 0)
         {
-            // display.drawString("Set facial expression", 0, 0);
+            // display->drawString("Set facial expression", 0, 0);
             if (tempvalue == 0)
             {
                 nowpixels.setPixelColor(0, nowpixels.Color(0, 100, 0)); // Green
-                // display.drawString("Default", 55, 12);
+                // display->drawString("Default", 55, 12);
             }
             else if (tempvalue == 1)
             {
                 nowpixels.setPixelColor(0, nowpixels.Color(100, 0, 0)); // Red
-                // display.drawString("Angry", 55, 12);
+                // display->drawString("Angry", 55, 12);
             }
             else if (tempvalue == 2)
             {
                 nowpixels.setPixelColor(0, nowpixels.Color(120, 60, 0)); // Orange
-                // display.drawString("Doubt", 55, 12);
+                // display->drawString("Doubt", 55, 12);
             }
             else if (tempvalue == 3)
             {
                 nowpixels.setPixelColor(0, nowpixels.Color(5, 140, 120)); // Cyan
-                // display.drawString("Frown", 55, 12);
+                // display->drawString("Frown", 55, 12);
             }
             else if (tempvalue == 4)
             {
                 nowpixels.setPixelColor(0, nowpixels.Color(100, 0, 100)); // Purple
-                // display.drawString("Heart", 55, 12);
+                // display->drawString("Heart", 55, 12);
             }
             else if (tempvalue == 5)
             {
                 nowpixels.setPixelColor(0, nowpixels.Color(0, 0, 100)); // Blue
-                // display.drawString("Sad", 55, 12);
+                // display->drawString("Sad", 55, 12);
             }
             else if (tempvalue == 6)
             {
                 nowpixels.setPixelColor(0, nowpixels.Color(226, 213, 70)); // Blue
-                // display.drawString("Surprised", 55, 12);
+                // display->drawString("Surprised", 55, 12);
             }
             else if (tempvalue == 7)
             {
                 nowpixels.setPixelColor(0, nowpixels.Color(0, 213, 70)); // Blue
-                // display.drawString("Happy", 55, 12);
+                // display->drawString("Happy", 55, 12);
             }
             else
             {
                 nowpixels.setPixelColor(0, nowpixels.Color(100, 100, 2)); // Yellow
-                // display.drawString("OwO", 55, 12);
+                // display->drawString("OwO", 55, 12);
             }
         }
         else if (data_type == 1)
         {
-            // display.drawString("Set brightness", 0, 0);
+            // display->drawString("Set brightness", 0, 0);
             nowpixels.setPixelColor(0, nowpixels.Color(tempvalue, tempvalue, tempvalue));
-            // display.drawNumber(tempvalue, 72, 24);
+            // display->drawNumber(tempvalue, 72, 24);
         }
         else if (data_type == 16)
         {
@@ -1494,7 +1495,7 @@ public:
         }
         else if (data_type == 2)
         {
-            // display.drawString("Set Lipsync", 0, 0);
+            // display->drawString("Set Lipsync", 0, 0);
             if (tempvalue == 1)
             {
                 nowpixels.setPixelColor(0, nowpixels.Color(20, 20, 40)); // Green
@@ -1506,59 +1507,59 @@ public:
         }
         else if (data_type == 3)
         {
-            // display.drawString("Enter WiFi Display", 0, 0);
+            // display->drawString("Enter WiFi Display", 0, 0);
             if (tempvalue == 1)
             {
                 nowpixels.setPixelColor(0, nowpixels.Color(00, 120, 40));
-                // display.drawString("Accept", 0, 48);
+                // display->drawString("Accept", 0, 48);
             }
             else
             {
                 nowpixels.setPixelColor(0, nowpixels.Color(120, 40, 0));
-                // display.drawString("Cancel", 0, 48);
+                // display->drawString("Cancel", 0, 48);
             }
         }
 
         if (bright >= 120)
         {
-            // display.drawString("Enable", 60, 36);
+            // display->drawString("Enable", 60, 36);
             digitalWrite(21,HIGH);
         }
         else
         {
-            // display.drawString("Disable", 60, 36);
+            // display->drawString("Disable", 60, 36);
             digitalWrite(21,LOW);
         }
 
-        // display.endWrite();
-        //display.qrcode(BLE_RX2_UUID, 70, 2, 29, 3);
-        display.drawString(TXT("Exp Number:", "表情编号："), 5, 37);
-        display.drawNumber(facialexpression, 70, 37);
+        // display->endWrite();
+        //display->qrcode(BLE_RX2_UUID, 70, 2, 29, 3);
+        display->drawString(TXT("Exp Number:", "表情编号："), 5, 37);
+        display->drawNumber(facialexpression, 70, 37);
 
-        display.drawString(TXT("Bright:", "亮度："), 5, 50);
-        display.drawNumber(bright, TXT(55, 40), 50);
+        display->drawString(TXT("Bright:", "亮度："), 5, 50);
+        display->drawNumber(bright, TXT(55, 40), 50);
 
         if(WiFi.isConnected()){
-            display.pushImageDMA(100, 38, 24, 24, epd_bitmap_cloud);
+            display->pushImageDMA(100, 38, 24, 24, epd_bitmap_cloud);
         }else{
-            display.fillRect(100,38,24,24,TFT_BLACK);
+            display->fillRect(100,38,24,24,TFT_BLACK);
         }
 
-        //display.drawNumber(free_mem, 80, 37);
+        //display->drawNumber(free_mem, 80, 37);
 
         if(voiceenable == 1){
-            display.pushImageDMA(66, 0, 24, 24, epd_bitmap_microphone);
+            display->pushImageDMA(66, 0, 24, 24, epd_bitmap_microphone);
         }else{
-            display.pushImageDMA(66, 0, 24, 24, epd_bitmap_microphone_off);
+            display->pushImageDMA(66, 0, 24, 24, epd_bitmap_microphone_off);
         }
         if(bleDeviceConnected){
-            display.pushImageDMA(90, 0, 24, 24, epd_bitmap_bluetooth);
+            display->pushImageDMA(90, 0, 24, 24, epd_bitmap_bluetooth);
         }else{
-            display.fillRect(90,0,24,24,TFT_BLACK);
+            display->fillRect(90,0,24,24,TFT_BLACK);
         }
 
-        display.display();
-        display.endWrite();
+        display->display();
+        display->endWrite();
         nowpixels.show();
     }
 

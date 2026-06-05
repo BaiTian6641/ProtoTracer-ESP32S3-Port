@@ -40,7 +40,7 @@
 #define USE_JSON_FACE_MODEL 1
 #endif
 
-extern M5UnitGLASS2 display;
+extern M5GFX *display;
 
 extern uint8_t User_R;
 extern uint8_t User_G;
@@ -731,9 +731,9 @@ public:
         gradientMat = GradientMaterial<3>(gradientSpectrum, 200.0f, false);
 
         #ifdef VERBOSE_STARTUP
-        display.println("初始化动画...");
+        display->println("初始化动画...");
         #else
-        display.progressBar(14,50,100,8,5);
+        display->progressBar(14,50,100,8,5);
         #endif
         delay(100);
         Serial.begin(115200);
@@ -765,15 +765,15 @@ public:
         }
         background.GetObject()->SetMaterial(&backgroundMat);
         #ifdef VERBOSE_STARTUP
-        display.println("初始化动画完成");
+        display->println("初始化动画完成");
         #else
-        display.progressBar(14,50,100,8,10);
+        display->progressBar(14,50,100,8,10);
         #endif
 
         #ifdef VERBOSE_STARTUP
-        display.println("初始化麦克风...");
+        display->println("初始化麦克风...");
         #else
-        display.progressBar(14,50,100,8,12);
+        display->progressBar(14,50,100,8,12);
         #endif
 
         #ifdef TASESP32S3
@@ -782,9 +782,9 @@ public:
         MicrophoneFourierIT::Initialize(23, 8000, 68.0f, 120.0f); // 8KHz sample rate, 50dB min, 120dB max
         #endif
         #ifdef VERBOSE_STARTUP
-        display.println("初始化麦克风完成");
+        display->println("初始化麦克风完成");
         #else
-        display.progressBar(14,50,100,8,15);
+        display->progressBar(14,50,100,8,15);
         #endif
         // Menu::Initialize(9);//NeoTrellis
         espmenu.Initialize(17, 200); // 7 is number of faces

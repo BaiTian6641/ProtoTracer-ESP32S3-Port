@@ -27,7 +27,7 @@ namespace
     constexpr const char *kDefaultPortalPassword = "Protogen#1229#25";
     constexpr size_t kMaxPortalSsidLength = 32;
 
-    M5UnitGLASS2 *g_netWizardDisplay = nullptr;
+    M5GFX *g_netWizardDisplay = nullptr;
     bool g_netWizardDisplayActive = false;
     String g_netWizardPortalSsid;
     String g_netWizardPortalPassword;
@@ -242,7 +242,7 @@ namespace
     bool RunNetWizardSetupPortal(UserConfig &config,
                                  NetWizard &wizard,
                                  unsigned long reconnectTimeoutMs,
-                                 M5UnitGLASS2 *display,
+                                 M5GFX *display,
                                  IPAddress *resolvedIp)
     {
         const String portalSsid = BuildSetupPortalSsid(config);
@@ -357,7 +357,7 @@ namespace
         return source;
     }
 
-    RemoteFileSyncOptions BuildUserConfigSyncOptions(M5UnitGLASS2 *display, bool verbose)
+    RemoteFileSyncOptions BuildUserConfigSyncOptions(M5GFX *display, bool verbose)
     {
         RemoteFileSyncOptions options;
         options.display = display;
@@ -393,7 +393,7 @@ namespace
     bool DownloadUserConfigFromSource(const RemoteFileSource &source,
                                       UserConfig &config,
                                       bool verbose,
-                                      M5UnitGLASS2 *display)
+                                      M5GFX *display)
     {
         if (!EnsureFsMounted())
         {
@@ -545,7 +545,7 @@ bool EnsureUserConfig(UserConfig &config)
     return true;
 }
 
-bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsigned long connectTimeoutMs, M5UnitGLASS2 *display)
+bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsigned long connectTimeoutMs, M5GFX *display)
 {
     static NetWizard wizard(&server);
     wizard.setStrategy(NetWizardStrategy::BLOCKING);
@@ -685,7 +685,7 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
     return RunNetWizardSetupPortal(config, wizard, portalReconnectTimeoutMs, display, &connectedIp);
 }
 
-bool DownloadUserConfigFromGithub(const char *baseUrl, UserConfig &config, bool verbose, M5UnitGLASS2 *display, const char *githubToken)
+bool DownloadUserConfigFromGithub(const char *baseUrl, UserConfig &config, bool verbose, M5GFX *display, const char *githubToken)
 {
     return DownloadUserConfigFromSource(BuildRemoteSource(baseUrl, githubToken, "token ", nullptr),
                                         config,
@@ -693,7 +693,7 @@ bool DownloadUserConfigFromGithub(const char *baseUrl, UserConfig &config, bool 
                                         display);
 }
 
-bool DownloadUserConfigFromGitee(const char *baseUrl, UserConfig &config, bool verbose, M5UnitGLASS2 *display, const char *giteeToken)
+bool DownloadUserConfigFromGitee(const char *baseUrl, UserConfig &config, bool verbose, M5GFX *display, const char *giteeToken)
 {
     return DownloadUserConfigFromSource(BuildRemoteSource(baseUrl,
                                                           giteeToken,
@@ -708,7 +708,7 @@ bool DownloadUserConfigFromSources(const RemoteFileSource *sources,
                                    size_t sourceCount,
                                    UserConfig &config,
                                    bool verbose,
-                                   M5UnitGLASS2 *display)
+                                   M5GFX *display)
 {
     if (sources == nullptr || sourceCount == 0)
     {

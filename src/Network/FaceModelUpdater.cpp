@@ -29,10 +29,10 @@ namespace
         return source;
     }
 
-    RemoteFileSyncOptions BuildFaceSyncOptions(M5UnitGLASS2 &display, bool verbose)
+    RemoteFileSyncOptions BuildFaceSyncOptions(M5GFX *display, bool verbose)
     {
         RemoteFileSyncOptions options;
-        options.display = &display;
+        options.display = display;
         options.verbose = verbose;
         options.keepExistingWhenRemoteMd5Unavailable = true;
         options.ui.checkingMd5 = TXT("Checking MD5...", "校验MD5...");
@@ -50,7 +50,7 @@ namespace
     bool EnsureFaceCandidate(const FaceUpdateConfig *configs,
                              size_t sourceCount,
                              const String &remoteFilename,
-                             M5UnitGLASS2 &display,
+                             M5GFX *display,
                              bool verbose)
     {
         RemoteFileSyncOptions options = BuildFaceSyncOptions(display, verbose);
@@ -71,12 +71,12 @@ namespace
     }
 }
 
-bool EnsureFaceModelJson(const FaceUpdateConfig &config, const String &deviceId, M5UnitGLASS2 &display, bool verbose)
+bool EnsureFaceModelJson(const FaceUpdateConfig &config, const String &deviceId, M5GFX *display, bool verbose)
 {
     return EnsureFaceModelJson(&config, 1, deviceId, display, verbose);
 }
 
-bool EnsureFaceModelJson(const FaceUpdateConfig *configs, size_t sourceCount, const String &deviceId, M5UnitGLASS2 &display, bool verbose)
+bool EnsureFaceModelJson(const FaceUpdateConfig *configs, size_t sourceCount, const String &deviceId, M5GFX *display, bool verbose)
 {
     if (configs == nullptr || sourceCount == 0)
     {
@@ -121,8 +121,8 @@ bool EnsureFaceModelJson(const FaceUpdateConfig *configs, size_t sourceCount, co
         Serial.println("[WARN] WiFi connect failed; face sync will use local fallback if available");
         if (verbose)
         {
-            display.println(TXT("WiFi failed", "WiFi连接失败"));
-            display.display();
+            display->println(TXT("WiFi failed", "WiFi连接失败"));
+            display->display();
         }
     }
 
@@ -131,8 +131,8 @@ bool EnsureFaceModelJson(const FaceUpdateConfig *configs, size_t sourceCount, co
         Serial.println("[WARN] LittleFS mount failed; cannot verify face model JSON");
         if (verbose)
         {
-            display.println(TXT("FS mount failed", "文件系统挂载失败"));
-            display.display();
+            display->println(TXT("FS mount failed", "文件系统挂载失败"));
+            display->display();
         }
         return false;
     }

@@ -1,10 +1,9 @@
 #pragma once
 
 #include <Arduino.h>
+#include <M5GFX.h>
 
 #include "RemoteFileSync.h"
-
-class M5UnitGLASS2;
 
 enum class FirmwareUpdateResult
 {
@@ -22,7 +21,7 @@ struct FirmwareUpdateConfig
     const char *fallbackName = "fallback";
     const char *manifestFilename = nullptr;
     const char *currentVersion = nullptr;
-    M5UnitGLASS2 *display = nullptr;
+    M5GFX *display = nullptr;
     bool verbose = false;
 };
 

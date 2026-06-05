@@ -58,7 +58,7 @@ namespace
         }
     }
 
-    void ShowStatus(M5UnitGLASS2 *display, const char *message, bool shouldShow)
+    void ShowStatus(M5GFX *display, const char *message, bool shouldShow)
     {
         if (!display || !shouldShow || message == nullptr || message[0] == '\0')
         {
