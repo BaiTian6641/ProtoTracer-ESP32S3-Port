@@ -147,6 +147,8 @@ public:
 
     void flipDMABuffer() { display->flipDMABuffer(); }
     void flushDMAFramebuffer(bool flushAll = false) { display->flushDMAFramebuffer(flushAll); }
+    void fillBufferRgb888(const uint8_t* rgb888, uint16_t w, uint16_t h) { display->fillBufferRgb888(rgb888, w, h); }
+    void fillBufferRgb888Chained(const uint8_t* rgb888) { display->fillBufferRgb888Chained(rgb888); }
     void drawDisplayTest();
 
     void setPhysicalPanelScanRate(PANEL_SCAN_RATE rate);

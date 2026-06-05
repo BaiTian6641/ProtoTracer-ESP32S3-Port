@@ -675,6 +675,24 @@ public:
   void fillScreenRGB888(uint8_t r, uint8_t g, uint8_t b);
   void drawPixelRGB888(int16_t x, int16_t y, uint8_t r, uint8_t g, uint8_t b);
 
+  /**
+   * @brief Bulk-transfer a flat RGB888 pixel buffer into the DMA framebuffer.
+   * Processes bit-planes sequentially for maximum cache efficiency —
+   * substantially faster than 2048 individual drawPixelRGB888() calls.
+   * @param rgb888  Pointer to row-major RGB888 data (3 bytes per pixel: R,G,B)
+   * @param w       Buffer width in pixels
+   * @param h       Buffer height in pixels
+   */
+  void fillBufferRgb888(const uint8_t* rgb888, uint16_t w, uint16_t h);
+
+  /**
+   * @brief Bulk-transfer for chained panels: mirrors a 64×32 source buffer
+   * across a 128×32 physical buffer.  Each source pixel (x,y) writes to
+   * physical positions (x, y) and (127-x, y).
+   * @param rgb888  Pointer to 64×32 row-major RGB888 source data
+   */
+  void fillBufferRgb888Chained(const uint8_t* rgb888);
+
 #ifdef USE_GFX_LITE
   // 24bpp FASTLED CRGB colour struct support
   void fillScreen(CRGB color);

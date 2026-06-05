@@ -528,6 +528,161 @@ void MatrixPanel_I2S_DMA::updateMatrixDMABuffer(uint8_t red, uint8_t green, uint
 #endif
 } // updateMatrixDMABuffer (full frame paint)
 
+
+/*
+ * Bulk-transfer a flat array of RGB888 pixels into the DMA framebuffer.
+ *
+ * Processes the buffer one colour-depth bit-plane at a time (outer loop over
+ * bits, inner loop over pixels) so that writes to each plane are sequential.
+ * This is far more cache-friendly than the per-pixel updateMatrixDMABuffer
+ * which jumps between 8 different planes for every single pixel.
+ */
+void MatrixPanel_I2S_DMA::fillBufferRgb888(const uint8_t* rgb888, uint16_t w, uint16_t h)
+{
+  if (!initialized || !rgb888 || !w || !h) return;
+
+  const uint8_t  cdepth   = m_cfg.getPixelColorDepthBits();
+  const uint16_t pxPerRow = (w < PIXELS_PER_ROW) ? w : PIXELS_PER_ROW;
+  const uint16_t rows     = (h < m_cfg.mx_height) ? h : m_cfg.mx_height;
+  const uint16_t rpf      = ROWS_PER_FRAME; // rows per frame (16 for 32-high)
+
+  // Outer loop: bit-planes (bp=0 is LSB, bp=cdepth-1 is MSB)
+  for (uint8_t bp = 0; bp < cdepth; ++bp)
+  {
+    const uint16_t mask = (1 << bp);
+
+    for (uint16_t y = 0; y < rows; ++y)
+    {
+      const uint8_t* px = rgb888 + (size_t)y * w * 3;
+
+      // RGB1 (top half) or RGB2 (bottom half)
+      uint16_t colourbitclear  = BITMASK_RGB1_CLEAR;
+      uint8_t  colourbitoffset = 0;
+      uint16_t dma_y = y;
+      if (y >= rpf) {
+        colourbitclear  = BITMASK_RGB2_CLEAR;
+        colourbitoffset = BITS_RGB2_OFFSET;
+        dma_y -= rpf;
+      }
+
+      ESP32_I2S_DMA_STORAGE_TYPE* p = getRowDataPtr(dma_y, bp);
+
+      for (uint16_t x = 0; x < pxPerRow; ++x, px += 3)
+      {
+        // Feed DO_BRIGHTNESS_COMPENSATION macro (expects 'red','green','blue')
+        uint8_t red   = px[0];
+        uint8_t green = px[1];
+        uint8_t blue  = px[2];
+        DO_BRIGHTNESS_COMPENSATION()
+
+        uint16_t bits = 0;
+        bits |= (bool)(blue_val  & mask); bits <<= 1;
+        bits |= (bool)(green_val & mask); bits <<= 1;
+        bits |= (bool)(red_val   & mask);
+        bits <<= colourbitoffset;
+
+        uint16_t dma_x = ESP32_TX_FIFO_POSITION_ADJUST(x);
+        p[dma_x] &= colourbitclear;
+        p[dma_x] |= bits;
+      }
+    }
+
+    // Cache writeback for this entire bit-plane
+#if defined(SPIRAM_DMA_BUFFER) && !HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+    for (uint16_t dma_y = 0; dma_y < rpf; ++dma_y) {
+      ESP32_I2S_DMA_STORAGE_TYPE* p = getRowDataPtr(dma_y, bp);
+      Cache_WriteBack_Addr((uint32_t)p, pxPerRow * sizeof(ESP32_I2S_DMA_STORAGE_TYPE));
+    }
+#endif
+  }
+
+#if defined(SPIRAM_DMA_BUFFER) && HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+  fb->markAllDirty();
+  flushDMAFramebuffer(true);
+#endif
+}
+
+/*
+ * Bulk transfer for chained panels (PANEL_CHAIN=2, CHAIN_BOTTOM_LEFT_UP).
+ * Mirrors a 64×32 source buffer across a 128×32 physical DMA buffer.
+ * Each source pixel (sx, sy) writes to physical (sx, sy) on the left panel
+ * AND (127-sx, sy) on the right panel (horizontally mirrored).
+ *
+ * Bit-planes are processed sequentially for cache efficiency, same as
+ * fillBufferRgb888.
+ */
+void MatrixPanel_I2S_DMA::fillBufferRgb888Chained(const uint8_t* rgb888)
+{
+  if (!initialized || !rgb888) return;
+
+  const uint8_t  cdepth   = m_cfg.getPixelColorDepthBits();
+  const uint16_t srcW     = 64;
+  const uint16_t srcH     = 32;
+  const uint16_t physW    = PIXELS_PER_ROW;   // 128 for two panels
+  const uint16_t rpf      = ROWS_PER_FRAME;   // 16
+
+  for (uint8_t bp = 0; bp < cdepth; ++bp)
+  {
+    const uint16_t mask = (1 << bp);
+
+    for (uint16_t sy = 0; sy < srcH; ++sy)
+    {
+      const uint8_t* srcRow = rgb888 + (size_t)sy * srcW * 3;
+
+      // Determine RGB1 (top half) or RGB2 (bottom half)
+      uint16_t colourbitclear  = BITMASK_RGB1_CLEAR;
+      uint8_t  colourbitoffset = 0;
+      uint16_t dma_y = sy;
+      if (sy >= rpf) {
+        colourbitclear  = BITMASK_RGB2_CLEAR;
+        colourbitoffset = BITS_RGB2_OFFSET;
+        dma_y -= rpf;
+      }
+
+      ESP32_I2S_DMA_STORAGE_TYPE* p = getRowDataPtr(dma_y, bp);
+
+      for (uint16_t sx = 0; sx < srcW; ++sx)
+      {
+        const uint8_t* px = srcRow + sx * 3;
+        uint8_t red   = px[0];
+        uint8_t green = px[1];
+        uint8_t blue  = px[2];
+        DO_BRIGHTNESS_COMPENSATION()
+
+        // Pack RGB bits
+        uint16_t bits = 0;
+        bits |= (bool)(blue_val  & mask); bits <<= 1;
+        bits |= (bool)(green_val & mask); bits <<= 1;
+        bits |= (bool)(red_val   & mask);
+        bits <<= colourbitoffset;
+
+        // Left panel: physical x = sx
+        uint16_t dx0 = ESP32_TX_FIFO_POSITION_ADJUST(sx);
+        p[dx0] &= colourbitclear;
+        p[dx0] |= bits;
+
+        // Right panel: physical x = 127 - sx (mirrored)
+        uint16_t dx1 = ESP32_TX_FIFO_POSITION_ADJUST((uint16_t)(physW - 1 - sx));
+        p[dx1] &= colourbitclear;
+        p[dx1] |= bits;
+      }
+    }
+
+    // Cache writeback for this entire bit-plane
+#if defined(SPIRAM_DMA_BUFFER) && !HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+    for (uint16_t dma_y = 0; dma_y < rpf; ++dma_y) {
+      ESP32_I2S_DMA_STORAGE_TYPE* p = getRowDataPtr(dma_y, bp);
+      Cache_WriteBack_Addr((uint32_t)p, physW * sizeof(ESP32_I2S_DMA_STORAGE_TYPE));
+    }
+#endif
+  }
+
+#if defined(SPIRAM_DMA_BUFFER) && HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
+  fb->markAllDirty();
+  flushDMAFramebuffer(true);
+#endif
+}
+
 void MatrixPanel_I2S_DMA::flushDMAFramebuffer(bool flushAll)
 {
 #if defined(SPIRAM_DMA_BUFFER)
