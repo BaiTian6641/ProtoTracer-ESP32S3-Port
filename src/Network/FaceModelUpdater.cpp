@@ -119,7 +119,7 @@ bool EnsureFaceModelJson(const FaceUpdateConfig *configs, size_t sourceCount, co
     if (WiFi.status() != WL_CONNECTED)
     {
         Serial.println("[WARN] WiFi connect failed; face sync will use local fallback if available");
-        if (verbose)
+        if (verbose && display)
         {
             display->println(TXT("WiFi failed", "WiFi连接失败"));
             display->display();
@@ -129,7 +129,7 @@ bool EnsureFaceModelJson(const FaceUpdateConfig *configs, size_t sourceCount, co
     if (!RemoteFileSync::EnsureFsMounted())
     {
         Serial.println("[WARN] LittleFS mount failed; cannot verify face model JSON");
-        if (verbose)
+        if (verbose && display)
         {
             display->println(TXT("FS mount failed", "文件系统挂载失败"));
             display->display();

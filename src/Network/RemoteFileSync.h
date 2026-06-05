@@ -32,7 +32,11 @@ struct RemoteFileSyncOptions
     M5GFX *display = nullptr;
     bool verbose = false;
     bool keepExistingWhenRemoteMd5Unavailable = false;
-    bool enableLatencyProbe = true;
+    // Disabled by default: the initial source probe in setup() already
+    // determines and caches the faster remote; subsequent downloads
+    // should trust the pre-selected source order instead of re-probing
+    // every file (which wastes time and fragments internal DRAM).
+    bool enableLatencyProbe = false;
     bool skipRemoteMd5 = false;
     RemoteFileUiText ui;
 };

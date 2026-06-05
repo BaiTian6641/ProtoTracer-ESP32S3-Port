@@ -50,11 +50,11 @@ uint8_t maxAccentBrightness = 100;
 #if __has_include(<M5UnitGLASS.h>)
   #include <M5UnitGLASS.h>
 #endif
-#if __has_include(<UnitLCD.h>)
-  #include <UnitLCD.h>
+#if __has_include(<M5UnitLCD.h>)
+  #include <M5UnitLCD.h>
 #endif
-#if __has_include(<UnitOLED.h>)
-  #include <UnitOLED.h>
+#if __has_include(<M5UnitOLED.h>)
+  #include <M5UnitOLED.h>
 #endif
 
 // Heap-allocated display — type determined at runtime via I2C probe.
@@ -155,7 +155,6 @@ enum class StartupPhase : uint8_t {
     Running           // normal operation
 };
 static volatile StartupPhase gStartupPhase = StartupPhase::Downloading;
-static uint32_t gBgDownloadTimeoutMs = 0;
 
 // Sources for background download — captured from setup() probe result.
 static const char *gBgPrimaryBase = nullptr;
@@ -194,7 +193,7 @@ static void BackgroundDownloadTask(void *)
             {gBgWifiSsid.c_str(), gBgWifiPass.c_str(),
              gBgFallbackBase, gBgFallbackToken, gBgFallbackAccept, gBgFallbackAuth, gBgFallbackName}
         };
-        EnsureFaceModelJson(fc, 2, gBgDeviceId, display, false);
+        EnsureFaceModelJson(fc, 2, gBgDeviceId, nullptr, false); // no I2C — bg task runs on arbitrary core
     }
     Serial.println("[BG] Download task complete");
     gBgDownloadsDone = true;
@@ -249,9 +248,9 @@ static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
     delete d;
   }
 #endif
-#if __has_include(<UnitLCD.h>)
+#if __has_include(<M5UnitLCD.h>)
   {
-    auto *d = new UnitLCD(sda, scl, freq);
+    auto *d = new M5UnitLCD(sda, scl, freq);
     d->begin();
     d->fillScreen(TFT_BLACK);
     d->display();
@@ -260,15 +259,15 @@ static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
       display = d;
       gDisplayType = DisplayType::UnitLCD;
       gColoredPreview = true; // color-capable LCD
-      Serial.println("[DISP] Detected UnitLCD (color mode)");
+      Serial.println("[DISP] Detected M5UnitLCD (color mode)");
       return true;
     }
     delete d;
   }
 #endif
-#if __has_include(<UnitOLED.h>)
+#if __has_include(<M5UnitOLED.h>)
   {
-    auto *d = new UnitOLED(sda, scl, freq);
+    auto *d = new M5UnitOLED(sda, scl, freq);
     d->begin();
     d->fillScreen(TFT_BLACK);
     d->display();
@@ -276,7 +275,7 @@ static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
     {
       display = d;
       gDisplayType = DisplayType::UnitOLED;
-      Serial.println("[DISP] Detected UnitOLED (fallback)");
+      Serial.println("[DISP] Detected M5UnitOLED (fallback)");
       return true;
     }
     delete d;
@@ -491,29 +490,32 @@ void setup()
   // transfer at 400kHz (~25ms) with margin for retries.
   Wire.setTimeOut(50);
 
-  // Color depth: 1-bit monochrome for GLASS/OLED, color for UnitLCD
-  display->setColorDepth(gColoredPreview ? 8 : 1);
-  display->setEpdMode(epd_mode_t::epd_fastest);
-  display->setRotation(1);
-  display->setBrightness(45);
+  if (display)
+  {
+    // Color depth: 1-bit monochrome for GLASS/OLED, color for UnitLCD
+    display->setColorDepth(gColoredPreview ? 16 : 1);
+    display->setEpdMode(epd_mode_t::epd_fastest);
+    display->setRotation(1);
+    display->setBrightness(45);
 
-  nowpixels.begin();
-  nowpixels.clear();
-  nowpixels.show();
-  delay(100);
+    nowpixels.begin();
+    nowpixels.clear();
+    nowpixels.show();
+    delay(100);
 
-  display->setFont(&fonts::efontCN_12);
-  display->setTextSize(1);
-  display->setTextScroll(true);
-  display->setTextColor(TFT_WHITE);
+    display->setFont(&fonts::efontCN_12);
+    display->setTextSize(gColoredPreview ? 2 : 1);
+    display->setTextScroll(true);
+    display->setTextColor(TFT_WHITE);
 
-  display->fillScreen(TFT_BLACK);
-  // display->pushImage(22,4,84,40,FusionOpen_startup_logo);
-  // display->progressBar(14,50,100,8,75);
-  // display->display();
-  // delay(2000);
-  display->println(TXT("Starting...", "启动中..."));
-  delay(1000);
+    display->fillScreen(TFT_BLACK);
+    // display->pushImage(22,4,84,40,FusionOpen_startup_logo);
+    // display->progressBar(14,50,100,8,75);
+    // display->display();
+    // delay(2000);
+    display->println(TXT("Starting...", "启动中..."));
+    delay(1000);
+  }
 
 #ifdef TASESP32S3
   // Reserve HUB75 DMA internal SRAM before WiFi/BLE/animation allocate from the same heap.
@@ -522,8 +524,7 @@ void setup()
 
   if (!EnsureUserConfig(userConfig))
   {
-    display->println(TXT("Config load fail", "配置加载失败"));
-    display->display();
+    if (display) { display->println(TXT("Config load fail", "配置加载失败")); display->display(); }
   }
 
   // Factory flash indicator: blink internal WS2812 red/blue if face model or animation config is missing.
@@ -570,10 +571,12 @@ void setup()
   user_name = userConfig.username.c_str();
 
   // Show unique device ID for registration
-  display->println(TXT("Device ID:", "设备ID:"));
-  display->println(userConfig.device_id);
-  display->display();
-  delay(1500);
+  if (display) {
+    display->println(TXT("Device ID:", "设备ID:"));
+    display->println(userConfig.device_id);
+    display->display();
+    delay(1500);
+  }
 
   if (digitalRead(OTA_BTN) == LOW)
   {
@@ -586,6 +589,7 @@ void setup()
 #endif
     WiFi.mode(WIFI_AP);
     WiFi.softAP(userConfig.ota_ssid.c_str(), userConfig.ota_password.c_str());
+    if (display) {
     display->clearDisplay();
 #ifdef LANG_CN
     display->println("进入无线OTA模式！");
@@ -612,6 +616,7 @@ void setup()
     display->println(TXT("IP: 192.168.4.1", "访问IP：192.168.4.1"));
     display->display();
 #endif
+    }
     Serial.println("");
 
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -693,8 +698,7 @@ void setup()
     if (cachedName.isEmpty() || cachedName == "0")
     {
       // Probe Gitee first (for China users), then GitHub
-      display->println(TXT("Probing Gitee...", "测速 Gitee..."));
-      display->display();
+      if (display) { display->println(TXT("Probing Gitee...", "测速 Gitee...")); display->display(); }
 
       uint32_t giteeLatency = 0;
       uint32_t githubLatency = 0;
@@ -710,8 +714,7 @@ void setup()
         }
       }
 
-      display->println(TXT("Probing GitHub...", "测速 GitHub..."));
-      display->display();
+      if (display) { display->println(TXT("Probing GitHub...", "测速 GitHub...")); display->display(); }
 
       {
         WiFiClient probeClient;
@@ -789,16 +792,19 @@ void setup()
     arr[1].name = fallbackName;
   };
 
-  display->printf(TXT("WiFi: %s\n", "WiFi: %s\n"),
-                 networkAvailable ? TXT("Connected", "已连接") : TXT("Skipped", "已跳过"));
+  if (display)
+    display->printf(TXT("WiFi: %s\n", "WiFi: %s\n"),
+                   networkAvailable ? TXT("Connected", "已连接") : TXT("Skipped", "已跳过"));
 
   if (!networkAvailable)
   {
     Serial.println("[WARN] WiFi not connected; skipping all remote downloads");
-    display->println(TXT("Network unavailable", "网络不可用"));
-    display->println(TXT("Using local files", "使用本地文件"));
-    display->display();
-    delay(1200);
+    if (display) {
+      display->println(TXT("Network unavailable", "网络不可用"));
+      display->println(TXT("Using local files", "使用本地文件"));
+      display->display();
+      delay(1200);
+    }
   }
   else
   {
@@ -844,9 +850,11 @@ void setup()
     {
       // Assets present — start rendering NOW, queue bg download
       Serial.println("[INFO] Local assets present — fast path, background download queued");
-      display->println(TXT("Local assets OK", "本地文件就绪"));
-      display->println(TXT("Rendering...", "渲染中..."));
-      display->display();
+      if (display) {
+        display->println(TXT("Local assets OK", "本地文件就绪"));
+        display->println(TXT("Rendering...", "渲染中..."));
+        display->display();
+      }
 
       // Capture source info for background task
       gBgPrimaryBase = primaryBaseUrl;   gBgFallbackBase = fallbackBaseUrl;
@@ -857,7 +865,6 @@ void setup()
       gBgDeviceId = userConfig.device_id;
       gBgWifiSsid = userConfig.wifi_ssid;
       gBgWifiPass = userConfig.wifi_password;
-      gBgDownloadTimeoutMs = millis() + 25000; // 25 s max
 
       // Don't tear down WiFi here — background task needs it
       gStartupPhase = StartupPhase::Downloading;
@@ -865,8 +872,7 @@ void setup()
     else
     {
       // Missing assets — download synchronously before rendering
-      display->println(TXT("Downloading assets...", "下载资源中..."));
-      display->display();
+      if (display) { display->println(TXT("Downloading assets...", "下载资源中...")); display->display(); }
 
       RemoteFileSource userConfigSources[2];
       buildSources(userConfigSources);
@@ -887,10 +893,12 @@ void setup()
         if (!LittleFS.exists("/universal_face.json") &&
             !LittleFS.exists(deviceFaceFile))
         {
-          display->println(TXT("Face model missing", "面部模型缺失"));
-          display->println(TXT("Restarting...", "重启中..."));
-          display->display();
-          delay(2000);
+          if (display) {
+            display->println(TXT("Face model missing", "面部模型缺失"));
+            display->println(TXT("Restarting...", "重启中..."));
+            display->display();
+            delay(2000);
+          }
           ESP.restart();
         }
       }
@@ -910,10 +918,12 @@ void setup()
   User_B = userConfig.user_b;
 
 #ifndef VERBOSE_STARTUP
-  display->clearDisplay();
-  display->pushImage(22, 4, 84, 40, FusionOpen_startup_logo);
-  display->progressBar(14, 50, 100, 8, 0);
-  display->display();
+  if (display) {
+    display->clearDisplay();
+    display->pushImage(22, 4, 84, 40, FusionOpen_startup_logo);
+    display->progressBar(14, 50, 100, 8, 0);
+    display->display();
+  }
 #endif
 
   animation.Initialize(userConfig,
@@ -930,8 +940,8 @@ void setup()
   {
     // Flash I/O (LittleFS) requires the task stack in internal DRAM.
     // PSRAM stacks trigger cache-disable assertions during SPI flash access.
-    xTaskCreate(BackgroundDownloadTask, "BgDL", 8192,
-                nullptr, kBgTaskPriority, &gBgDownloadTask);
+    xTaskCreatePinnedToCore(BackgroundDownloadTask, "BgDL", 8192,
+                            nullptr, kBgTaskPriority, &gBgDownloadTask, 0);
     if (gBgDownloadTask)
       Serial.println("[INFO] Background download task launched");
     else
@@ -968,6 +978,7 @@ void setup()
                                   ANIM_TASK_CORE) == pdPASS) {
         gPipelineActive = true;
         Serial.printf("[PIPELINE] Animation task started on core %d\n", ANIM_TASK_CORE);
+        vTaskDelay(1); // let the task reach its first semaphore block before we signal it
       } else {
         Serial.printf("[PIPELINE] Failed to create animation task; using single-core\n");
         gPipelineActive = false;
@@ -984,24 +995,25 @@ void setup()
   }
 
 #ifndef VERBOSE_STARTUP
-  display->progressBar(14, 50, 100, 8, 100);
+  if (display) display->progressBar(14, 50, 100, 8, 100);
 #endif
   delay(1000);
-  display->clear();
+  if (display) display->clear();
 }
 
 void loop()
 {
   const uint32_t now = millis();
 
-  // ── Startup phase machine: defer WiFi teardown + BLE init until
-  //     background downloads finish (or timeout) ──
+  // ── Startup phase machine: wait for background downloads to fully
+  //     complete before tearing down WiFi.  Once BLE is initialised we
+  //     cannot fetch any more remote assets, so every download must
+  //     finish first.
   if (gStartupPhase == StartupPhase::Downloading)
   {
-    if (gBgDownloadsDone || (gBgDownloadTimeoutMs && now >= gBgDownloadTimeoutMs))
+    if (gBgDownloadsDone)
     {
-      if (!gBgDownloadsDone)
-        Serial.println("[WARN] Background download timed out");
+      Serial.println("[INFO] Background downloads complete — proceeding to WiFi teardown");
       gStartupPhase = StartupPhase::WifiTeardown;
     }
   }
@@ -1039,6 +1051,7 @@ void loop()
       {
         gPipelineActive = true;
         Serial.printf("[PIPELINE] Animation task started on core %d\n", ANIM_TASK_CORE);
+        vTaskDelay(1); // let the task reach its first semaphore block before we signal it
       }
       else
       {
@@ -1058,8 +1071,10 @@ void loop()
     }
     gStartupPhase = StartupPhase::Running;
     // Quick HUD refresh after updates complete
-    display->clear();
-    display->setCursor(0, 0);
+    if (display) {
+      display->clear();
+      display->setCursor(0, 0);
+    }
     Serial.println("[INFO] Startup complete — running");
   }
 

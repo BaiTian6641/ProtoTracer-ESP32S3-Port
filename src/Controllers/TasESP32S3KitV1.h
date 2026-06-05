@@ -4,6 +4,7 @@
 #include "../Render/Camera.h"
 #include "../Flash/PixelGroups/P3HUB75.h"
 #include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
 
 //HUB75
 #include <ESP32-VirtualMatrixPanel-I2S-DMA.h>
@@ -64,6 +65,12 @@ extern bool gColoredPreview;
 #define HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS HUB75_PIXEL_COLOR_DEPTH_BITS
 #endif
 
+// ── HUD preview buffer: placed in PSRAM.  ESPMenu::Update() reads
+//     gHudColors (set below), converts to RGB565 into gHudBuffer, and
+//     pushes it to the secondary M5 display — all inside its existing
+//     I2C transaction on the main-loop core.  No FreeRTOS task needed.
+EXT_RAM_BSS_ATTR uint16_t gHudBuffer[64 * 32];
+ProtoRGBColor* volatile gHudColors = nullptr;
 
 // placeholder for the matrix object
 MatrixPanel_I2S_DMA *dma_display = nullptr;
@@ -100,11 +107,13 @@ public:
     TasESP32S3KitV1(uint8_t maxBrightness) : Controller(cameras, 1, maxBrightness, 0){}
 
     void Initialize() override{
+        if (display) {
         #ifdef VERBOSE_STARTUP
         display->println("初始化HUB75驱动...");
         #else
         display->progressBar(14,50,100,8,50);
         #endif
+        }
         delay(400);
         HUB75_I2S_CFG mxconfig(
                 PANEL_RES_X,   // module width
@@ -128,13 +137,13 @@ public:
         mxconfig.gpio.lat = LAT_PIN;
         mxconfig.gpio.oe = OE_PIN;
         mxconfig.clkphase = false;
-        mxconfig.double_buff = false;
+        mxconfig.double_buff = true;  // DMA-safe: write back buf, flip atomically
         mxconfig.setPixelColorDepthBits(HUB75_PIXEL_COLOR_DEPTH_BITS);
 
         // OK, now we can create our matrix object
         dma_display = new MatrixPanel_I2S_DMA(mxconfig);
         #ifndef VERBOSE_STARTUP 
-        display->progressBar(14,50,100,8,55);
+        if (display) display->progressBar(14,50,100,8,55);
         #endif
 
         // let's adjust default brightness to about 75%
@@ -169,17 +178,21 @@ public:
         }
 
         if(!dmaBeginOk){
+            if (display) {
             display->clearDisplay();
             display->println("初始化HUB75驱动失败！");
             display->println("I2S 内存分配失败");
+            }
             Serial.println("****** I2S memory allocation failed ***********");
             return;
         }
+        if (display) {
         #ifdef VERBOSE_STARTUP
         display->println("初始化HUB75驱动完成");
         #else
         display->progressBar(14,50,100,8,60);
         #endif
+        }
         delay(200);
         //Serial1.begin(2048000, SERIAL_8N1, -1, 47);
 
@@ -190,93 +203,80 @@ public:
         virtualDisp = nullptr;
     #endif
         #ifndef VERBOSE_STARTUP 
-        display->progressBar(14,50,100,8,65);
+        if (display) display->progressBar(14,50,100,8,65);
         #endif
 
         dma_display->fillScreenRGB888(100,0,0);
+        dma_display->flipDMABuffer();  // push to both buffers
+        if (display) {
         #ifdef VERBOSE_STARTUP
         display->println("HUB75测试：红色");
         #else
         display->progressBar(14,50,100,8,70);
         #endif
+        }
         delay(1000);
         dma_display->fillScreenRGB888(0,100,0);
+        dma_display->flipDMABuffer();
+        if (display) {
         #ifdef VERBOSE_STARTUP
         display->println("HUB75测试：绿色");
         #else
         display->progressBar(14,50,100,8,75);
         #endif
+        }
         delay(1000);
         dma_display->fillScreenRGB888(0,0,100);
+        dma_display->flipDMABuffer();
+        if (display) {
         #ifdef VERBOSE_STARTUP
         display->println("HUB75测试：蓝色");
         #else
         display->progressBar(14,50,100,8,80);
         #endif
+        }
         delay(1000);
 
         dma_display->clearScreen();
+        dma_display->flipDMABuffer();  // clear both buffers
         Serial.println("Init OK!");
     }
 
     void Display() override {
         if (!dma_display) return;
-    #if PANEL_CHAIN > 1
+#if PANEL_CHAIN > 1
         if (!virtualDisp) return;
-    #endif
+#endif
 
-        // Cache brightness — only push to DMA when it actually changes
-        static uint8_t sLastBrightness = 255;
-        if (brightness != sLastBrightness) {
+        // Cache brightness — only push to DMA when it actually changes.
+        // 0xFF sentinel: skip first frame (Initialize() already set DMA
+        // brightness to 125; soft-start begins at 0 and must not override
+        // the init value with black).
+        static uint8_t sLastBrightness = 0xFF;
+        if (brightness > 0 && brightness != sLastBrightness) {
             dma_display->setBrightness8(brightness);
+            sLastBrightness = brightness;
+        } else if (sLastBrightness == 0xFF) {
             sLastBrightness = brightness;
         }
         
         ProtoRGBColor* colors = camPixels1->GetColors();
         if (!colors) return;
         
-        // Throttled M5 HUD preview: update every kM5PreviewInterval frames to keep
-        // the internal display functional without starving HUB75 frame time.
-        // Set to 1 for every-frame preview (debug), 4-5 for production balance.
-        static uint16_t sPreviewFrame = 0;
-        constexpr uint16_t kM5PreviewInterval = 1; // update preview every frame
-        const bool doPreview = (++sPreviewFrame % kM5PreviewInterval == 0);
-        
-        if (doPreview) {
-            display->startWrite();
-            display->drawRect(0, 0, 66, 34, TFT_WHITE);
-        }
-        
-        for (uint16_t y = 0; y < 32; y++) {
-            for (uint16_t x = 0; x < 64; x++){
-                uint16_t pixelNum = y * 64 + x;
-                const ProtoRGBColor& c = colors[pixelNum];
+        // ── HUB75 rendering: write to back buffer, flip atomically ──
+        // With double_buff=true the DMA scans the front buffer while we
+        // fill the back buffer — no partial-frame scan, no color-depth loss.
 #if PANEL_CHAIN > 1
-                virtualDisp->drawPixelRGB888(63 - x, (y) + 32, (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
-                virtualDisp->drawPixelRGB888(63 - x, (31 - y), (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
+        dma_display->fillBufferRgb888Chained((const uint8_t*)colors);
 #else
-                dma_display->drawPixelRGB888(63 - x, 31 - y, (uint16_t)c.R, (uint16_t)c.G, (uint16_t)c.B);
+        dma_display->fillBufferRgb888((const uint8_t*)colors, 64, 32);
 #endif
-                if (doPreview) {
-                    if (gColoredPreview) {
-                        display->drawPixel(64 - x, (32 - y), display->color565(c.R, c.G, c.B));
-                    } else {
-                        // Hard luminance threshold for crisp 1-bit preview.
-                        // Midpoint of 0-765: >= 384 → white, else black.
-                        const uint16_t lum = (uint16_t)c.R + (uint16_t)c.G + (uint16_t)c.B;
-                        display->drawPixel(64 - x, (32 - y), lum >= 384 ? TFT_WHITE : TFT_BLACK);
-                    }
-                }
-            }
-        }
-    #if defined(SPIRAM_DMA_BUFFER) && HUB75_SPIRAM_DEFERRED_CACHE_FLUSH
-        dma_display->flushDMAFramebuffer();
-    #endif
+        dma_display->flipDMABuffer();
         
-        if (doPreview) {
-            display->display();
-            display->endWrite();
-        }
-
+        // ── Export colors pointer for ESPMenu HUD preview ──
+        // ESPMenu::Update() reads gHudColors, builds the RGB565 buffer,
+        // and pushes it to the secondary display inside its own I2C
+        // transaction — all on the main-loop core, zero render-path cost.
+        gHudColors = colors;
     }
 };

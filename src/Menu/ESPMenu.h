@@ -44,6 +44,9 @@
 #endif
 
 extern M5GFX *display;
+extern bool gColoredPreview;
+extern uint16_t gHudBuffer[64 * 32];
+extern ProtoRGBColor* volatile gHudColors;
 
 #ifdef NEW_GESTURE
 #include "RevEng_PAJ7620.h"
@@ -1060,7 +1063,7 @@ private:
             {
                 facialexpression = tempvalue;
                 confirm = 0;
-                display->fillRect(65, 37, 14, 12, TFT_BLACK);
+                { const int16_t s = gColoredPreview ? 2 : 1; display->fillRect(65 * s, 37 * s, 14 * s, 12 * s, TFT_BLACK); }
                 display->display();
             }
         }
@@ -1072,7 +1075,7 @@ private:
             {
                 bright = tempvalue;
                 confirm = 0;
-                display->fillRect(40, 50, 20, 12, TFT_BLACK);
+                { const int16_t s = gColoredPreview ? 2 : 1; display->fillRect(40 * s, 50 * s, 20 * s, 12 * s, TFT_BLACK); }
                 display->display();
             }
         }
@@ -1083,7 +1086,7 @@ private:
             if (confirm == 255 && voiceenable != tempvalue)
             {
                 voiceenable = tempvalue;
-                display->fillRect(65, 50, 60, 12, TFT_BLACK);
+                { const int16_t s = gColoredPreview ? 2 : 1; display->fillRect(65 * s, 50 * s, 60 * s, 12 * s, TFT_BLACK); }
                 display->display();
                 confirm = 0;
             }
@@ -1372,6 +1375,27 @@ public:
 
         FlushQueuedBleJsonPayload();
 
+        // ── HUD preview: build RGB565 buffer BEFORE the I2C transaction ──
+        // Keeps the I2C bus held only for the actual push, preventing
+        // framerate drops and HUB75 DMA starvation.
+        if (gHudColors) {
+            uint16_t *buf = gHudBuffer;
+            const ProtoRGBColor *colors = gHudColors;
+            for (uint16_t y = 0; y < 32; y++) {
+                for (uint16_t x = 0; x < 64; x++) {
+                    const ProtoRGBColor &c = colors[y * 64 + x];
+                    const uint16_t sx = 63 - x;
+                    const uint16_t sy = 31 - y;
+                    if (gColoredPreview)
+                        buf[sy * 64 + sx] = (uint16_t)((c.R & 0xF8) << 8) | ((c.G & 0xFC) << 3) | (c.B >> 3);
+                    else {
+                        const uint16_t lum = (uint16_t)c.R + (uint16_t)c.G + (uint16_t)c.B;
+                        buf[sy * 64 + sx] = (lum >= 140) ? 0xFFFF : 0x0000;
+                    }
+                }
+            }
+        }
+
         //free_mem = (int)((float)((float)ESP.getFreeHeap() / (float)ESP.getHeapSize())*100.0f);
         display->startWrite();
         // display->clearDisplay();
@@ -1533,29 +1557,39 @@ public:
 
         // display->endWrite();
         //display->qrcode(BLE_RX2_UUID, 70, 2, 29, 3);
-        display->drawString(TXT("Exp Number:", "表情编号："), 5, 37);
-        display->drawNumber(facialexpression, 70, 37);
+        // Scale text for UnitLCD: 2× larger with doubled coordinates
+        const int16_t tsize = gColoredPreview ? 2 : 1;
+        display->drawString(TXT("Exp Number:", "表情编号："), 5 * tsize, 37 * tsize);
+        display->drawNumber(facialexpression, 70 * tsize, 37 * tsize);
 
-        display->drawString(TXT("Bright:", "亮度："), 5, 50);
-        display->drawNumber(bright, TXT(55, 40), 50);
+        display->drawString(TXT("Bright:", "亮度："), 5 * tsize, 50 * tsize);
+        display->drawNumber(bright, TXT(55, 40) * tsize, 50 * tsize);
 
         if(WiFi.isConnected()){
-            display->pushImageDMA(100, 38, 24, 24, epd_bitmap_cloud);
+            display->pushImageDMA(100 * tsize, 38 * tsize, 24, 24, epd_bitmap_cloud);
         }else{
-            display->fillRect(100,38,24,24,TFT_BLACK);
+            display->fillRect(100 * tsize, 38 * tsize, 24, 24, TFT_BLACK);
         }
 
         //display->drawNumber(free_mem, 80, 37);
 
         if(voiceenable == 1){
-            display->pushImageDMA(66, 0, 24, 24, epd_bitmap_microphone);
+            display->pushImageDMA(66 * tsize, 0, 24, 24, epd_bitmap_microphone);
         }else{
-            display->pushImageDMA(66, 0, 24, 24, epd_bitmap_microphone_off);
+            display->pushImageDMA(66 * tsize, 0, 24, 24, epd_bitmap_microphone_off);
         }
         if(bleDeviceConnected){
-            display->pushImageDMA(90, 0, 24, 24, epd_bitmap_bluetooth);
+            display->pushImageDMA(90 * tsize, 0, 24, 24, epd_bitmap_bluetooth);
         }else{
-            display->fillRect(90,0,24,24,TFT_BLACK);
+            display->fillRect(90 * tsize, 0, 24, 24, TFT_BLACK);
+        }
+
+        // ── HUD preview: push pre-built buffer (conversion done above) ──
+        // The RGB565 buffer was already built before startWrite(), so the
+        // I2C transaction is short — just drawRect + pushImage.
+        if (gHudColors) {
+            display->drawRect(0, 0, 66, 34, TFT_WHITE);
+            display->pushImage(1, 1, 64, 32, gHudBuffer);
         }
 
         display->display();
