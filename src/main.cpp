@@ -64,8 +64,10 @@ M5GFX *display = nullptr;
 #include <ProtoGC.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include "Flash/Icons/Icons.h"
 #include "Network/FaceModelUpdater.h"
 #include "Network/FirmwareUpdater.h"
+#include "Network/RemoteFileSync.h"
 #include "Network/UserConfigManager.h"
 
 #ifndef ANIM_RENDER_PIPELINE
@@ -120,7 +122,7 @@ constexpr bool kVerboseStartup = false;
 #endif
 
 #ifndef PROTOTRACER_FW_VERSION
-#define PROTOTRACER_FW_VERSION "1.1.6"
+#define PROTOTRACER_FW_VERSION "1.2.4"
 #endif
 
 #ifndef PROTOTRACER_FW_MANIFEST
@@ -144,6 +146,9 @@ static uint32_t gOtaButtonLastTriggerMs = 0;
 static TaskHandle_t gBgDownloadTask = nullptr;
 static volatile bool gBgDownloadsDone = false;
 static volatile bool gBgDownloadsOk = true;
+static bool gBgDisplayResetDone = false;
+static uint32_t gBgDownloadStartMs = 0;
+static constexpr uint32_t kBgDownloadTimeoutMs = 45000; // 45s safety timeout
 static constexpr UBaseType_t kBgTaskPriority = 0; // idle priority
 
 // Startup phase: lets the main loop defer WiFi teardown + BLE init
@@ -297,6 +302,65 @@ Adafruit_NeoPixel nowpixels(1, 20, NEO_GRB + NEO_KHZ800);
 #endif
 
 JsonDrivenProtogenAnimation animation = JsonDrivenProtogenAnimation();
+
+namespace
+{
+  constexpr const char *kUserConfigPath = "/user_config.json";
+
+  bool HasLocalFaceAsset(const UserConfig &config)
+  {
+    const String deviceFaceFile = "/" + config.device_id + "_face.json";
+    return LittleFS.exists(deviceFaceFile) || LittleFS.exists("/universal_face.json");
+  }
+
+  bool HasLocalAnimationAsset(const UserConfig &config)
+  {
+    const String animFile = "/" + (config.user_animation.length() > 0
+                                        ? config.user_animation
+                                        : config.device_id + "_animation.json");
+    return LittleFS.exists(animFile) || LittleFS.exists("/example_animation.json");
+  }
+
+  void ShowOfflineStartupFailure(bool hasConfig, bool hasFace, bool hasAnimation)
+  {
+    Serial.printf("[FATAL] Offline boot blocked: config=%d face=%d animation=%d\n",
+                  hasConfig ? 1 : 0,
+                  hasFace ? 1 : 0,
+                  hasAnimation ? 1 : 0);
+
+    if (!display)
+    {
+      return;
+    }
+
+    display->fillScreen(TFT_BLACK);
+    DrawSadComputerStartupIcon(display, 36, 2, 3, TFT_WHITE, TFT_BLACK);
+    display->setTextColor(TFT_WHITE, TFT_BLACK);
+    display->setCursor(6, 72);
+    display->println(TXT("Offline boot blocked", "离线启动失败"));
+    if (!hasConfig) display->println(TXT("Missing: user_config", "缺少: user_config"));
+    if (!hasFace) display->println(TXT("Missing: face model", "缺少: 面部模型"));
+    if (!hasAnimation) display->println(TXT("Missing: animation", "缺少: 动画配置"));
+    display->println("0F00 0042");
+    display->display();
+  }
+
+  [[noreturn]] void HaltStartupOfflineFailure(bool hasConfig, bool hasFace, bool hasAnimation)
+  {
+    ShowOfflineStartupFailure(hasConfig, hasFace, hasAnimation);
+    nowpixels.setBrightness(80);
+    while (true)
+    {
+      nowpixels.setPixelColor(0, nowpixels.Color(120, 0, 0));
+      nowpixels.show();
+      delay(250);
+      nowpixels.setPixelColor(0, 0);
+      nowpixels.show();
+      delay(450);
+      yield();
+    }
+  }
+}
 
 // Copy completed animation vertices from all scene objects to their render buffers.
 // Defined unconditionally so both the pipeline task and the single-core fallback
@@ -522,6 +586,9 @@ void setup()
   EnsureControllerInitialized();
 #endif
 
+  const bool fsReady = RemoteFileSync::EnsureFsMounted();
+  const bool hadLocalUserConfig = fsReady && LittleFS.exists(kUserConfigPath);
+
   if (!EnsureUserConfig(userConfig))
   {
     if (display) { display->println(TXT("Config load fail", "配置加载失败")); display->display(); }
@@ -662,6 +729,9 @@ void setup()
   // All remote operations are gated behind a single WiFi guard.
   // When WiFi is unavailable, skip everything and continue with local files.
   bool networkAvailable = wifiConnected && (WiFi.status() == WL_CONNECTED);
+  const bool localConfigExists = hadLocalUserConfig;
+  const bool localFaceExists = HasLocalFaceAsset(userConfig);
+  const bool localAnimExists = HasLocalAnimationAsset(userConfig);
 
   // ── Probe Gitee → GitHub, cache faster source ──
   // Determine which remote has lower HTTP latency, then use it as the
@@ -799,6 +869,12 @@ void setup()
   if (!networkAvailable)
   {
     Serial.println("[WARN] WiFi not connected; skipping all remote downloads");
+    if (!(localConfigExists && localFaceExists && localAnimExists))
+    {
+      HaltStartupOfflineFailure(localConfigExists, localFaceExists, localAnimExists);
+    }
+
+    gStartupPhase = StartupPhase::WifiTeardown;
     if (display) {
       display->println(TXT("Network unavailable", "网络不可用"));
       display->println(TXT("Using local files", "使用本地文件"));
@@ -808,34 +884,7 @@ void setup()
   }
   else
   {
-    // ── Firmware update check FIRST ──
-    FirmwareUpdateConfig firmwareUpdateConfig;
-    firmwareUpdateConfig.primarySource.baseUrl = primaryBaseUrl;
-    firmwareUpdateConfig.primarySource.token = primaryToken;
-    firmwareUpdateConfig.primarySource.authScheme = primaryAuthScheme;
-    firmwareUpdateConfig.primarySource.acceptHeader = primaryAccept;
-    firmwareUpdateConfig.primarySource.name = primaryName;
-    firmwareUpdateConfig.primaryName = primaryName;
-    firmwareUpdateConfig.fallbackSource.baseUrl = fallbackBaseUrl;
-    firmwareUpdateConfig.fallbackSource.token = fallbackToken;
-    firmwareUpdateConfig.fallbackSource.authScheme = fallbackAuthScheme;
-    firmwareUpdateConfig.fallbackSource.acceptHeader = fallbackAccept;
-    firmwareUpdateConfig.fallbackSource.name = fallbackName;
-    firmwareUpdateConfig.fallbackName = fallbackName;
-    firmwareUpdateConfig.manifestFilename = kFirmwareManifest;
-    firmwareUpdateConfig.currentVersion = kFirmwareVersion;
-    firmwareUpdateConfig.display = display;
-    firmwareUpdateConfig.verbose = kVerboseStartup;
-
-    Serial.printf("[INFO] Checking firmware update via %s...\n", primaryName);
-    const FirmwareUpdateResult firmwareUpdateResult = FirmwareUpdater::CheckAndUpdate(firmwareUpdateConfig);
-    if (firmwareUpdateResult == FirmwareUpdateResult::Failed)
-    {
-      Serial.println("[WARN] Auto firmware update check failed; continuing startup");
-    }
-    protogc::ProtoGC::collectFull("post-firmware-check");
-
-    // ── Fast path: local assets exist → render immediately, bg download ──
+    // ── Decide whether we can render immediately before any blocking HTTP work ──
     const String deviceFaceFile = "/" + userConfig.device_id + "_face.json";
     const String animFile = "/" + (userConfig.user_animation.length() > 0
                                        ? userConfig.user_animation
@@ -844,7 +893,6 @@ void setup()
                                  LittleFS.exists("/universal_face.json");
     const bool localAnimExists = LittleFS.exists(animFile) ||
                                  LittleFS.exists("/example_animation.json");
-    const bool localConfigExists = LittleFS.exists("/user_config.json");
 
     if (localFaceExists && localAnimExists)
     {
@@ -866,8 +914,57 @@ void setup()
       gBgWifiSsid = userConfig.wifi_ssid;
       gBgWifiPass = userConfig.wifi_password;
 
+      // Run firmware update check before launching background downloads.
+      // Non-blocking: failure is logged but does not stall startup.
+      if (display) {
+        display->clearDisplay();
+        display->setCursor(0, 0);
+        display->println(TXT("Checking firmware...", "检查固件更新..."));
+        display->display();
+      }
+      {
+        FirmwareUpdateConfig fwCfg;
+        fwCfg.primarySource.baseUrl = primaryBaseUrl;
+        fwCfg.primarySource.token = primaryToken;
+        fwCfg.primarySource.authScheme = primaryAuthScheme;
+        fwCfg.primarySource.acceptHeader = primaryAccept;
+        fwCfg.primarySource.name = primaryName;
+        fwCfg.primaryName = primaryName;
+        fwCfg.fallbackSource.baseUrl = fallbackBaseUrl;
+        fwCfg.fallbackSource.token = fallbackToken;
+        fwCfg.fallbackSource.authScheme = fallbackAuthScheme;
+        fwCfg.fallbackSource.acceptHeader = fallbackAccept;
+        fwCfg.fallbackSource.name = fallbackName;
+        fwCfg.fallbackName = fallbackName;
+        fwCfg.manifestFilename = kFirmwareManifest;
+        fwCfg.currentVersion = kFirmwareVersion;
+        fwCfg.display = display;
+        fwCfg.verbose = kVerboseStartup;
+        Serial.printf("[INFO] Checking firmware update via %s before background downloads...\n", primaryName);
+        const FirmwareUpdateResult fwResult = FirmwareUpdater::CheckAndUpdate(fwCfg);
+        if (fwResult == FirmwareUpdateResult::Failed)
+        {
+          Serial.println("[WARN] Firmware update check failed; continuing with background downloads");
+          if (display && kVerboseStartup) {
+            display->clearDisplay();
+            display->setCursor(0, 0);
+            display->println(TXT("FW check failed", "固件检查失败"));
+            display->println(TXT("Continuing...", "继续启动..."));
+            display->display();
+            delay(800);
+          }
+        }
+        else if (fwResult == FirmwareUpdateResult::UpToDate)
+        {
+          Serial.println("[INFO] Firmware is up to date");
+        }
+        // Updated result reboots internally, never reaches here
+      }
+      protogc::ProtoGC::collectFull("post-firmware-check");
+
       // Don't tear down WiFi here — background task needs it
       gStartupPhase = StartupPhase::Downloading;
+      gBgDownloadStartMs = millis();
     }
     else
     {
@@ -879,6 +976,32 @@ void setup()
       DownloadUserConfigFromSources(userConfigSources, 2, userConfig,
                                     kVerboseStartup, display);
       protogc::ProtoGC::collectFull("post-user-config");
+
+      FirmwareUpdateConfig firmwareUpdateConfig;
+      firmwareUpdateConfig.primarySource.baseUrl = primaryBaseUrl;
+      firmwareUpdateConfig.primarySource.token = primaryToken;
+      firmwareUpdateConfig.primarySource.authScheme = primaryAuthScheme;
+      firmwareUpdateConfig.primarySource.acceptHeader = primaryAccept;
+      firmwareUpdateConfig.primarySource.name = primaryName;
+      firmwareUpdateConfig.primaryName = primaryName;
+      firmwareUpdateConfig.fallbackSource.baseUrl = fallbackBaseUrl;
+      firmwareUpdateConfig.fallbackSource.token = fallbackToken;
+      firmwareUpdateConfig.fallbackSource.authScheme = fallbackAuthScheme;
+      firmwareUpdateConfig.fallbackSource.acceptHeader = fallbackAccept;
+      firmwareUpdateConfig.fallbackSource.name = fallbackName;
+      firmwareUpdateConfig.fallbackName = fallbackName;
+      firmwareUpdateConfig.manifestFilename = kFirmwareManifest;
+      firmwareUpdateConfig.currentVersion = kFirmwareVersion;
+      firmwareUpdateConfig.display = display;
+      firmwareUpdateConfig.verbose = kVerboseStartup;
+
+      Serial.printf("[INFO] Checking firmware update via %s after config sync...\n", primaryName);
+      const FirmwareUpdateResult firmwareUpdateResult = FirmwareUpdater::CheckAndUpdate(firmwareUpdateConfig);
+      if (firmwareUpdateResult == FirmwareUpdateResult::Failed)
+      {
+        Serial.println("[WARN] Auto firmware update check failed; continuing startup");
+      }
+      protogc::ProtoGC::collectFull("post-firmware-check");
 
       FaceUpdateConfig faceConfigs[2] = {
         {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(),
@@ -927,10 +1050,10 @@ void setup()
 #endif
 
   animation.Initialize(userConfig,
-                       user_config_base_url,
-                       user_config_gitee_base_url,
-                       user_config_github_token,
-                       user_config_gitee_token,
+                       networkAvailable ? user_config_base_url : nullptr,
+                       networkAvailable ? user_config_gitee_base_url : nullptr,
+                       networkAvailable ? user_config_github_token : nullptr,
+                       networkAvailable ? user_config_gitee_token : nullptr,
                        display,
                        kVerboseStartup);
   protogc::ProtoGC::collectFull("post-animation-init");
@@ -1011,8 +1134,19 @@ void loop()
   //     finish first.
   if (gStartupPhase == StartupPhase::Downloading)
   {
-    if (gBgDownloadsDone)
+    const bool timedOut = (now - gBgDownloadStartMs) >= kBgDownloadTimeoutMs;
+    if (gBgDownloadsDone || timedOut)
     {
+      if (timedOut && !gBgDownloadsDone)
+      {
+        Serial.println("[WARN] Background download timeout — forcing WiFi teardown");
+        gBgDownloadsOk = false;
+      }
+      if (!gBgDisplayResetDone)
+      {
+        controller.ResetDisplayDriver();
+        gBgDisplayResetDone = true;
+      }
       Serial.println("[INFO] Background downloads complete — proceeding to WiFi teardown");
       gStartupPhase = StartupPhase::WifiTeardown;
     }

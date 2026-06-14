@@ -2,6 +2,7 @@
 #define PROTOTRACER_FLASH_ICONS_H_
 
 #include <Arduino.h>
+#include <M5GFX.h>
 // 'CyanTek X FusionOpen', 128x56px
 const uint16_t epd_bitmap_CyanTek_X_FusionOpen [] PROGMEM = {
 	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 
@@ -1710,5 +1711,38 @@ static const uint16_t* const epd_bitmap_allArray[epd_bitmap_allArray_LEN] = {
 	epd_bitmap_thermometer_full,
 	epd_bitmap_thermometer_low
 };
+
+inline void DrawSadComputerStartupIcon(M5GFX *display,
+									   int32_t x,
+									   int32_t y,
+									   int32_t scale = 2,
+									   uint16_t fg = 0xFFFF,
+									   uint16_t bg = 0x0000)
+{
+	if (!display || scale < 1)
+	{
+		return;
+	}
+
+	const int32_t s = scale;
+	display->fillRoundRect(x + 2 * s, y + 2 * s, 18 * s, 19 * s, 2 * s, fg);
+	display->drawRoundRect(x + 2 * s, y + 2 * s, 18 * s, 19 * s, 2 * s, fg);
+
+	display->fillRect(x + 5 * s, y + 5 * s, 12 * s, 9 * s, fg);
+	display->drawRect(x + 4 * s, y + 4 * s, 14 * s, 11 * s, bg);
+
+	display->drawLine(x + 7 * s, y + 7 * s, x + 9 * s, y + 9 * s, bg);
+	display->drawLine(x + 9 * s, y + 7 * s, x + 7 * s, y + 9 * s, bg);
+	display->drawLine(x + 13 * s, y + 7 * s, x + 15 * s, y + 9 * s, bg);
+	display->drawLine(x + 15 * s, y + 7 * s, x + 13 * s, y + 9 * s, bg);
+	display->drawPixel(x + 11 * s, y + 10 * s, bg);
+	display->drawLine(x + 8 * s, y + 12 * s, x + 14 * s, y + 12 * s, bg);
+	display->drawPixel(x + 8 * s, y + 11 * s, bg);
+	display->drawPixel(x + 14 * s, y + 11 * s, bg);
+
+	display->fillRect(x + 7 * s, y + 17 * s, 8 * s, 2 * s, bg);
+	display->fillRect(x + 4 * s, y + 21 * s, 5 * s, 2 * s, fg);
+	display->fillRect(x + 13 * s, y + 21 * s, 5 * s, 2 * s, fg);
+}
 
 #endif  // PROTOTRACER_FLASH_ICONS_H_

@@ -1736,11 +1736,11 @@ public:
             return;
         }
 
-        faceTransform->SetRotation(Vector3D(0.0f, 0.0f, -7.5f));
+        faceTransform->SetRotation(Vector3D(0.0f, 0.0f, 7.5f));
 
         const float scale = 17.5f * 0.5f + 0.45f;
-        faceTransform->SetPosition(Vector3D(baseXOffset + xOffset, baseYOffset + yOffset, 550.0f));
-        faceTransform->SetScale(Vector3D(-0.975f, 0.59f, 0.65f).Multiply(scale));
+        faceTransform->SetPosition(Vector3D(baseXOffset - 25.0f - xOffset, baseYOffset + yOffset, 550.0f));
+        faceTransform->SetScale(Vector3D(0.975f, 0.59f, -0.65f).Multiply(scale));
 
         GetFaceObject()->UpdateTransform();
     }

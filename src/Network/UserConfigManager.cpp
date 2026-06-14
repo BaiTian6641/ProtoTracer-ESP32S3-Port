@@ -26,6 +26,9 @@ namespace
     constexpr const char *kDefaultPortalSsid = "General ProtogenOTAWiFi";
     constexpr const char *kDefaultPortalPassword = "Protogen#1229#25";
     constexpr size_t kMaxPortalSsidLength = 32;
+    constexpr uint32_t kUserConfigConnectTimeoutMs = 2500;
+    constexpr uint32_t kUserConfigRequestTimeoutMs = 4000;
+    constexpr uint32_t kUserConfigIdleTimeoutMs = 1500;
 
     M5GFX *g_netWizardDisplay = nullptr;
     bool g_netWizardDisplayActive = false;
@@ -365,6 +368,9 @@ namespace
         options.keepExistingWhenRemoteMd5Unavailable = false;
         options.enableLatencyProbe = false;
         options.skipRemoteMd5 = true;
+        options.connectTimeoutMs = kUserConfigConnectTimeoutMs;
+        options.requestTimeoutMs = kUserConfigRequestTimeoutMs;
+        options.idleTimeoutMs = kUserConfigIdleTimeoutMs;
         options.ui.checkingMd5 = TXT("Checking config...", "检查配置中...");
         options.ui.upToDate = TXT("Config up-to-date", "配置已最新");
         options.ui.md5Mismatch = TXT("Config changed, redownloading...", "配置已变更，重新下载");

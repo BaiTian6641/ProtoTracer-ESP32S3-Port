@@ -71,6 +71,21 @@ namespace
         display->display();
     }
 
+    uint32_t ResolveConnectTimeoutMs(const RemoteFileSyncOptions &options)
+    {
+        return options.connectTimeoutMs > 0 ? options.connectTimeoutMs : kHttpConnectTimeoutMs;
+    }
+
+    uint32_t ResolveRequestTimeoutMs(const RemoteFileSyncOptions &options)
+    {
+        return options.requestTimeoutMs > 0 ? options.requestTimeoutMs : kHttpRequestTimeoutMs;
+    }
+
+    uint32_t ResolveIdleTimeoutMs(const RemoteFileSyncOptions &options)
+    {
+        return options.idleTimeoutMs > 0 ? options.idleTimeoutMs : kHttpIdleTimeoutMs;
+    }
+
     String DeriveMd5Filename(const String &remoteFilename)
     {
         if (remoteFilename.endsWith(".json"))
@@ -427,8 +442,8 @@ bool RemoteFileSync::Sync(const RemoteFileSource &source,
 
     HTTPClient http;
     String url = BuildUrl(source.baseUrl, remoteFilename);
-    http.setConnectTimeout(kHttpConnectTimeoutMs);
-    http.setTimeout(kHttpRequestTimeoutMs);
+    http.setConnectTimeout(ResolveConnectTimeoutMs(options));
+    http.setTimeout(ResolveRequestTimeoutMs(options));
     if (!http.begin(url))
     {
         ShowStatus(options.display, options.ui.httpBeginFail, options.verbose);
@@ -477,6 +492,7 @@ bool RemoteFileSync::Sync(const RemoteFileSource &source,
     bool writeFailed = false;
     uint32_t lastDataMs = millis();
     bool downloadStalled = false;
+    const uint32_t idleTimeoutMs = ResolveIdleTimeoutMs(options);
 
     while (http.connected() && (remaining > 0 || remaining == -1))
     {
@@ -519,7 +535,7 @@ bool RemoteFileSync::Sync(const RemoteFileSource &source,
                 }
             }
         }
-        else if (millis() - lastDataMs > kHttpIdleTimeoutMs)
+        else if (millis() - lastDataMs > idleTimeoutMs)
         {
             Serial.printf("[WARN] Remote download stalled for %s\n", url.c_str());
             downloadStalled = true;

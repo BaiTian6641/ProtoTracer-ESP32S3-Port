@@ -81,7 +81,8 @@ VirtualMatrixPanel  *virtualDisp = nullptr;
 class TasESP32S3KitV1 : public Controller {
 private:
     CameraLayout cameraLayout = CameraLayout(CameraLayout::ZForward, CameraLayout::YUp);
-    Transform camTransform1 = Transform(Vector3D(), Vector3D(0.0f, 0.0f, -500.0f), Vector3D(1, 1, 1));
+    Transform camTransform1 = Transform(Vector3D(0.0f,0.0f,0.0f), Vector3D(0.0f, 0.0f, -500.0f), Vector3D(1, 1, 1));
+    uint8_t lastDmaBrightness = 0xFF;
 
     PixelGroup* camPixels1 = new PixelGroup(2048,P3HUB75);
     
@@ -107,6 +108,8 @@ public:
     TasESP32S3KitV1(uint8_t maxBrightness) : Controller(cameras, 1, maxBrightness, 0){}
 
     void Initialize() override{
+        lastDmaBrightness = 0xFF;
+
         if (display) {
         #ifdef VERBOSE_STARTUP
         display->println("初始化HUB75驱动...");
@@ -242,6 +245,28 @@ public:
         Serial.println("Init OK!");
     }
 
+    void ResetDisplayDriver() override {
+        Serial.println("[HUB75] Resetting driver after background downloads");
+
+        lastDmaBrightness = 0xFF;
+
+        if (dma_display) {
+            dma_display->clearScreen();
+            dma_display->flipDMABuffer();
+            dma_display->stopDMAoutput();
+        }
+
+#if PANEL_CHAIN > 1
+        delete virtualDisp;
+        virtualDisp = nullptr;
+#endif
+
+        delete dma_display;
+        dma_display = nullptr;
+
+        Initialize();
+    }
+
     void Display() override {
         if (!dma_display) return;
 #if PANEL_CHAIN > 1
@@ -252,12 +277,11 @@ public:
         // 0xFF sentinel: skip first frame (Initialize() already set DMA
         // brightness to 125; soft-start begins at 0 and must not override
         // the init value with black).
-        static uint8_t sLastBrightness = 0xFF;
-        if (brightness > 0 && brightness != sLastBrightness) {
+        if (brightness > 0 && brightness != lastDmaBrightness) {
             dma_display->setBrightness8(brightness);
-            sLastBrightness = brightness;
-        } else if (sLastBrightness == 0xFF) {
-            sLastBrightness = brightness;
+            lastDmaBrightness = brightness;
+        } else if (lastDmaBrightness == 0xFF) {
+            lastDmaBrightness = brightness;
         }
         
         ProtoRGBColor* colors = camPixels1->GetColors();

@@ -38,6 +38,9 @@ struct RemoteFileSyncOptions
     // every file (which wastes time and fragments internal DRAM).
     bool enableLatencyProbe = false;
     bool skipRemoteMd5 = false;
+    uint32_t connectTimeoutMs = 0;
+    uint32_t requestTimeoutMs = 0;
+    uint32_t idleTimeoutMs = 0;
     RemoteFileUiText ui;
 };
 

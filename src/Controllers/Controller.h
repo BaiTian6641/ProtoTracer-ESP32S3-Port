@@ -95,6 +95,7 @@ public:
 
     virtual void Initialize() = 0;
     virtual void Display() = 0;
+    virtual void ResetDisplayDriver() {}
 
     float GetRenderTime(){
         return renderTime;
