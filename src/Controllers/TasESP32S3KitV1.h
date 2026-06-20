@@ -5,6 +5,7 @@
 #include "../Flash/PixelGroups/P3HUB75.h"
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
+#include <ProtoGC.h>
 
 //HUB75
 #include <ESP32-VirtualMatrixPanel-I2S-DMA.h>
@@ -108,6 +109,20 @@ public:
     TasESP32S3KitV1(uint8_t maxBrightness) : Controller(cameras, 1, maxBrightness, 0){}
 
     void Initialize() override{
+        // Guard: if the DMA driver already exists, this is a re-init call.
+        // Tear down the old driver cleanly before creating a new one.
+        if (dma_display) {
+            Serial.println("[HUB75] Initialize called with existing driver — tearing down first");
+            dma_display->stopDMAoutput();
+            delay(2); // let GDMA hardware fully drain
+#if PANEL_CHAIN > 1
+            delete virtualDisp;
+            virtualDisp = nullptr;
+#endif
+            delete dma_display;
+            dma_display = nullptr;
+        }
+
         lastDmaBrightness = 0xFF;
 
         if (display) {
@@ -164,6 +179,7 @@ public:
             LogHub75Heap("begin failed", mxconfig.getPixelColorDepthBits());
         }
 
+        // Retry 1: lower colour depth (only triggers when retry depth < config depth)
         if (!dmaBeginOk && mxconfig.getPixelColorDepthBits() > HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS) {
             Serial.printf("[HUB75] DMA allocation failed at %u-bit depth, retrying at %u-bit depth\n",
                           mxconfig.getPixelColorDepthBits(), HUB75_PIXEL_COLOR_DEPTH_RETRY_BITS);
@@ -180,6 +196,24 @@ public:
             }
         }
 
+        // Retry 2: disable double-buffering to halve DMA descriptor memory pressure.
+        // This is often the difference between success and LoadProhibited crash
+        // when internal DRAM is heavily fragmented after WiFi/BLE/downloads.
+        if (!dmaBeginOk && mxconfig.double_buff) {
+            Serial.println("[HUB75] Retrying with double_buff=false to reduce DMA descriptor count");
+            delete dma_display;
+            dma_display = nullptr;
+            mxconfig.double_buff = false;
+            dma_display = new MatrixPanel_I2S_DMA(mxconfig);
+            LogHub75Heap("single-buf begin", mxconfig.getPixelColorDepthBits());
+            dmaBeginOk = dma_display && dma_display->begin();
+            if (dmaBeginOk) {
+                LogHub75Heap("single-buf OK", mxconfig.getPixelColorDepthBits());
+            } else {
+                LogHub75Heap("single-buf failed", mxconfig.getPixelColorDepthBits());
+            }
+        }
+
         if(!dmaBeginOk){
             if (display) {
             display->clearDisplay();
@@ -187,6 +221,9 @@ public:
             display->println("I2S 内存分配失败");
             }
             Serial.println("****** I2S memory allocation failed ***********");
+            // Clean up failed driver so Display() doesn't crash on the stale pointer.
+            delete dma_display;
+            dma_display = nullptr;
             return;
         }
         if (display) {
@@ -251,18 +288,25 @@ public:
         lastDmaBrightness = 0xFF;
 
         if (dma_display) {
-            dma_display->clearScreen();
-            dma_display->flipDMABuffer();
+            // ── Stop DMA FIRST — modifying descriptor chain (flipDMABuffer)
+            //     while GDMA is scanning out can corrupt descriptor pointers.
             dma_display->stopDMAoutput();
+            delay(2); // let GDMA hardware fully drain before freeing descriptors
+
+            // Now safe to clear buffers and tear down
+            dma_display->clearScreen();
+#if PANEL_CHAIN > 1
+            delete virtualDisp;
+            virtualDisp = nullptr;
+#endif
+            delete dma_display;
+            dma_display = nullptr;
         }
 
-#if PANEL_CHAIN > 1
-        delete virtualDisp;
-        virtualDisp = nullptr;
-#endif
-
-        delete dma_display;
-        dma_display = nullptr;
+        // Coalesce internal DRAM before re-allocating DMA descriptors.
+        // WiFi/BLE/downloads fragment the heap; this maximizes the contiguous
+        // block available for MALLOC_CAP_DMA allocations.
+        protogc::ProtoGC::collectFull("pre-hub75-reset");
 
         Initialize();
     }

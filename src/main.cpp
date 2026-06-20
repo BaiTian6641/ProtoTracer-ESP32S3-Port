@@ -88,7 +88,7 @@ M5GFX *display = nullptr;
 #endif
 
 #ifndef ANIM_TASK_STACK_BYTES
-#define ANIM_TASK_STACK_BYTES 6144
+#define ANIM_TASK_STACK_BYTES 8192
 #endif
 #endif
 
@@ -122,7 +122,7 @@ constexpr bool kVerboseStartup = false;
 #endif
 
 #ifndef PROTOTRACER_FW_VERSION
-#define PROTOTRACER_FW_VERSION "1.2.4"
+#define PROTOTRACER_FW_VERSION "1.2.6"
 #endif
 
 #ifndef PROTOTRACER_FW_MANIFEST
@@ -148,7 +148,7 @@ static volatile bool gBgDownloadsDone = false;
 static volatile bool gBgDownloadsOk = true;
 static bool gBgDisplayResetDone = false;
 static uint32_t gBgDownloadStartMs = 0;
-static constexpr uint32_t kBgDownloadTimeoutMs = 45000; // 45s safety timeout
+static constexpr uint32_t kBgDownloadTimeoutMs = 120000; // 120s safety timeout
 static constexpr UBaseType_t kBgTaskPriority = 0; // idle priority
 
 // Startup phase: lets the main loop defer WiFi teardown + BLE init
@@ -481,6 +481,15 @@ static void ProtoGcCriticalHandler(protogc::HeapGuard::Level, size_t freeBytes, 
 
 static void DoWifiTeardownAndBleInit()
 {
+  // Guard against double execution — the phase machine in loop() may call
+  // this after setup() already ran it for the non-fast (offline) path.
+  static bool sAlreadyDone = false;
+  if (sAlreadyDone) {
+    Serial.println("[INFO] WiFi teardown already done, skipping");
+    return;
+  }
+  sAlreadyDone = true;
+
   Serial.println("[INFO] Shutting down WiFi to free memory for BLE...");
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
@@ -722,6 +731,7 @@ void setup()
   }
 
   WiFi.mode(WIFI_AP_STA);
+  delay(200); // Let RF calibration settle before NetWizard AP start
 
   bool wifiConnected = ConnectWifiWithNetWizard(userConfig, server, 15000, display);
 
@@ -1075,45 +1085,20 @@ void setup()
   // On the fast path, WiFi stays up during early rendering frames while
   // the background task syncs assets.  The main loop tears down WiFi and
   // initialises BLE once the task completes (or times out).
+  //
+  // On the non-fast path (offline / sync-download), we still tear down
+  // WiFi and init BLE here, but the animation pipeline (semaphores +
+  // AnimationTask) is deferred to the loop() phase machine so it runs
+  // exactly once per boot regardless of startup path.
   if (gStartupPhase != StartupPhase::Downloading)
   {
     DoWifiTeardownAndBleInit();
-
     EnsureControllerInitialized();
-
-#if ANIM_RENDER_PIPELINE
-    {
-      Scene* scene = animation.GetScene();
-      if (scene) {
-        Object3D** objs = scene->GetObjects();
-        const unsigned int count = scene->GetObjectCount();
-        for (unsigned int i = 0; i < count; i++) {
-          if (objs[i]) objs[i]->EnableDoubleBuffer();
-        }
-      }
-    }
-    gAnimDoneSemaphore = xSemaphoreCreateBinary();
-    gRenderDoneSemaphore = xSemaphoreCreateBinary();
-    if (gAnimDoneSemaphore && gRenderDoneSemaphore) {
-      gAnimTaskStop = false;
-      if (xTaskCreatePinnedToCore(AnimationTask, "ProtoAnim", ANIM_TASK_STACK_BYTES,
-                                  nullptr, ANIM_TASK_PRIORITY, &gAnimTaskHandle,
-                                  ANIM_TASK_CORE) == pdPASS) {
-        gPipelineActive = true;
-        Serial.printf("[PIPELINE] Animation task started on core %d\n", ANIM_TASK_CORE);
-        vTaskDelay(1); // let the task reach its first semaphore block before we signal it
-      } else {
-        Serial.printf("[PIPELINE] Failed to create animation task; using single-core\n");
-        gPipelineActive = false;
-      }
-    } else {
-      gPipelineActive = false;
-    }
-#endif
+    // Pipeline (semaphores + AnimationTask) is created by loop() BleInit phase.
   }
   else
   {
-    // Fast path: controller already initialized, pipeline already set up.
+    // Fast path: controller already initialized, pipeline deferred to loop().
     // BLE init + final pipeline wiring deferred to loop() phase machine.
   }
 
@@ -1204,6 +1189,20 @@ void loop()
       gBgDownloadTask = nullptr;
     }
     gStartupPhase = StartupPhase::Running;
+    // ── One-time pipeline health diagnostic ──
+    {
+      const char* mode = gPipelineActive ? "DUAL-CORE" : "SINGLE-CORE";
+      Serial.printf("[PIPELINE] mode=%s core=%d taskStack=%u animTask=%p semA=%p semR=%p\n",
+                    mode,
+                    ANIM_TASK_CORE,
+                    ANIM_TASK_STACK_BYTES,
+                    static_cast<void*>(gAnimTaskHandle),
+                    static_cast<void*>(gAnimDoneSemaphore),
+                    static_cast<void*>(gRenderDoneSemaphore));
+      if (!gPipelineActive) {
+        Serial.println("[PIPELINE] WARNING: Running single-core! Check internal DRAM headroom.");
+      }
+    }
     // Quick HUD refresh after updates complete
     if (display) {
       display->clear();
@@ -1249,16 +1248,27 @@ void loop()
   float ratio = (float)(millis() % 5000) / 5000.0f;
   controller.SetBrightness(animation.GetBrightness());
 
-  // Run Menu/BLE/gesture update on core 1 before animation to avoid I2C
-  // contention with the animation task (which may run on core 0).
-  animation.MenuUpdate();
+  // ── Dual-core pipeline: overlap I2C/display with animation ──
+  // Core 1 kicks off the animation task on core 0, then does
+  // MenuUpdate (I2C display, gesture, BLE, NeoPixel) while core 0
+  // computes UpdateTime + PublishSceneVertices.  When both finish,
+  // core 1 proceeds to rasterization and HUB75 display.
+  //
+  // MenuUpdate touches only core 1 peripherals (I2C, BLE, NeoPixel);
+  // the animation task on core 0 does CPU-only work (morphs, materials,
+  // FFT, vertex transforms) — no peripheral contention.
+  // Shared scalar state (face expression, boop flags, hue) is read by
+  // the animation task and written by MenuUpdate; on ESP32-S3 aligned
+  // word accesses are hardware-atomic, so stale-read is the worst case.
 
 #if ANIM_RENDER_PIPELINE
   if (gPipelineActive) {
-    // Run animation on core 0 and publish a full geometry snapshot before render.
-    // Keeping the handoff serialized avoids races with material/effect state.
+    // Signal core 0 to begin animation computation
     gAnimRatio = ratio;
     xSemaphoreGive(gRenderDoneSemaphore);
+
+    // Core 1: do I2C/display/gesture work while core 0 runs animation
+    animation.MenuUpdate();
 
     // Wait for the animation task to finish this frame before rasterization.
     xSemaphoreTake(gAnimDoneSemaphore, portMAX_DELAY);
@@ -1266,6 +1276,8 @@ void loop()
 #endif
   {
     yield(); // Feed watchdog before animation update
+    animation.MenuUpdate();
+    yield();
     animation.UpdateTime(ratio);
     // Publish the completed frame to the render buffer so Camera reads
     // the animated geometry, matching the pipeline path's handoff.
@@ -1320,9 +1332,10 @@ void loop()
   // Sample every ~2 seconds to avoid serial bottleneck
   if (nowPrint - lastPrintMs >= 2000) {
     lastPrintMs = nowPrint;
-    Serial.printf("anim=%.2fms render=%.2fms intFree=%u largestBlk=%u psramFree=%u micFrames=%lu micDrops=%lu micStack=%lu\n",
+    Serial.printf("anim=%.2fms render=%.2fms pipe=%d intFree=%u largestBlk=%u psramFree=%u micFrames=%lu micDrops=%lu micStack=%lu\n",
         animation.GetAnimationTime() * 1000.0f,
         controller.GetRenderTime() * 1000.0f,
+        gPipelineActive ? 1 : 0,
         GetFreeInternalDRAM(),
         GetLargestFreeInternalBlock(),
         GetFreePSRAM(),
