@@ -214,7 +214,8 @@ AsyncWebServer server(80);
 
 // ── Runtime display type + gesture I2C bus ──
 enum class DisplayType : uint8_t { Unknown, GLASS2, GLASS, UnitLCD, UnitOLED };
-static DisplayType gDisplayType = DisplayType::Unknown;
+DisplayType gDisplayType = DisplayType::Unknown;
+bool gDisplayIsRelayMc = false; // true when display uses a relay MCU (M5UnitGLASS, UnitLCD)
 bool gColoredPreview = false; // true for UnitLCD color mode
 
 // Try init each display driver in priority order; returns true on first success.
@@ -247,7 +248,8 @@ static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
     {
       display = d;
       gDisplayType = DisplayType::GLASS;
-      Serial.println("[DISP] Detected M5UnitGLASS (single I2C)");
+      gDisplayIsRelayMc = true; // M5UnitGLASS has a relay MCU that adds I2C latency
+      Serial.println("[DISP] Detected M5UnitGLASS (single I2C) — relay MCU, throttling preview");
       return true;
     }
     delete d;
@@ -263,8 +265,9 @@ static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
     {
       display = d;
       gDisplayType = DisplayType::UnitLCD;
+      gDisplayIsRelayMc = true; // UnitLCD also uses a relay MCU over I2C
       gColoredPreview = true; // color-capable LCD
-      Serial.println("[DISP] Detected M5UnitLCD (color mode)");
+      Serial.println("[DISP] Detected M5UnitLCD (color mode) — relay MCU, throttling preview");
       return true;
     }
     delete d;

@@ -45,6 +45,7 @@
 
 extern M5GFX *display;
 extern bool gColoredPreview;
+extern bool gDisplayIsRelayMc; // set by main.cpp when display uses a relay MCU (M5UnitGLASS, UnitLCD)
 extern uint16_t gHudBuffer[64 * 32];
 extern ProtoRGBColor* volatile gHudColors;
 
@@ -60,6 +61,20 @@ extern ProtoRGBColor* volatile gHudColors;
 #include "../Network/UserConfigManager.h"
 
 #define DEMO_MODE 0
+
+// ── Fan PWM ──
+#ifndef FAN_PIN
+#define FAN_PIN 13
+#endif
+#ifndef FAN_PWM_FREQ
+#define FAN_PWM_FREQ 25000  // 25 kHz, standard PC fan PWM
+#endif
+#ifndef FAN_PWM_CHANNEL
+#define FAN_PWM_CHANNEL 0
+#endif
+#ifndef FAN_PWM_RESOLUTION
+#define FAN_PWM_RESOLUTION 8  // 8-bit = 0-255 duty
+#endif
 
 // 73cf57c7-6797-46e8-8202-dc5e7f956b57 Bluetooth UUID
 
@@ -88,6 +103,7 @@ static bool bleOldDeviceConnected = false;
 static String blePendingJsonPayload;
 static bool bleJsonPayloadPending = false;
 static String bleRxJsonBuffer;
+static uint8_t fanSpeed = 0; // fan PWM duty (0-255), set via BLE JSON control.set/patch
 
 // Cached manifest built once during init — avoids file I/O + JSON parsing in BLE callbacks.
 static String bleCachedManifestJson;
@@ -455,6 +471,10 @@ namespace
         {
             response["hue_shift"] = doc["hue_shift"].as<float>();
         }
+        if (!doc["fan_speed"].isNull())
+        {
+            response["fan_speed"] = doc["fan_speed"].as<int>();
+        }
 
         String payload;
         payload.reserve(measureJson(response) + 1);
@@ -691,6 +711,12 @@ namespace
                 Serial.printf("BLE JSON control field hue_shift=%.2f encoded=%d %s raw=0x%08lx\n", hue, encoded, queued ? "queued" : "failed", static_cast<unsigned long>(lastCommand));
                 handledControl = queued || handledControl;
             }
+            if (!doc["fan_speed"].isNull())
+            {
+                fanSpeed = static_cast<uint8_t>(constrain(doc["fan_speed"].as<int>(), 0, 255));
+                Serial.printf("BLE JSON control field fan_speed=%u\n", static_cast<unsigned>(fanSpeed));
+                handledControl = true;
+            }
 
             Serial.printf("BLE JSON control op %s: %s raw=0x%08lx\n", handledControl ? "queued" : "ignored", op.c_str(), static_cast<unsigned long>(lastCommand));
             QueueBleJsonPayload(BuildRemoteControllerStateJson(doc));
@@ -878,14 +904,6 @@ private:
 
     static float rotation;
     static float showMenuRatio;
-
-    static float GyroX;
-    static float GyroY;
-    static float GyroZ;
-
-    static float AccelerometerX;
-    static float AccelerometerY;
-    static float AccelerometerZ;
 
     static uint8_t faceState;
     static uint8_t bright;
@@ -1221,6 +1239,12 @@ public:
         // Init ESPNow with a fallback logic
         Serial.println("IIC OK.");
         pinMode(21,OUTPUT);
+
+        // ── Fan PWM init ──
+        ledcAttach(FAN_PIN, FAN_PWM_FREQ, FAN_PWM_RESOLUTION);
+        ledcWrite(FAN_PIN, 0);  // fan off at boot
+        Serial.printf("Fan PWM ready on GPIO %d\n", FAN_PIN);
+
         #ifndef VERBOSE_STARTUP 
         display->progressBar(14,50,100,8,22);
         #endif
@@ -1375,10 +1399,20 @@ public:
 
         FlushQueuedBleJsonPayload();
 
+        // ── Display throttle for relay-MCU displays (M5UnitGLASS, UnitLCD) ──
+        // These displays use a command-based I2C protocol with a relay
+        // microcontroller that adds 5-16ms of busy-wait per frame.
+        // Throttling to 5 Hz recovers frame rate on the main HUB75 output.
+        static uint32_t sLastDisplayUpdateMs = 0;
+        const uint32_t nowMs = millis();
+        const bool kDoDisplayUpdate = !gDisplayIsRelayMc ||
+            (nowMs - sLastDisplayUpdateMs >= 200);
+
         // ── HUD preview: build RGB565 buffer BEFORE the I2C transaction ──
         // Keeps the I2C bus held only for the actual push, preventing
         // framerate drops and HUB75 DMA starvation.
-        if (gHudColors) {
+        // Skip buffer conversion on throttled frames for relay-MCU displays.
+        if (kDoDisplayUpdate && gHudColors) {
             uint16_t *buf = gHudBuffer;
             const ProtoRGBColor *colors = gHudColors;
             for (uint16_t y = 0; y < 32; y++) {
@@ -1397,12 +1431,8 @@ public:
         }
 
         //free_mem = (int)((float)((float)ESP.getFreeHeap() / (float)ESP.getHeapSize())*100.0f);
-        display->startWrite();
-        // display->clearDisplay();
-        // display->drawString("Current: ", 0, 12);
-        // display->drawString("Brightness: ", 0, 24);
-        // display->drawString("Lip Sync: ", 0, 36);
 
+        // ── Legacy command processing (always — sets facialexpression, bright, etc.) ──
         uint32_t queuedCommand = 0;
         bool consumedQueuedCommand = false;
         while (DequeueLegacyCommand(&queuedCommand))
@@ -1424,18 +1454,11 @@ public:
         }
 
         /*
-        data_type 0 -> facialexpression data
+        data_type 0 -> facialexpression
         data_type 1 -> brightness
-        data_type 2 -> Gyro X with 6 radix
-        data_type 3 -> Gyro Y with 6 radix
-        data_type 4 -> Gyro Z with 6 radix
-        data_type 5 -> Accelerometer X with 6 radix
-        data_type 6 -> Accelerometer Y with 6 radix
-        data_type 7 -> Accelerometer Z with 6 radix
-        data_type 8 -> Reverse
-        data_type 9 -> Device's Battery status
-        data_type 10-15 -> Resistance bending sensor value
-        data_type 16 voiceDetection Enable/Disable
+        data_type 2 -> voiceDetection enable/disable
+        data_type 3 -> display mode
+        data_type 4 -> hue shift
         */
 
         if (data_type == 0)
@@ -1493,30 +1516,6 @@ public:
             nowpixels.setPixelColor(0, nowpixels.Color(tempvalue, tempvalue, tempvalue));
             // display->drawNumber(tempvalue, 72, 24);
         }
-        else if (data_type == 16)
-        {
-            GyroX = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
-        }
-        else if (data_type == 8)
-        {
-            GyroY = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
-        }
-        //else if (data_type == 4)
-        //{
-        //    GyroZ = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
-        //}
-        else if (data_type == 5)
-        {
-            AccelerometerX = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
-        }
-        else if (data_type == 6)
-        {
-            AccelerometerY = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
-        }
-        else if (data_type == 7)
-        {
-            AccelerometerZ = (uint32_t)(raw_data & 0x00FFFFFF) / 1000000;
-        }
         else if (data_type == 2)
         {
             // display->drawString("Set Lipsync", 0, 0);
@@ -1555,45 +1554,56 @@ public:
             digitalWrite(21,LOW);
         }
 
-        // display->endWrite();
-        //display->qrcode(BLE_RX2_UUID, 70, 2, 29, 3);
-        // Scale text for UnitLCD: 2× larger with doubled coordinates
-        const int16_t tsize = gColoredPreview ? 2 : 1;
-        display->drawString(TXT("Exp Number:", "表情编号："), 5 * tsize, 37 * tsize);
-        display->drawNumber(facialexpression, 70 * tsize, 37 * tsize);
+        // ── Fan PWM: apply stored speed every frame ──
+        ledcWrite(FAN_PIN, fanSpeed);
 
-        display->drawString(TXT("Bright:", "亮度："), 5 * tsize, 50 * tsize);
-        display->drawNumber(bright, TXT(55, 40) * tsize, 50 * tsize);
+        // ── Display drawing: throttled for relay-MCU displays ──
+        // On M5UnitGLASS / UnitLCD the I2C relay MCU adds 5-16ms per
+        // display() call; skipping most frames recovers HUB75 frame rate.
+        if (kDoDisplayUpdate) {
+            display->startWrite();
+            sLastDisplayUpdateMs = nowMs;
 
-        if(WiFi.isConnected()){
-            display->pushImageDMA(100 * tsize, 38 * tsize, 24, 24, epd_bitmap_cloud);
-        }else{
-            display->fillRect(100 * tsize, 38 * tsize, 24, 24, TFT_BLACK);
+            // display->endWrite();
+            //display->qrcode(BLE_RX2_UUID, 70, 2, 29, 3);
+            // Scale text for UnitLCD: 2× larger with doubled coordinates
+            const int16_t tsize = gColoredPreview ? 2 : 1;
+            display->drawString(TXT("Exp Number:", "表情编号："), 5 * tsize, 37 * tsize);
+            display->drawNumber(facialexpression, 70 * tsize, 37 * tsize);
+
+            display->drawString(TXT("Bright:", "亮度："), 5 * tsize, 50 * tsize);
+            display->drawNumber(bright, TXT(55, 40) * tsize, 50 * tsize);
+
+            if(WiFi.isConnected()){
+                display->pushImageDMA(100 * tsize, 38 * tsize, 24, 24, epd_bitmap_cloud);
+            }else{
+                display->fillRect(100 * tsize, 38 * tsize, 24, 24, TFT_BLACK);
+            }
+
+            //display->drawNumber(free_mem, 80, 37);
+
+            if(voiceenable == 1){
+                display->pushImageDMA(66 * tsize, 0, 24, 24, epd_bitmap_microphone);
+            }else{
+                display->pushImageDMA(66 * tsize, 0, 24, 24, epd_bitmap_microphone_off);
+            }
+            if(bleDeviceConnected){
+                display->pushImageDMA(90 * tsize, 0, 24, 24, epd_bitmap_bluetooth);
+            }else{
+                display->fillRect(90 * tsize, 0, 24, 24, TFT_BLACK);
+            }
+
+            // ── HUD preview: push pre-built buffer (conversion done above) ──
+            // The RGB565 buffer was already built before startWrite(), so the
+            // I2C transaction is short — just drawRect + pushImage.
+            if (gHudColors) {
+                display->drawRect(0, 0, 66, 34, TFT_WHITE);
+                display->pushImage(1, 1, 64, 32, gHudBuffer);
+            }
+
+            display->display();
+            display->endWrite();
         }
-
-        //display->drawNumber(free_mem, 80, 37);
-
-        if(voiceenable == 1){
-            display->pushImageDMA(66 * tsize, 0, 24, 24, epd_bitmap_microphone);
-        }else{
-            display->pushImageDMA(66 * tsize, 0, 24, 24, epd_bitmap_microphone_off);
-        }
-        if(bleDeviceConnected){
-            display->pushImageDMA(90 * tsize, 0, 24, 24, epd_bitmap_bluetooth);
-        }else{
-            display->fillRect(90 * tsize, 0, 24, 24, TFT_BLACK);
-        }
-
-        // ── HUD preview: push pre-built buffer (conversion done above) ──
-        // The RGB565 buffer was already built before startWrite(), so the
-        // I2C transaction is short — just drawRect + pushImage.
-        if (gHudColors) {
-            display->drawRect(0, 0, 66, 34, TFT_WHITE);
-            display->pushImage(1, 1, 64, 32, gHudBuffer);
-        }
-
-        display->display();
-        display->endWrite();
         nowpixels.show();
     }
 
@@ -1634,6 +1644,11 @@ public:
     static float GetHueShift()
     {
         return tempHue;
+    }
+
+    static uint8_t GetFanSpeed()
+    {
+        return fanSpeed;
     }
 
     uint8_t displayMode()
@@ -1703,12 +1718,6 @@ uint8_t Menu::tempvalue = 0;
 uint8_t Menu::data_type = 0;
 uint8_t Menu::onetime = 0;
 uint8_t Menu::dmode = 1;
-float Menu::GyroX = 0;
-float Menu::GyroY = 0;
-float Menu::GyroZ = 0;
-float Menu::AccelerometerX = 0;
-float Menu::AccelerometerY = 0;
-float Menu::AccelerometerZ = 0;
 esp_timer_handle_t Menu::demoTimer = nullptr;
 
 uint8_t Menu::proximity;
