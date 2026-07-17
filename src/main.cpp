@@ -122,7 +122,7 @@ constexpr bool kVerboseStartup = false;
 #endif
 
 #ifndef PROTOTRACER_FW_VERSION
-#define PROTOTRACER_FW_VERSION "1.2.6"
+#define PROTOTRACER_FW_VERSION "1.2.10"
 #endif
 
 #ifndef PROTOTRACER_FW_MANIFEST
@@ -179,6 +179,18 @@ static String gBgWifiPass;
 static void BackgroundDownloadTask(void *)
 {
     Serial.println("[BG] Download task started");
+
+    // Guard: if WiFi dropped between launch and execution, abort early
+    // instead of wasting time on doomed HTTP operations.
+    if (WiFi.status() != WL_CONNECTED || WiFi.localIP() == IPAddress((uint32_t)0))
+    {
+        Serial.println("[BG] WiFi unavailable — aborting background download");
+        gBgDownloadsDone = true;
+        gBgDownloadsOk = false;
+        vTaskDelete(nullptr);
+        return;
+    }
+
     // User config
     {
         RemoteFileSource sources[2];
@@ -856,6 +868,34 @@ void setup()
       fallbackAccept = gitee_accept_header;
       primaryAuthScheme = "token ";
       fallbackAuthScheme = "Bearer ";
+    }
+    // ── Verify internet connectivity ──
+    // WiFi connected ≠ internet available. If the selected primary host is
+    // unreachable, fall back to offline mode instead of timing out on every
+    // HTTP operation during subsequent downloads.
+    {
+      const char *probeHost = nullptr;
+      if (primaryName && strcmp(primaryName, "GitHub") == 0)
+        probeHost = "api.github.com";
+      else
+        probeHost = "gitee.com";
+
+      Serial.printf("[INFO] Verifying internet via %s (%s)...\n", primaryName, probeHost);
+      WiFiClient testClient;
+      testClient.setTimeout(3);
+      if (!testClient.connect(probeHost, 443))
+      {
+        Serial.printf("[WARN] %s unreachable — no internet, switching to offline mode\n", probeHost);
+        networkAvailable = false;
+        // Clear stale cache so next boot re-probes instead of trusting an
+        // unreachable primary.
+        LittleFS.remove(cachedSourcePath);
+      }
+      else
+      {
+        testClient.stop();
+        Serial.printf("[INFO] %s reachable — internet OK\n", probeHost);
+      }
     }
   }
 

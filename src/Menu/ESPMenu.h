@@ -64,7 +64,7 @@ extern ProtoRGBColor* volatile gHudColors;
 
 // ── Fan PWM ──
 #ifndef FAN_PIN
-#define FAN_PIN 13
+#define FAN_PIN -1
 #endif
 #ifndef FAN_PWM_FREQ
 #define FAN_PWM_FREQ 25000  // 25 kHz, standard PC fan PWM
@@ -942,29 +942,53 @@ private:
     static bool isProx;
     static bool mouth;
 
-    static void UpdateBoopSensorState()
+    // Cached proximity reading — written by Menu::Update() on core 1,
+    // read by UpdateBoopSensorState() on core 0.  This avoids an I2C
+    // race when the display (GLASS2) and PAJ7620 share the same Wire bus.
+    static volatile uint8_t sCachedProximity;
+    static volatile bool sProximityFresh;
+
+    // Perform the I2C read of the PAJ7620 proximity sensor.
+    // MUST only be called from core 1 (Menu::Update) to avoid I2C bus
+    // contention with the display driver in dual-core pipeline mode.
+    static void ReadProximityFromSensor()
     {
 #ifdef NEW_GESTURE
-        // Read with I2C timeout protection — if the bus is hung (PAJ7620
-        // disconnected or SDA stuck), getProximityDistance() returns 0 after
-        // the 50ms Wire timeout, avoiding an indefinite block that would
-        // deadlock the animation pipeline semaphore.
         int rawProx = PAJ7620_sensor.getProximityDistance();
         if (rawProx < 0 || rawProx > 255)
         {
-            // I2C read failed (timeout or bus error) — keep last valid reading.
             static uint32_t sLastI2cErrorMs = 0;
             if (millis() - sLastI2cErrorMs > 5000)
             {
                 Serial.printf("[I2C] PAJ7620 read error: raw=%d\n", rawProx);
                 sLastI2cErrorMs = millis();
             }
+            sProximityFresh = false;
             return;
         }
-        proximity = static_cast<uint8_t>(rawProx);
+        sCachedProximity = static_cast<uint8_t>(rawProx);
+        sProximityFresh = true;
 #else
-        apds.readProximity(proximity);
+        {
+            uint8_t rawProx = 0;
+            apds.readProximity(rawProx);
+            sCachedProximity = rawProx;
+            sProximityFresh = true;
+        }
 #endif
+    }
+
+    static void UpdateBoopSensorState()
+    {
+        // Use cached proximity value (written by Menu::Update on core 1)
+        // instead of reading I2C directly.  This eliminates the I2C bus
+        // race between the animation task (core 0) and the main loop
+        // (core 1) when the display and PAJ7620 share the same Wire bus.
+        if (!sProximityFresh)
+        {
+            return;  // no fresh reading yet — wait for next frame
+        }
+        proximity = sCachedProximity;
 
         // Keep baseline stable while booped so proximity deltas do not self-cancel.
         if (timeStep.IsReady() && !boopCurrentHigh)
@@ -1241,9 +1265,9 @@ public:
         pinMode(21,OUTPUT);
 
         // ── Fan PWM init ──
-        ledcAttach(FAN_PIN, FAN_PWM_FREQ, FAN_PWM_RESOLUTION);
-        ledcWrite(FAN_PIN, 0);  // fan off at boot
-        Serial.printf("Fan PWM ready on GPIO %d\n", FAN_PIN);
+        //ledcAttach(FAN_PIN, FAN_PWM_FREQ, FAN_PWM_RESOLUTION);
+        //ledcWrite(FAN_PIN, 0);  // fan off at boot
+        //Serial.printf("Fan PWM ready on GPIO %d\n", FAN_PIN);
 
         #ifndef VERBOSE_STARTUP 
         display->progressBar(14,50,100,8,22);
@@ -1269,19 +1293,36 @@ public:
         display->progressBar(14,50,100,8,35);
         #endif
 
-        delay(200);
+        delay(500);  // let display I2C bus settle before probing PAJ7620
         display->display();
         // ── Gesture sensor init ──
         // Wire is already initialised by M5UnitGLASS2(41,42).
         // The local lib/RevEng_PAJ7620 has been patched to NOT call
         // wireHandle->begin() internally, avoiding double I2C peripheral init.
-        if(
+        // Retry up to 3 times — the PAJ7620 may need extra settling time when
+        // sharing the I2C bus with a display that was just refreshed.
+        {
+            bool sensorOk = false;
+            for (int retry = 0; retry < 3 && !sensorOk; ++retry)
+            {
+                if (retry > 0)
+                {
+                    Serial.printf("[I2C] PAJ7620 init retry %d/2 after delay...\n", retry);
+                    delay(400);
+                }
+                if (
             #ifdef NEW_GESTURE
-            !PAJ7620_sensor.begin(gGestureWire)
-        #else
-            !apds.init()
-        #endif
-        )
+                    PAJ7620_sensor.begin(gGestureWire)
+            #else
+                    apds.init()
+            #endif
+                )
+                {
+                    sensorOk = true;
+                }
+            }
+
+            if (!sensorOk)
         {
             #ifdef VERBOSE_STARTUP
             display->println(TXT("Failed to initialize gesture sensor", "手势传感器驱动初始化失败"));
@@ -1302,6 +1343,7 @@ public:
             Serial.println("Device initialized!");
             didBegin = true;
         }
+        } // end sensor init retry scope
         
         #ifndef NEW_GESTURE
         if(apds.setProximityGain(PGAIN_2X)){
@@ -1313,11 +1355,14 @@ public:
         }
         #endif
 
-        #ifdef NEW_GESTURE
-        PAJ7620_sensor.setProximityMode();
-        #else
-        apds.enableProximitySensor(false);
-        #endif
+        if (didBegin)
+        {
+#ifdef NEW_GESTURE
+            PAJ7620_sensor.setProximityMode();
+#else
+            apds.enableProximitySensor(false);
+#endif
+        }
 
         #ifndef VERBOSE_STARTUP 
         display->progressBar(14,50,100,8,45);
@@ -1355,6 +1400,15 @@ public:
 
     static void Update()
     {
+        // ── Read PAJ7620 proximity on core 1 ──
+        // The animation task on core 0 calls UpdateBoopSensorState() which
+        // reads the cached value set here.  This avoids an I2C race when the
+        // display (GLASS2) and PAJ7620 share the same Wire bus.
+        if (didBegin)
+        {
+            ReadProximityFromSensor();
+        }
+
         if (bleServer != nullptr)
         {
             if (!bleDeviceConnected && bleOldDeviceConnected)
@@ -1555,7 +1609,7 @@ public:
         }
 
         // ── Fan PWM: apply stored speed every frame ──
-        ledcWrite(FAN_PIN, fanSpeed);
+        //ledcWrite(FAN_PIN, fanSpeed);
 
         // ── Display drawing: throttled for relay-MCU displays ──
         // On M5UnitGLASS / UnitLCD the I2C relay MCU adds 5-16ms per
@@ -1737,3 +1791,5 @@ bool Menu::isBright = false;
 bool Menu::isProx = false;
 bool Menu::mouth = false;
 float Menu::tempHue = 0.0;
+volatile uint8_t Menu::sCachedProximity = 0;
+volatile bool Menu::sProximityFresh = false;
