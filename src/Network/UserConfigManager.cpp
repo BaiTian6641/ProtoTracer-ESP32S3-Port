@@ -7,6 +7,7 @@
 #include <NetWizard.h>
 #include <ProtoGC.h>
 #include <WiFi.h>
+#include <esp_arduino_version.h>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
 
@@ -52,7 +53,8 @@ namespace
     String CurrentPortalIpString()
     {
         IPAddress portalIp((uint32_t)0);
-#if defined(ESP32)
+        // WiFiClass::AP exists only on Arduino-ESP32 3.x; on 2.x fall through to softAPIP().
+#if defined(ESP32) && defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
         if (WiFi.AP.hasIP())
         {
             portalIp = WiFi.AP.localIP();

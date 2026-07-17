@@ -382,7 +382,9 @@ namespace
         }
 
         const size_t chunkLength = std::min(kBleJsonChunkBytes, sBleNotifyPayload.length() - sBleNotifyOffset);
-        bleTxCharacteristic->setValue(reinterpret_cast<const uint8_t *>(sBleNotifyPayload.c_str() + sBleNotifyOffset), chunkLength);
+        // Arduino-ESP32 2.x BLE setValue() takes a non-const uint8_t* (the data is
+        // copied internally); 3.x adds a const overload. const_cast builds on both.
+        bleTxCharacteristic->setValue(const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(sBleNotifyPayload.c_str() + sBleNotifyOffset)), chunkLength);
         bleTxCharacteristic->notify();
         sBleNotifyOffset += chunkLength;
         // No delay — caller (Menu::Update) returns after one chunk, next chunk on next loop iteration
