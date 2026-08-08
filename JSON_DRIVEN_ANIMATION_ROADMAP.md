@@ -266,6 +266,7 @@ Current expression keys:
 - `blink`
 - `show_mouth`
 - `eye_shape`
+- `brightness` (optional per-animation brightness override, 0-255; omit to follow the menu/user config default)
 - `scene_effect`
 - `interpolation`
 - `anim_parameter`

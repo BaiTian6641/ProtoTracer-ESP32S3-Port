@@ -91,6 +91,11 @@ SparkFun_APDS9960 apds = SparkFun_APDS9960();
 extern std::string user_name;
 extern UserConfig userConfig;
 extern TwoWire *gGestureWire;  // set by main.cpp after display auto-detection
+extern void GestureBusRecovery();  // defined in main.cpp — hard reset of the gesture I2C bus
+
+#ifndef BOOP_DEBUG_LOG
+#define BOOP_DEBUG_LOG 0
+#endif
 
 const char *BLE_SERIAL2_SERVICE_UUID = "73cf57c7-6797-46e8-8202-dc5e7f956b57";
 extern std::string BLE_RX2_UUID;
@@ -953,19 +958,42 @@ private:
     // contention with the display driver in dual-core pipeline mode.
     static void ReadProximityFromSensor()
     {
+        sProximityFresh = false;
 #ifdef NEW_GESTURE
+        static uint32_t sLastI2cErrorMs = 0;
+        static uint32_t sLastReinitMs = 0;
+        static uint8_t sConsecutiveErrors = 0;
+
         int rawProx = PAJ7620_sensor.getProximityDistance();
         if (rawProx < 0 || rawProx > 255)
         {
-            static uint32_t sLastI2cErrorMs = 0;
-            if (millis() - sLastI2cErrorMs > 5000)
+            const uint32_t nowMs = millis();
+            if (nowMs - sLastI2cErrorMs > 5000)
             {
                 Serial.printf("[I2C] PAJ7620 read error: raw=%d\n", rawProx);
-                sLastI2cErrorMs = millis();
+                sLastI2cErrorMs = nowMs;
             }
-            sProximityFresh = false;
+            // Bus recovery: a runtime fault (clock-stretch wedge, or sensor
+            // brown-out when the proximity IR LED fires) can leave the
+            // PAJ7620 needing re-init even though begin() succeeded at boot.
+            // After sustained failures, re-run begin()+setProximityMode()
+            // with a 2s backoff.  begin() only rewrites sensor registers —
+            // it does not re-init the bus — so this is safe mid-run.
+            if (++sConsecutiveErrors >= 30 && (nowMs - sLastReinitMs > 2000))
+            {
+                sLastReinitMs = nowMs;
+                sConsecutiveErrors = 0;
+                Serial.println("[I2C] PAJ7620 re-init after sustained read errors");
+                GestureBusRecovery(); // hard-reset the bus driver before re-init
+                if (PAJ7620_sensor.begin(gGestureWire))
+                {
+                    PAJ7620_sensor.setProximityMode();
+                    Serial.println("[I2C] PAJ7620 re-init OK");
+                }
+            }
             return;
         }
+        sConsecutiveErrors = 0;
         sCachedProximity = static_cast<uint8_t>(rawProx);
         sProximityFresh = true;
 #else
@@ -986,6 +1014,14 @@ private:
         // (core 1) when the display and PAJ7620 share the same Wire bus.
         if (!sProximityFresh)
         {
+#if BOOP_DEBUG_LOG
+            static uint32_t sLastStaleLogMs = 0;
+            if (millis() - sLastStaleLogMs > 5000)
+            {
+                sLastStaleLogMs = millis();
+                Serial.println("[BOOP] no fresh proximity reading");
+            }
+#endif
             return;  // no fresh reading yet — wait for next frame
         }
         proximity = sCachedProximity;
@@ -1007,6 +1043,20 @@ private:
         const float offThreshold = minimum + releaseMargin;
         const uint32_t now = millis();
 
+#if BOOP_DEBUG_LOG
+        // 1 Hz decision-state line: shows whether the sensor value moves at
+        // all, and whether it can cross the trigger threshold.
+        static uint32_t sLastBoopDebugMs = 0;
+        if (now - sLastBoopDebugMs >= 1000)
+        {
+            sLastBoopDebugMs = now;
+            Serial.printf("[BOOP] prox=%u base=%.1f on=%.1f off=%.1f high=%d\n",
+                          static_cast<unsigned>(proximity),
+                          minimum, onThreshold, offThreshold,
+                          boopCurrentHigh ? 1 : 0);
+        }
+#endif
+
         if (!boopCurrentHigh)
         {
             if (proximity > onThreshold && (now - boopLastPulseMs) >= boopRearmMs)
@@ -1014,6 +1064,10 @@ private:
                 boopCurrentHigh = true;
                 boopPulsePending = true;
                 boopLastPulseMs = now;
+#if BOOP_DEBUG_LOG
+                Serial.printf("[BOOP] pulse! prox=%u on=%.1f\n",
+                              static_cast<unsigned>(proximity), onThreshold);
+#endif
             }
         }
         else if (proximity < offThreshold)
@@ -1235,6 +1289,11 @@ public:
         Menu::threshold = threshold;
     }
 
+    static void SetBrightness(uint8_t bright)
+    {
+        Menu::bright = bright;
+    }
+
     void Initialize(uint8_t faceCount, uint8_t threshold)
     {
         #ifdef VERBOSE_STARTUP
@@ -1296,7 +1355,9 @@ public:
         delay(500);  // let display I2C bus settle before probing PAJ7620
         display->display();
         // ── Gesture sensor init ──
-        // Wire is already initialised by M5UnitGLASS2(41,42).
+        // The gesture bus (Wire shared with GLASS2, or Wire1) is initialised
+        // explicitly by main.cpp before this runs — current M5GFX does NOT
+        // begin Arduino Wire for the display.
         // The local lib/RevEng_PAJ7620 has been patched to NOT call
         // wireHandle->begin() internally, avoiding double I2C peripheral init.
         // Retry up to 3 times — the PAJ7620 may need extra settling time when
@@ -1359,6 +1420,10 @@ public:
         {
 #ifdef NEW_GESTURE
             PAJ7620_sensor.setProximityMode();
+#if BOOP_DEBUG_LOG
+            delay(100); // let the proximity engine produce a first sample
+            Serial.printf("[BOOP] initial prox read=%d\n", PAJ7620_sensor.getProximityDistance());
+#endif
 #else
             apds.enableProximitySensor(false);
 #endif

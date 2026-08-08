@@ -441,6 +441,8 @@ namespace
         cfg.wifi_ssid = "";
         cfg.wifi_password = "";
         cfg.user_animation = "";
+        cfg.user_brightness = 105;
+        cfg.hub75_color_order = "RGB";
         return cfg;
     }
 } // namespace
@@ -477,7 +479,7 @@ bool SaveUserConfig(const UserConfig &config)
         return false;
     }
 
-    BasicJsonDocument<protogc::ProtoJsonPsramAllocator> doc(640);
+    BasicJsonDocument<protogc::ProtoJsonPsramAllocator> doc(768);
     doc["device_id"] = config.device_id;
     doc["username"] = config.username;
     doc["user_r"] = config.user_r;
@@ -490,6 +492,8 @@ bool SaveUserConfig(const UserConfig &config)
     doc["wifi_ssid"] = config.wifi_ssid;
     doc["wifi_password"] = config.wifi_password;
     doc["user_animation"] = config.user_animation;
+    doc["user_brightness"] = config.user_brightness;
+    doc["hub75_color_order"] = config.hub75_color_order;
 
     File f = LittleFS.open(kUserConfigPath, "w");
     if (!f)
@@ -521,7 +525,7 @@ bool EnsureUserConfig(UserConfig &config)
         return SaveUserConfig(config);
     }
 
-    BasicJsonDocument<protogc::ProtoJsonPsramAllocator> doc(640);
+    BasicJsonDocument<protogc::ProtoJsonPsramAllocator> doc(768);
     DeserializationError err = deserializeJson(doc, f);
     f.close();
     if (err)
@@ -542,6 +546,8 @@ bool EnsureUserConfig(UserConfig &config)
     config.wifi_ssid = doc["wifi_ssid"] | String("");
     config.wifi_password = doc["wifi_password"] | String("");
     config.user_animation = doc["user_animation"] | String("");
+    config.user_brightness = ClampByte(doc["user_brightness"] | 105);
+    config.hub75_color_order = doc["hub75_color_order"] | String("RGB");
 
     // Persist back if device_id was missing.
     if (!LittleFS.exists(kUserConfigPath) || config.device_id.isEmpty())

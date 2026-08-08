@@ -96,6 +96,7 @@
         },
         "Default":{
             "reset": true,
+            "brightness": 105,
             "anim_parameter":{
                 "EyeNY": 0.3
             }

@@ -79,6 +79,40 @@ MatrixPanel_I2S_DMA *dma_display = nullptr;
 // placeholder for the virtual display object
 VirtualMatrixPanel  *virtualDisp = nullptr;
 
+// ── HUB75 color channel order compensation ──
+// Sourced from user config (hub75_color_order). During Initialize() the panel
+// test drives R, then G, then B; the string records the color sequence actually
+// seen on the panel. "RGB" (default) = wiring correct, no swap. Any other R/G/B
+// permutation (e.g. "BGR") remaps the pin assignments so the panel's R input is
+// always driven by logical Red, G by Green, B by Blue.
+String gHub75ColorOrder = "RGB";
+
+// Remap one logical R/G/B pin triplet from the observed test sequence:
+// observed[i] is the color the panel showed while the firmware drove channel
+// "RGB"[i], so the pin of channel i physically reaches panel input observed[i].
+static void ApplyHub75ColorOrder(const String &observed, int8_t &r, int8_t &g, int8_t &b)
+{
+    if (observed.length() < 3) return;
+    String seq = observed;
+    seq.toUpperCase();
+    const int8_t pins[3] = {r, g, b};
+    int8_t mapped[3] = {r, g, b};
+    for (uint8_t logical = 0; logical < 3; ++logical)
+    {
+        const char want = "RGB"[logical];
+        int found = -1;
+        for (uint8_t i = 0; i < 3; ++i)
+        {
+            if (seq.charAt(i) == want) { found = static_cast<int>(i); break; }
+        }
+        if (found < 0) return; // not an R/G/B permutation — keep current pins
+        mapped[logical] = pins[found];
+    }
+    r = mapped[0];
+    g = mapped[1];
+    b = mapped[2];
+}
+
 class TasESP32S3KitV1 : public Controller {
 private:
     CameraLayout cameraLayout = CameraLayout(CameraLayout::ZForward, CameraLayout::YUp);
@@ -139,12 +173,24 @@ public:
                 PANEL_CHAIN    // chain length
         );
 
-        mxconfig.gpio.r1 = R1_PIN;
-        mxconfig.gpio.g1 = G1_PIN;
-        mxconfig.gpio.b1 = B1_PIN;
-        mxconfig.gpio.r2 = R2_PIN;
-        mxconfig.gpio.g2 = G2_PIN;
-        mxconfig.gpio.b2 = B2_PIN;
+        // Apply color channel order compensation when the observed boot test
+        // sequence differs from "RGB" (e.g. a panel wired BGR).
+        int8_t r1Pin = R1_PIN, g1Pin = G1_PIN, b1Pin = B1_PIN;
+        int8_t r2Pin = R2_PIN, g2Pin = G2_PIN, b2Pin = B2_PIN;
+        if (!gHub75ColorOrder.equalsIgnoreCase("RGB"))
+        {
+            ApplyHub75ColorOrder(gHub75ColorOrder, r1Pin, g1Pin, b1Pin);
+            ApplyHub75ColorOrder(gHub75ColorOrder, r2Pin, g2Pin, b2Pin);
+            Serial.printf("[HUB75] Color order '%s' -> R1=%d G1=%d B1=%d R2=%d G2=%d B2=%d\n",
+                          gHub75ColorOrder.c_str(), r1Pin, g1Pin, b1Pin, r2Pin, g2Pin, b2Pin);
+        }
+
+        mxconfig.gpio.r1 = r1Pin;
+        mxconfig.gpio.g1 = g1Pin;
+        mxconfig.gpio.b1 = b1Pin;
+        mxconfig.gpio.r2 = r2Pin;
+        mxconfig.gpio.g2 = g2Pin;
+        mxconfig.gpio.b2 = b2Pin;
 
         mxconfig.gpio.a = A_PIN;
         mxconfig.gpio.b = B_PIN;

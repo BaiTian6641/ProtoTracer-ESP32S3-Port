@@ -5,6 +5,10 @@
 #endif
 #define ELEGANTOTA_USE_ASYNC_WEBSERVER 1
 #define NEW_GESTURE
+// ── Gesture/boop diagnostics (enabled while tracking the newer-board
+//    gesture fault): live proximity values, boop pipeline logs, initial
+//    sensor read.  Set back to 0 once resolved to silence [BOOP] prints.
+#define BOOP_DEBUG_LOG 1
 // #define NEW_HUB75
 //  #define PRINTINFO
 #define VERBOSE_STARTUP
@@ -122,7 +126,7 @@ constexpr bool kVerboseStartup = false;
 #endif
 
 #ifndef PROTOTRACER_FW_VERSION
-#define PROTOTRACER_FW_VERSION "1.2.10"
+#define PROTOTRACER_FW_VERSION "1.2.11"
 #endif
 
 #ifndef PROTOTRACER_FW_MANIFEST
@@ -231,16 +235,17 @@ bool gDisplayIsRelayMc = false; // true when display uses a relay MCU (M5UnitGLA
 bool gColoredPreview = false; // true for UnitLCD color mode
 
 // Try init each display driver in priority order; returns true on first success.
+// NOTE: M5GFX begin() is the real hardware probe — panel init reads from the
+// panel's I2C address and returns false on NACK.  Do NOT gate on
+// width()/height(): those return driver constants and, after a failed init,
+// dereference a null panel (crash).  GLASS2 and UnitOLED share address 0x3C
+// and cannot be auto-distinguished, so GLASS2 is preferred on 0x3C HUDs.
 static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
 {
 #if __has_include(<M5UnitGLASS2.h>)
   {
     auto *d = new M5UnitGLASS2(sda, scl, freq);
-    d->begin();
-    // Quick probe: clear and draw a test pixel
-    d->fillScreen(TFT_BLACK);
-    d->display();
-    if (d->width() >= 64 && d->height() >= 32)
+    if (d->begin())
     {
       display = d;
       gDisplayType = DisplayType::GLASS2;
@@ -250,18 +255,14 @@ static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
     delete d;
   }
 #endif
-#if __has_include(<M5UnitGLASS.h>)
+#if __has_include(<M5UnitOLED.h>)
   {
-    auto *d = new M5UnitGLASS(sda, scl, freq);
-    d->begin();
-    d->fillScreen(TFT_BLACK);
-    d->display();
-    if (d->width() >= 64 && d->height() >= 32)
+    auto *d = new M5UnitOLED(38, 39, freq);
+    if (d->begin())
     {
       display = d;
-      gDisplayType = DisplayType::GLASS;
-      gDisplayIsRelayMc = true; // M5UnitGLASS has a relay MCU that adds I2C latency
-      Serial.println("[DISP] Detected M5UnitGLASS (single I2C) — relay MCU, throttling preview");
+      gDisplayType = DisplayType::UnitOLED;
+      Serial.println("[DISP] Detected M5UnitOLED (fallback)");
       return true;
     }
     delete d;
@@ -270,10 +271,7 @@ static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
 #if __has_include(<M5UnitLCD.h>)
   {
     auto *d = new M5UnitLCD(sda, scl, freq);
-    d->begin();
-    d->fillScreen(TFT_BLACK);
-    d->display();
-    if (d->width() >= 64 && d->height() >= 32)
+    if (d->begin())
     {
       display = d;
       gDisplayType = DisplayType::UnitLCD;
@@ -285,27 +283,47 @@ static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
     delete d;
   }
 #endif
-#if __has_include(<M5UnitOLED.h>)
-  {
-    auto *d = new M5UnitOLED(sda, scl, freq);
-    d->begin();
-    d->fillScreen(TFT_BLACK);
-    d->display();
-    if (d->width() >= 64 && d->height() >= 32)
-    {
-      display = d;
-      gDisplayType = DisplayType::UnitOLED;
-      Serial.println("[DISP] Detected M5UnitOLED (fallback)");
-      return true;
-    }
-    delete d;
-  }
-#endif
   return false;
 }
 
-// ── Gesture I2C bus: shared with display for GLASS2, separate for others ──
+// ── Gesture sensor I2C bus selection ──
+// GLASS2 units: the PAJ7620 shares the display's I2C bus (same pins passed to
+// DetectDisplay).  Other displays: the PAJ7620 sits on a separate Wire1 bus.
+#if defined(TASESP32P4)
+  #define GESTURE_SHARED_SDA 47
+  #define GESTURE_SHARED_SCL 48
+#else
+  #define GESTURE_SHARED_SDA 41
+  #define GESTURE_SHARED_SCL 42
+#endif
+#define GESTURE_WIRE1_SDA 41
+#define GESTURE_WIRE1_SCL 42
+
 TwoWire *gGestureWire = &Wire;
+
+// Hard recovery of the gesture I2C bus: drop and re-initialise the TwoWire
+// driver so a wedged peripheral (SCL/SDA stuck, NACK storm) is rebuilt before
+// the PAJ7620 is re-initialised.  Called from ESPMenu's runtime error path.
+// NOTE: on the GLASS2-shared bus this also re-routes I2C0 pins — the lgfx
+// display driver reconfigures the peripheral on its next transaction, so a
+// brief display glitch is possible.  Only runs after sustained read errors.
+void GestureBusRecovery()
+{
+  if (gGestureWire == &Wire1)
+  {
+    Wire1.end();
+    delay(10);
+    Wire1.begin(GESTURE_WIRE1_SDA, GESTURE_WIRE1_SCL);
+    Wire1.setTimeOut(50);
+  }
+  else
+  {
+    Wire.end();
+    delay(10);
+    Wire.begin(GESTURE_SHARED_SDA, GESTURE_SHARED_SCL);
+    Wire.setTimeOut(50);
+  }
+}
 
 // Controller selection per target
 #if defined(TASESP32S3)
@@ -555,28 +573,36 @@ void setup()
   // ── Gesture I2C bus setup ──
   // Only M5UnitGLASS2 shares the I2C bus with the gesture sensor.
   // All other displays (M5UnitGLASS, UnitLCD, UnitOLED) need a separate Wire1.
+  //
+  // The bus MUST be initialised explicitly here.  Current M5GFX drives the
+  // display through its own low-level lgfx I2C driver and never touches
+  // Arduino Wire — older M5GFX snapshots called Wire.begin() inside the
+  // GLASS2 constructor, which is the only reason older firmware worked
+  // without this.  On an un-begun TwoWire the PAJ7620 is unreachable.
   if (gDisplayType == DisplayType::GLASS2)
   {
+    Wire.begin(GESTURE_SHARED_SDA, GESTURE_SHARED_SCL);
     gGestureWire = &Wire;
-    Serial.println("[INFO] Gesture sharing display I2C bus (M5UnitGLASS2)");
+    Serial.printf("[INFO] Gesture sharing display I2C bus (GPIO%d=SDA, GPIO%d=SCL)\n",
+                  GESTURE_SHARED_SDA, GESTURE_SHARED_SCL);
   }
   else
   {
-    Wire1.begin(38, 39); // SDA=38, SCL=39
+    Wire1.begin(GESTURE_WIRE1_SDA, GESTURE_WIRE1_SCL);
     gGestureWire = &Wire1;
-    Serial.println("[INFO] Wire1 initialised for gesture (GPIO38=SDA, GPIO39=SCL)");
+    Serial.printf("[INFO] Wire1 initialised for gesture (GPIO%d=SDA, GPIO%d=SCL)\n",
+                  GESTURE_WIRE1_SDA, GESTURE_WIRE1_SCL);
   }
+
+  // I2C timeout on the bus the sensor actually uses: prevents an indefinite
+  // hang if the PAJ7620 NACKs or holds SDA low.
+  gGestureWire->setTimeOut(50);
 
   // Also set colored preview for UnitLCD
   if (gDisplayType == DisplayType::UnitLCD)
   {
     gColoredPreview = true;
   }
-
-  // I2C timeout: prevents indefinite hang if PAJ7620 or display
-  // NACKs or holds SDA low. 50ms is long enough for a 1KB framebuffer
-  // transfer at 400kHz (~25ms) with margin for retries.
-  Wire.setTimeOut(50);
 
   if (display)
   {
@@ -617,6 +643,18 @@ void setup()
   {
     if (display) { display->println(TXT("Config load fail", "配置加载失败")); display->display(); }
   }
+
+#ifdef TASESP32S3
+  // Apply HUB75 color channel compensation from user config. The first
+  // Initialize() ran before the config was available (DMA reservation), so
+  // re-init the panel when a non-default order is configured — the re-run
+  // boot test then shows the corrected R, G, B sequence.
+  if (!userConfig.hub75_color_order.equalsIgnoreCase(gHub75ColorOrder))
+  {
+    gHub75ColorOrder = userConfig.hub75_color_order;
+    controller.ResetDisplayDriver();
+  }
+#endif
 
   // Factory flash indicator: blink internal WS2812 red/blue if face model or animation config is missing.
   // Note: LittleFS already mounted by EnsureUserConfig() via RemoteFileSync::EnsureFsMounted()
@@ -1172,6 +1210,10 @@ void loop()
       }
       if (!gBgDisplayResetDone)
       {
+#ifdef TASESP32S3
+        // Pick up any color order change from the freshly downloaded config.
+        gHub75ColorOrder = userConfig.hub75_color_order;
+#endif
         controller.ResetDisplayDriver();
         gBgDisplayResetDone = true;
       }

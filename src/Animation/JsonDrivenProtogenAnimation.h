@@ -95,6 +95,7 @@ private:
         bool blink = true;
         bool show_mouth = true;
         bool eye_shape = true;
+        int16_t brightness = -1; // per-animation brightness override (0-255); -1 = follow menu/user default
         SceneEffectConfig sceneEffect;
         std::vector<InterpolationConfig> interpolation;
         std::vector<std::pair<String, float>> animParameters;
@@ -151,6 +152,10 @@ private:
     bool ShowMouth = true;
     bool EyeShapeB = true;
     bool menuInitialized = false;
+
+    // Per-animation brightness: -1 = follow the menu value (BLE/app adjustable,
+    // initialised from user config user_brightness); >= 0 = forced by the active expression.
+    int16_t activeBrightness = -1;
 
     String deviceId;
     String animationName;
@@ -771,6 +776,7 @@ private:
         voiceEnable = resetState.voice_enable;
         ShowMouth = resetState.show_mouth;
         EyeShapeB = resetState.eye_shape;
+        activeBrightness = resetState.brightness;
 
         // Hide/Show mouth (use cached morph ID)
         if (mHideMouthId != 0xFFFF)
@@ -1115,6 +1121,11 @@ private:
         cfg.blink = obj["blink"] | true;
         cfg.show_mouth = obj["show_mouth"] | true;
         cfg.eye_shape = obj["eye_shape"] | true;
+        cfg.brightness = obj["brightness"] | -1;
+        if (cfg.brightness >= 0)
+        {
+            cfg.brightness = constrain(cfg.brightness, 0, 255);
+        }
 
         if (obj.containsKey("scene_effect"))
         {
@@ -1159,6 +1170,18 @@ private:
         if (target->reset)
         {
             ApplyResetState();
+        }
+
+        // Per-animation brightness: the expression's own value wins; reset
+        // expressions without one inherit reset_state's value (applied inside
+        // ApplyResetState above); anything else follows the menu/user default.
+        if (target->brightness >= 0)
+        {
+            activeBrightness = target->brightness;
+        }
+        else if (!target->reset)
+        {
+            activeBrightness = -1;
         }
 
         for (const auto &interp : target->interpolation)
@@ -1286,10 +1309,10 @@ private:
         }
 
         boopSensorThreshold = 180;
-        int parsedBoopThreshold = doc["boop_threshold"] | -1;
+        int parsedBoopThreshold = doc["boop_threshold"] | 200;
         if (parsedBoopThreshold < 0)
         {
-            parsedBoopThreshold = doc["boop_sensor_threshold"] | -1;
+            parsedBoopThreshold = doc["boop_sensor_threshold"] | 200;
         }
         if (parsedBoopThreshold >= 0)
         {
@@ -1435,10 +1458,33 @@ private:
             }
         }
 
+        // Fallback: no boop_morphs configured → map a single boop to Surprised
+        // so the boop sensor always has a visible effect, even with an
+        // animation JSON that lacks boop configuration.
+        if (boopMorphSpecs.empty())
+        {
+            BoopMorphSpec fallback;
+            fallback.times = 1;
+            fallback.name = NormalizeBoopExpressionName("Surprised");
+            fallback.periodMs = kDefaultBoopHoldMs;
+            if (fallback.name.length() > 0)
+            {
+                boopMorphSpecs.push_back(fallback);
+                BOOP_LOG_PRINTF("[BOOP] No boop_morphs in JSON — fallback: 1 boop -> '%s' (period=%lu ms)\n",
+                                fallback.name.c_str(),
+                                static_cast<unsigned long>(fallback.periodMs));
+            }
+        }
+
         // Pre-resolve boop morph expression names to indices to avoid per-frame string lookups and heap allocation
         for (auto &spec : boopMorphSpecs)
         {
             spec.expressionIndex = FindExpressionIndex(spec.name);
+            if (spec.expressionIndex < 0)
+            {
+                BOOP_LOG_PRINTF("[BOOP] WARNING: expression '%s' not found in animation JSON — boop mapping inactive\n",
+                                spec.name.c_str());
+            }
         }
 
         // Pre-resolve all expression anim_parameter morph names to IDs
@@ -1579,6 +1625,11 @@ public:
         // Serial already initialized by main.cpp setup()
         deviceId = config.device_id;
 
+        // Boot-time default brightness comes from the user config; the menu/BLE
+        // value starts there and per-animation overrides apply on top of it.
+        Menu::SetBrightness(config.user_brightness);
+        activeBrightness = -1;
+
         LoadJsonFaceBlocking();
 
         Object3D *faceObject = GetFaceObject();
@@ -1629,7 +1680,9 @@ public:
 
     uint8_t GetBrightness()
     {
-        return Menu::GetBrightness();
+        // Per-animation brightness override wins; otherwise follow the menu
+        // value (BLE/app adjustable, initialised from user config user_brightness).
+        return activeBrightness >= 0 ? static_cast<uint8_t>(activeBrightness) : Menu::GetBrightness();
     };
 
     void FadeIn(float stepRatio) override {}

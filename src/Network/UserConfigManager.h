@@ -20,6 +20,8 @@ struct UserConfig
     String wifi_ssid;
     String wifi_password;
     String user_animation; // reserved for future animation selection
+    uint8_t user_brightness;   // boot-time default panel brightness (0-255)
+    String hub75_color_order;  // HUB75 boot test color sequence as seen on the panel; "RGB" = wiring correct, no pin swap
 };
 
 // Ensure the user config JSON exists on LittleFS and load it into memory.
