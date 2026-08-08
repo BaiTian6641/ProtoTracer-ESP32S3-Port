@@ -12,6 +12,18 @@
 //#include <FastLED.h>
 
 #include <M5UnitGLASS2.h>
+
+// IDF 4.x exposes the PSRAM BSS section attribute as EXT_RAM_ATTR; IDF 5.x renamed
+// it EXT_RAM_BSS_ATTR. Alias to whichever this core provides so both build.
+#include <esp_attr.h>
+#ifndef EXT_RAM_BSS_ATTR
+#ifdef EXT_RAM_ATTR
+#define EXT_RAM_BSS_ATTR EXT_RAM_ATTR
+#else
+#define EXT_RAM_BSS_ATTR
+#endif
+#endif
+
 extern M5GFX *display;
 extern bool gColoredPreview;
 
