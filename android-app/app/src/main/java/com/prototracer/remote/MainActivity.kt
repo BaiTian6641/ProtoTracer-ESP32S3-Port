@@ -62,6 +62,9 @@ class MainActivity : AppCompatActivity() {
     private var currentExpression = 0
     private var brightness = 105
     private var hue = 0
+    private var baseColorHue: Float? = null
+    private var baseColorHsv: FloatArray? = null
+    private var hueEchoReceived = false
     private var voiceEnabled = true
     private var displayMode = 0
     private var suppressControlCallbacks = false
@@ -171,7 +174,7 @@ class MainActivity : AppCompatActivity() {
         hueSlider.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
             override fun onStartTrackingTouch(slider: Slider) = Unit
             override fun onStopTrackingTouch(slider: Slider) {
-                if (!suppressControlCallbacks) sendControlFloat("hue_shift", slider.value)
+                if (!suppressControlCallbacks) sendControlFloat("hue_shift", hueShiftForTarget(slider.value))
             }
         })
 
@@ -472,6 +475,31 @@ class MainActivity : AppCompatActivity() {
         renderExpressionGrid()
         val animationName = visual?.string("animation_name") ?: "Unknown"
         addLog("info", getString(R.string.log_animation, animationName, expressions.size))
+
+        val baseR = visual?.int("red")
+        val baseG = visual?.int("green")
+        val baseB = visual?.int("blue")
+        if (baseR != null && baseG != null && baseB != null) {
+            val r = baseR.coerceIn(0, 255)
+            val g = baseG.coerceIn(0, 255)
+            val b = baseB.coerceIn(0, 255)
+            val hsv = FloatArray(3)
+            Color.RGBToHSV(r, g, b, hsv)
+            baseColorHue = hsv[0]
+            baseColorHsv = hsv
+            addLog("info", "Device base color: rgb($r, $g, $b)")
+            if (!hueEchoReceived) {
+                // Firmware hue shift boots at 0 (not persisted): the face currently
+                // shows the base color, so point the wheel/thumb at it until the first echo.
+                hue = norm360(hsv[0]).roundToInt()
+                view<Slider>(R.id.slider_hue).value = hue.toFloat()
+                view<TextView>(R.id.tv_hue_value).text = "$hue°"
+                updateHuePresets()
+            }
+        } else {
+            baseColorHue = null
+            baseColorHsv = null
+        }
     }
 
     private fun applyControlState(message: JsonObject) {
@@ -494,8 +522,10 @@ class MainActivity : AppCompatActivity() {
             displayMode = it
             view<SwitchMaterial>(R.id.switch_display_mode).isChecked = it != 0
         }
-        message.float("hue_shift")?.let {
-            hue = it.roundToInt().coerceIn(0, 360)
+        message.float("hue_shift")?.let { shift ->
+            hueEchoReceived = true
+            val displayed = (baseColorHue?.let { norm360(shift + it) } ?: shift).coerceIn(0f, 360f)
+            hue = displayed.roundToInt()
             view<Slider>(R.id.slider_hue).value = hue.toFloat()
             view<TextView>(R.id.tv_hue_value).text = "$hue°"
             updateHuePresets()
@@ -596,7 +626,7 @@ class MainActivity : AppCompatActivity() {
                 background = circleDrawable(colorValue, false)
                 setOnClickListener {
                     view<Slider>(R.id.slider_hue).value = degrees.toFloat()
-                    sendControlFloat("hue_shift", degrees.toFloat())
+                    sendControlFloat("hue_shift", hueShiftForTarget(degrees.toFloat()))
                 }
             }
             val params = LinearLayout.LayoutParams(dp(28), dp(28)).apply {
@@ -615,6 +645,12 @@ class MainActivity : AppCompatActivity() {
             val colorValue = (swatch.background as? GradientDrawable)?.color?.defaultColor ?: Color.TRANSPARENT
             swatch.background = circleDrawable(colorValue, active)
         }
+        // Tint the hue slider thumb with the effective color at the displayed target hue.
+        val base = baseColorHsv
+        val effective = Color.HSVToColor(
+            floatArrayOf(norm360(hue.toFloat()), base?.get(1) ?: 1f, base?.get(2) ?: 1f)
+        )
+        view<Slider>(R.id.slider_hue).thumbTintList = ColorStateList.valueOf(effective)
     }
 
     private fun setStatus(state: String, message: String) {
@@ -681,6 +717,11 @@ class MainActivity : AppCompatActivity() {
             if (active) setStroke(dp(2), Color.WHITE)
         }
     }
+
+    private fun norm360(v: Float): Float = ((v % 360f) + 360f) % 360f
+
+    private fun hueShiftForTarget(targetDeg: Float): Float =
+        baseColorHue?.let { norm360(targetDeg - it) } ?: norm360(targetDeg)
 
     private fun JsonObject.string(name: String): String? = try {
         get(name)?.takeIf { !it.isJsonNull }?.asString

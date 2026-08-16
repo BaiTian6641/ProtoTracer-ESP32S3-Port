@@ -6,7 +6,7 @@ A browser-based remote control application for ProtoTracer LED face displays, us
 
 - **Expression Selection** — Browse and trigger all facial expressions configured in your animation JSON
 - **Brightness Control** — Real-time slider (0–255) with live preview
-- **Hue Shift** — Adjust the color hue of the LED display with presets and a gradient slider
+- **Hue Shift** — Pick a target hue with presets and a gradient slider; the required shift is computed relative to the device's configured base color
 - **Lip Sync Toggle** — Enable/disable microphone-driven voice detection
 - **Display Mode Toggle** — Switch display modes on the device
 - **Device Ping** — Verify the BLE connection is alive
@@ -128,6 +128,43 @@ The protocol is chunked at 160 bytes per BLE notification to accommodate ESP32 B
 - Renders expression grid from manifest data
 - Provides toast notifications and scrollable event log
 - Handles all user interactions (sliders, toggles, buttons)
+
+## Base color & hue shift
+
+The hue slider and preset swatches select a **target hue** — the color the face should become. The firmware's `hue_shift` field, however, is an *absolute rotation of the device's base color* (RGB-space rotation about the gray axis, in degrees), not a target hue. The app converts between the two using the base color reported by the device.
+
+### Manifest fields
+
+The BLE manifest (response to `config.get` / `pair.discover` / `pair.info`) carries the user-configured base expression color inside the `visual` object:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `visual.red`   | int 0–255 | Base color red channel |
+| `visual.green` | int 0–255 | Base color green channel |
+| `visual.blue`  | int 0–255 | Base color blue channel |
+
+All three must be present and finite; each is clamped to 0–255. From them the app computes the base hue **B** (standard RGB→HSV hue, 0–360; grayscale bases yield 0) and logs the received color once (`log.baseColor`).
+
+### Relative hue computation
+
+- On user selection of target hue **T** (slider release or preset tap), the app sends `control.set` with `hue_shift = (T − B) mod 360`, normalized into [0, 360).
+- A `control.state` echo replies with the **raw** `hue_shift` value **S** that was applied; the UI displays the resulting target hue `(S + B) mod 360` on the slider and badge.
+
+### Connect-time display
+
+The firmware's hue shift is not persisted (it boots at 0) and the manifest does not carry the current shift, so on manifest receipt — until the first `control.state` hue echo arrives — the wheel thumb and badge are initialized to the **base hue**, i.e. the color the face is actually showing after boot. The first echo (or any hue interaction) takes over from there.
+
+### Legacy fallback
+
+If the manifest contains no `visual.red/green/blue` (older firmware), the base hue is unknown (`baseColor = null`): the slider value is sent as-is and echoes are displayed as-is, matching the original behavior.
+
+The badge next to the slider is tinted with an approximation of the effective color — `hsl(displayed target hue, base saturation%, base lightness%)` derived from the base RGB, or fully saturated (`100%, 50%`) when the base color is unknown.
+
+### Regression test
+
+`hue-math.test.cjs` extracts the hue helpers from `js/app.js` and asserts the RGB→hue math, the `(T − B) mod 360` send formula, and the echo round-trip. Run it with `node hue-math.test.cjs` after touching the hue logic.
+
+`fw-rotation-sim.test.cjs` replays the firmware's exact `ProtoRGBColor::HueShift` (normalized quaternion == Rodrigues rotation about the gray axis, constrain + uint8 truncation) against the app-side send formula, proving each swatch tap lands on the swatch hue on-device (~1° for typical user colors, ≤8.2° for pure primary bases — an inherent RGB-rotation vs HSV-hue property, not an app bug). Run with `node fw-rotation-sim.test.cjs`.
 
 ## Compatibility Notes
 

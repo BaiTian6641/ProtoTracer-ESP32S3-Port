@@ -141,6 +141,10 @@ PlatformIO placeholder READMEs. Verification is: compile the relevant env, run
   (`config.get`, `control.set`, `ping` → manifest / `control.state` / `pong`), payloads
   chunked at 160 bytes. Both remotes and `ESPMenu.h` must stay in sync — update all three
   when changing the protocol.
+  - Hue contract: the manifest `visual.red/green/blue` carries the user-config base color;
+    `control.set hue_shift` is an absolute rotation of that base. Both remotes treat the
+    slider/presets as target hue and send `(target − baseHue) mod 360` (see the
+    "Base color & hue shift" docs in `web-app/README.md` and `android-app/README.md`).
 
 ## Code Style Guidelines
 
