@@ -10,3 +10,7 @@ lib/ElegantOTAPro-3-1-4/
 .pio/libdeps/*/
 .pio/libdeps/.cache/
 src/Auth/TassAuthToken.h
+
+# Reference clones for research/optimization study (e.g. CubeCoders/Jet) —
+# not part of the ProtoTracer source tree, never committed.
+reference/
