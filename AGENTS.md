@@ -87,6 +87,17 @@ pio run -e esp32s3 -t uploadfs      # flash filesystem image
 pio device monitor -b 115200        # serial monitor (esp32_exception_decoder enabled)
 ```
 
+> **Machine-specific build note (this dev box):** a Windows App Control (WDAC) policy
+> blocks `penv\Scripts\esptool.exe` **by path**, which breaks the bootloader/factory-bin
+> build steps and `pio ... -t upload`. The workaround in place invokes esptool through the
+> penv Python interpreter (`python -m esptool`, same entry point) via local patches to the
+> installed platform/framework builders plus a `penv\Scripts\esptool_entry.py` shim. These
+> live outside the repo and are re-applied if the platform is reinstalled/updated — full
+> details in `docs/rendering-core-optimization-log.md` §0.1. `merge-bin.py` was also fixed
+> for esptool v5 (`--pad-to-size`, not `--fill-flash-size`). Also set `PYTHONIOENCODING=utf-8`
+> when flashing/monitoring from scripts to avoid a GBK console-encoding crash in pio's
+> output reader thread.
+
 Build-time helper scripts wired via `extra_scripts` in `platformio.ini`:
 
 - `select_elegantota.py` (pre) — uses local `lib/ElegantOTAPro-3-1-4` if present, otherwise
@@ -111,11 +122,20 @@ cd web-app && python -m http.server 8080     # local web remote (Web Bluetooth n
 cd android-app && gradle assembleDebug       # Android remote (Gradle 8.5+; see android-app/README.md)
 ```
 
-**Testing:** there is no unit-test suite — `test/` and `include/` contain only the stock
+**Testing:** there is no firmware unit-test suite — `test/` and `include/` contain only the stock
 PlatformIO placeholder READMEs. Verification is: compile the relevant env, run
 `validate.ps1` when animation/morph data changes, and test on hardware (serial log at
 115200 baud, `esp-builtin` JTAG debugging configured). Several subsystems log through
 `Serial.printf`; define `PRINTINFO`/`VERBOSE_STARTUP` for more.
+
+**Host render harness:** `host-tests/` compiles the real render headers (`src/Math`,
+`src/Render`, `src/Materials`) on Windows with MSVC against `host-tests/shim/` and verifies
+the direct rasterizer produces **byte-identical** output to the legacy QuadTree path for a
+fixed scene. Run `host-tests\build_and_compare.cmd` (exit 0 = PASS). Note: on App
+Control (WDAC)-enforced machines, freshly built unsigned host exes may be blocked from
+running (see `host-tests/README.md`). On-device, `RASTER_VERIFY_AB=1` renders both paths
+per frame and logs `[VERIFY] abDiffs=N` (0 = identical) — use it as a regression gate for
+any render-path change.
 
 ## Runtime Architecture Notes
 
@@ -132,6 +152,16 @@ PlatformIO placeholder READMEs. Verification is: compile the relevant env, run
   parsing goes to PSRAM under `USE_PSRAM_FOR_FACE_JSON`. Internal DRAM is limited (~512 KB)
   — avoid per-frame heap allocation in render hot paths (see `docs/review-summary.md`;
   known issue: heap fragmentation during long runs).
+- **Renderer (HUB75 grid):** `Camera::Rasterize()` uses a triangle-driven **direct
+  rasterizer** by default (`DIRECT_RASTERIZER=1`, in `src/Render/Camera.h`) for the regular
+  64×32 `P3HUB75` grid: per-object vertices are pre-transformed once into a PSRAM SoA
+  scratch, triangles are bbox-clipped to the pixel grid, then edge/barycentric-tested with a
+  per-pixel `averageDepth` z-buffer. The legacy pixel-driven ray-cast + QuadTree path is kept
+  as `Camera::RasterizeLegacy()` — build with `-DDIRECT_RASTERIZER=0` for A/B, and
+  `RASTER_VERIFY_AB=1` for on-device per-frame diffing. `PRINTINFO` also logs `[RAST]`
+  object/triangle/pixel counters. Optional `DIRECT_RASTERIZER_BACKFACE_CULL` (default 0) is
+  available but unverified against the face mesh winding. See
+  `docs/rendering-core-optimization-log.md` for measured timings and the implementation log.
 - Feature selection is done almost entirely through **build flags / `#define`s**:
   `TASESP32S3`/`TASESP32P4` (controller), `NEW_GESTURE` (PAJ7620 vs APDS9960),
   `USE_TOKEN_AUTH`, `ENABLE_M5_PIXEL_PREVIEW`, `LANG_CN` (Chinese UI strings via the

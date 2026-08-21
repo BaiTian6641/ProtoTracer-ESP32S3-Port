@@ -86,13 +86,26 @@
 | 2 统计+背面剔除 | ✅ | — | ✅ stats 正常 | — | ⏳ |
 | 3 顶点预变换 | ✅ | — | ✅ render~6.0ms | ✅ abDiffs=0 | ⏳ |
 
+## 阶段 4 — FastTrig LUT 接入动画缓动路径（§6.D，已验证，commit `83c1e5b`）
+
+- 新增 `src/Math/FastTrig.h`：256 项全周期正弦 LUT + 线性插值，`Sin/Cos`。**数值验证**（host python 复算）：[-20,20] rad 内最大绝对误差 7.5e-5，缓动关键点（ratio=0/0.25/0.5/0.75/1.0）与精确值完全一致 → morph 权重误差 <1e-4，视觉无感。1 KB 静态表（C++17 inline 变量，头文件单实例）。
+- 接入 `Mathematics::CosineInterpolation`/`BounceInterpolation`（动画缓动，视觉容忍度高），编译开关 `FAST_TRIG_EASING`（默认 1）。
+- **刻意不改** `Rotation.h`/`Quaternion.h`/相机变换的三角——那里需要 libm 精度且角度误差会累积。
+- 实测（COM6）：稳态 anim ~8.5 ms / render ~5.5 ms（前一次 ~10–17 ms anim / ~6 ms render；anim 方差大，方向为正且无回归，设备稳定）。**诚实结论**：缓动三角从来不是 anim 的主成本（主成本是 morph 混合 + FFT 声检），这是一项安全、可复用的微优化，而非大头收益。
+
+## 关于 S6（材质去虚化 / 快速路径）的决定：本阶段**不改**
+
+- 依据遥测：render ~5.5 ms 已非瓶颈（anim 更大）；`Material::GetRGB` 虚调用逐**着色像素**（~258 px）触发，数量小；材质栈（CombineMaterial≤10 层）求值在像素级但当前不在热路径。
+- 报告 §6.I 自身标注"谨慎"。去虚化需改动 `Material.h` + 全部子类 + 逐像素行为，视觉回归风险高，而收益未被 profiling 证实。**留待有 profiling 支撑后再做**；届时可用 `RASTER_VERIFY_AB` 做回归门。
+- 替代建议（已部分落地）：逐帧材质预计算 / 单层全不透明早退 / 昂贵材质 opt-in 分级（见既有 `optimization-plan.md` §7.5/§8.5/§9.3）。
+
 ## 待办 / 风险登记
 
 - [x] host-tests/ A/B harness 完成并通过字节级对比。
 - [x] COM6 烧录基线 + 直接光栅化遥测对比。
 - [x] 顶点预变换（§7.4）+ 设备 A/B 验证 abDiffs=0。
-- [ ] TrigLUT 接入动画路径（§6.D）。
-- [ ] 材质去虚化/快速路径（§6.I，谨慎）。
+- [x] FastTrig LUT 接入缓动路径（§6.D，数值验证 + 设备稳定）。
+- [x] 材质去虚化/快速路径（§6.I）——经评估本阶段不改（profiling 未证实收益，风险高）。
 - [ ] 背面剔除（`DIRECT_RASTERIZER_BACKFACE_CULL`，默认关，需视觉验证后开启）。
 - [ ] AGENTS.md 补渲染管线新路径说明（收尾时更新）。
 - [ ] 收尾跑 `validate.ps1`（动画 JSON 校验，与渲染改动正交，作为回归确认）。
