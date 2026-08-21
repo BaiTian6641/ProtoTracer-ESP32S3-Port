@@ -56,19 +56,44 @@
 - **harness 工具脚本缺陷**（子代理产出，我逐一核实并修复）：`build_and_compare.cmd` 的 `if not exist "%VCVARS%" (…)` 块内回显含 `(x86)` 路径导致 cmd 提前结束块（改为 goto 式）；生成的 `.bat` 用直接调用而非 `call` 导致后续步骤不执行（已加 `call`）；`INCLUDES` 引号拼接错误（改为不带外引号的 set）；`compare.ps1` 用了不存在的 `-mul` 运算符（改为 `*` + 32 位掩码）。修复后 `.cmd` 端到端可跑通。
 - **本机 App Control 限制**：新编译的未签名 host exe 会被按哈希拦截（与 esptool.exe 同类策略）。A/B 验证已于 2026-08-21 完成并留存字节级证据（`host-tests/*.bin`）；重跑需在无该策略的机器或加白名单。已写入 `host-tests/README.md`。
 
+## 阶段 2 — 渲染统计 + 可选背面剔除（S3，已验证，commit `966e285`）
+
+- `gRasterStats`（C++17 inline 变量）：`objectsDrawn / trianglesSubmitted / trianglesCulled / pixelsShaded / verifyDiffs`，每帧重置，`PRINTINFO` 遥测新增 `[RAST] obj=.. tris=.. culled=.. pix=..`。
+- `DIRECT_RASTERIZER_BACKFACE_CULL`（默认 0）+ `DIRECT_RASTERIZER_CULL_SIGN`：可选背面剔除。**默认关闭**——旧路径双面渲染且面网格绕向未验证；开启前需视觉确认（符号可翻转）。
+- **设备统计揭示关键事实**：523 三角形中 ~488 被像素包围盒直接剔除、仅 ~35 进入光栅化、~258 像素着色——逐像素工作量已很小，render 成本主要在 **523 次 Triangle2D 构造（每次 3 个 RotateVector ≈ 1569 次四元数旋转，而唯一顶点只有 495 个）**。
+
+## 阶段 3 — 顶点预变换 + 设备 A/B 验证（§7.4，已验证，commit `2e1349d`）
+
+- `RasterizeDirect` 改为**每唯一顶点每帧只变换一次**（RotateVector → PSRAM SoA 暂存 `mScrX/Y/Z`），三角形通过指针偏移引用预变换顶点；四元数旋转次数从 ~1569 降到 495（~3.2×）。逐三角形法线改为**惰性计算**（仅在有像素着色时），~488 个被剔除三角形不再白算 Normal()。
+- **顶点暂存放 PSRAM**（输出中性——内存位置不影响浮点结果），intFree 从 ~14 KB 恢复到 ~20 KB（内部 DRAM 余量），render 无可见回退。
+- **新增 `RASTER_VERIFY_AB`（默认 0）设备端 A/B 校验**：同帧同时跑 direct 与 legacy，统计像素差异。真实动画脸（523 三角形 + morph + UV + 材质）连续数百帧 **abDiffs=0**——比合成场景的桌面 harness 更强的等价性证据。生产构建保持 0（verify 模式 render ~30 ms 是双路径开销，非回归）。
+
+### 阶段 2+3 累计遥测（COM6，esp32s3-PROFILE）
+
+| 版本 | render (ms) | intFree | 备注 |
+|---|---|---|---|
+| Legacy QuadTree | ~20.8 | 20468 | 基线 |
+| Direct（逐三角形 Triangle2D） | ~8.3 | 20280 | 2.5× |
+| Direct + 顶点预变换（内部暂存） | ~6.0 | 14248 | 暂存挤压内部 DRAM |
+| **Direct + 顶点预变换（PSRAM 暂存，最终）** | **~6.0** | **20256** | **3.5×，堆恢复，abDiffs=0** |
+
 ## 验证矩阵
 
-| 阶段 | 构建 | 桌面 A/B harness | 设备遥测 COM6 | validate.ps1 |
-|---|---|---|---|---|
-| 0 基线 | ✅ esp32s3-PROFILE 成功 | — | 待测 | 待跑 |
-| 1 直接光栅化 | 待 | 进行中（host-tests/） | 待 | 待跑 |
+| 阶段 | 构建 | 桌面 A/B harness | 设备遥测 COM6 | 设备 A/B（abDiffs） | validate.ps1 |
+|---|---|---|---|---|---|
+| 0 基线 | ✅ | — | ✅ render~20.8ms | — | ⏳ |
+| 1 直接光栅化 | ✅ | ✅ byte-identical | ✅ render~8.3ms | — | ⏳ |
+| 2 统计+背面剔除 | ✅ | — | ✅ stats 正常 | — | ⏳ |
+| 3 顶点预变换 | ✅ | — | ✅ render~6.0ms | ✅ abDiffs=0 | ⏳ |
 
 ## 待办 / 风险登记
 
-- [ ] host-tests/ A/B harness 完成并通过字节级对比（子代理进行中）。
-- [ ] COM6 烧录基线 + 遥测采集。
+- [x] host-tests/ A/B harness 完成并通过字节级对比。
+- [x] COM6 烧录基线 + 直接光栅化遥测对比。
+- [x] 顶点预变换（§7.4）+ 设备 A/B 验证 abDiffs=0。
+- [ ] TrigLUT 接入动画路径（§6.D）。
+- [ ] 材质去虚化/快速路径（§6.I，谨慎）。
 - [ ] 背面剔除（`DIRECT_RASTERIZER_BACKFACE_CULL`，默认关，需视觉验证后开启）。
-- [ ] TrigLUT 接入动画路径（S4）。
-- [ ] 材质去虚化/快速路径（S6，谨慎）。
 - [ ] AGENTS.md 补渲染管线新路径说明（收尾时更新）。
+- [ ] 收尾跑 `validate.ps1`（动画 JSON 校验，与渲染改动正交，作为回归确认）。
 - [ ] 本机 App Control 补丁的备份与说明（见 0.1，已在本文档登记；如平台更新需重打）。

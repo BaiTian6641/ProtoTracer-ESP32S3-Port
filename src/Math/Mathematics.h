@@ -1,6 +1,14 @@
 #pragma once
 #include <math.h>
 #include <WString.h>
+#include "FastTrig.h"
+
+// Use the FastTrig LUT for easing-curve trig (Cosine/BounceInterpolation).
+// These feed animation morph weights where ~1e-4 error is invisible.
+// Define FAST_TRIG_EASING=0 to fall back to libm sinf/cosf for exactness.
+#ifndef FAST_TRIG_EASING
+#define FAST_TRIG_EASING 1
+#endif
 
 class Mathematics {
 public:
@@ -77,8 +85,12 @@ public:
 	}
 
 	static float CosineInterpolation(float beg, float fin, float ratio){
+#if FAST_TRIG_EASING
+		float mu2 = (1.0f - FastTrig::Cos(ratio * MPI)) / 2.0f;
+#else
 		float mu2 = (1.0f - cosf(ratio * MPI)) / 2.0f;
-		
+#endif
+
 		return(beg * (1.0f - mu2) + fin * mu2);
 	}
 
@@ -86,7 +98,11 @@ public:
 		//logarithm added with diminshing sine wave
 		//log max amplitude = 1 - sine max amplitude / 2
 		float baseLog = log10f(10.0f * ratio + 1.0f);
+#if FAST_TRIG_EASING
+		float baseSine = FastTrig::Sin(16.0f * ratio) * powf((2.0f * ratio - 2.0f), 2.0f) / 4.0f / 4.0f;
+#else
 		float baseSine = sinf(16.0f * ratio) * powf((2.0f * ratio - 2.0f), 2.0f) / 4.0f / 4.0f;
+#endif
 		float bounce = baseLog + baseSine;
 
 		return Map(ratio, 0.0f, bounce, beg, fin);

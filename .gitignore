@@ -5,6 +5,7 @@
 .pio/build/*/
 .pio/build/*/*/
 .pio/build/*/*/*/
+.pio/build/project.checksum
 src/Morph/Commissions
 lib/ElegantOTAPro-3-1-4/
 .pio/libdeps/*/
