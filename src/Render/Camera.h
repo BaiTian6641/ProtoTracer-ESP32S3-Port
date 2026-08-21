@@ -64,6 +64,13 @@
 #define DIRECT_RASTERIZER_CULL_SIGN 1
 #endif
 
+// On-device A/B verification: when enabled, each frame renders the direct
+// path AND the legacy QuadTree path and counts pixels that differ. Debug only
+// (doubles render cost + a 6 KB scratch buffer). Leave 0 in production.
+#ifndef RASTER_VERIFY_AB
+#define RASTER_VERIFY_AB 0
+#endif
+
 #if DIRECT_RASTERIZER
 // Per-frame rasterizer counters (C++17 inline variable; safe in this
 // header-only build — single instance). Updated by RasterizeDirect() and
@@ -73,6 +80,7 @@ struct RasterStats {
     uint32_t trianglesSubmitted = 0;  // triangles that entered rasterization
     uint32_t trianglesCulled = 0;     // skipped: empty/off-screen pixel bbox (or backface when enabled)
     uint32_t pixelsShaded = 0;        // pixels actually written (passed depth + coverage)
+    uint32_t verifyDiffs = 0;         // RASTER_VERIFY_AB only: pixels where direct != legacy
 };
 inline RasterStats gRasterStats;
 #endif
@@ -161,6 +169,82 @@ private:
             mZBuffer = static_cast<float*>(protogc::ProtoGC::psramAlloc(kGridCols * kGridRows * sizeof(float)));
         }
     }
+
+    // Per-object pre-transformed vertex scratch (SoA). Vertices are shared by
+    // triangles (Triangle3D stores pointers into the group's vertex array), so
+    // transforming each unique vertex ONCE per frame replaces 3 RotateVector
+    // calls per triangle (3*triCount) with vertexCount — a ~3x cut on meshes
+    // where triangles share vertices. Grow-only, reused across frames.
+    float* mScrX = nullptr;
+    float* mScrY = nullptr;
+    float* mScrZ = nullptr;
+    unsigned int mScrCapacity = 0;
+
+    void EnsureVertexScratch(unsigned int count) {
+        if (count <= mScrCapacity) return;
+        protogc::ProtoGC::heapFree(mScrX);
+        protogc::ProtoGC::heapFree(mScrY);
+        protogc::ProtoGC::heapFree(mScrZ);
+        mScrCapacity = 0;
+        const size_t bytes = count * sizeof(float);
+        // PSRAM-first: the scratch is written once per vertex and read per
+        // triangle (moderate frequency, sequential) — the hot per-pixel
+        // cachedRays already live in PSRAM, so this keeps internal DRAM free
+        // for the z-buffer and DMA without a measurable render cost.
+        mScrX = static_cast<float*>(protogc::ProtoGC::psramAlloc(bytes));
+        mScrY = static_cast<float*>(protogc::ProtoGC::psramAlloc(bytes));
+        mScrZ = static_cast<float*>(protogc::ProtoGC::psramAlloc(bytes));
+        if (!mScrX) mScrX = static_cast<float*>(protogc::ProtoGC::internalAlloc(bytes));
+        if (!mScrY) mScrY = static_cast<float*>(protogc::ProtoGC::internalAlloc(bytes));
+        if (!mScrZ) mScrZ = static_cast<float*>(protogc::ProtoGC::internalAlloc(bytes));
+        if (mScrX && mScrY && mScrZ) {
+            mScrCapacity = count;
+        } else {
+            protogc::ProtoGC::heapFree(mScrX); mScrX = nullptr;
+            protogc::ProtoGC::heapFree(mScrY); mScrY = nullptr;
+            protogc::ProtoGC::heapFree(mScrZ); mScrZ = nullptr;
+        }
+    }
+
+#if RASTER_VERIFY_AB
+    ProtoRGBColor* mVerifyBuf = nullptr; // scratch copy of the direct frame for A/B diff
+
+    void EnsureVerifyBuffer() {
+        if (mVerifyBuf) return;
+        mVerifyBuf = static_cast<ProtoRGBColor*>(protogc::ProtoGC::internalAlloc(kGridCols * kGridRows * sizeof(ProtoRGBColor)));
+        if (!mVerifyBuf) {
+            mVerifyBuf = static_cast<ProtoRGBColor*>(protogc::ProtoGC::psramAlloc(kGridCols * kGridRows * sizeof(ProtoRGBColor)));
+        }
+    }
+
+    // Render direct → save, render legacy → compare, then restore the direct
+    // result so the panel shows the new path while we count discrepancies.
+    void VerifyAB(Scene* scene) {
+        EnsureVerifyBuffer();
+        ProtoRGBColor* colors = pixelGroup ? pixelGroup->GetColors() : nullptr;
+        const unsigned int pixelCount = pixelGroup ? pixelGroup->GetPixelCount() : 0;
+        RasterizeDirect(scene);
+        if (!mVerifyBuf || !colors || pixelCount == 0) return;
+        memcpy(mVerifyBuf, colors, pixelCount * sizeof(ProtoRGBColor));
+
+        RasterizeLegacy(scene);
+
+        uint32_t diffs = 0;
+        for (unsigned int i = 0; i < pixelCount; i++) {
+            if (colors[i].R != mVerifyBuf[i].R ||
+                colors[i].G != mVerifyBuf[i].G ||
+                colors[i].B != mVerifyBuf[i].B) {
+                diffs++;
+            }
+        }
+        gRasterStats.verifyDiffs = diffs;
+
+        memcpy(colors, mVerifyBuf, pixelCount * sizeof(ProtoRGBColor)); // keep direct result
+#if defined(ARDUINO)
+        Serial.printf("[VERIFY] abDiffs=%u\n", diffs);
+#endif
+    }
+#endif
 #endif
 
     void EnsureRayCache() {
@@ -396,7 +480,7 @@ private:
             mZBuffer[i] = Mathematics::FLTMAX;
         }
 
-        const Quaternion invView = rayDirection.UnitQuaternion().Conjugate();
+        Quaternion invView = rayDirection.UnitQuaternion().Conjugate(); // non-const: RotateVector/UnitQuaternion mutate
         const Vector3D camPos = transform->GetPosition();
         const float gridScale = 1.0f / mGridSpacing;
         const int maxCol = (int)kGridCols - 1;
@@ -416,19 +500,43 @@ private:
 
             Triangle3D* triangles = triangleGroup->GetTriangles();
             const int triangleCount = triangleGroup->GetTriangleCount();
+            Vector3D* groupVerts = triangleGroup->GetVertices();
+            const int vertexCount = triangleGroup->GetVertexCount();
+            if (vertexCount <= 0 || !groupVerts) continue;
+
+            // ── Pre-transform each unique vertex once (replaces 3 RotateVector
+            //    per triangle). Result is camera-space: x/y = screen plane,
+            //    z = depth (matches Triangle2D's rotated coords exactly).
+            EnsureVertexScratch((unsigned int)vertexCount);
+            if (!mScrX || !mScrY || !mScrZ) continue; // scratch alloc failed: skip object
+            for (int k = 0; k < vertexCount; k++) {
+                const Vector3D r = invView.RotateVector(groupVerts[k] - camPos);
+                mScrX[k] = r.X; mScrY[k] = r.Y; mScrZ[k] = r.Z;
+            }
             gRasterStats.objectsDrawn++;
 
             for (int j = 0; j < triangleCount; j++) {
-                Triangle2D t2(invView, camPos, &triangles[j], material);
+                Triangle3D* t = &triangles[j];
+                // Triangle3D stores vertex pointers into groupVerts; recover indices.
+                const int i1 = (int)(t->p1 - groupVerts);
+                const int i2 = (int)(t->p2 - groupVerts);
+                const int i3 = (int)(t->p3 - groupVerts);
+                if ((unsigned)i1 >= (unsigned)vertexCount || (unsigned)i2 >= (unsigned)vertexCount || (unsigned)i3 >= (unsigned)vertexCount) continue;
+
+                const float p1X = mScrX[i1], p1Y = mScrY[i1];
+                const float p2X = mScrX[i2], p2Y = mScrY[i2];
+                const float p3X = mScrX[i3], p3Y = mScrY[i3];
+
+                // Barycentric denominator (same as Triangle2D ctor).
+                const float v0X = p2X - p1X, v0Y = p2Y - p1Y;
+                const float v1X = p3X - p1X, v1Y = p3Y - p1Y;
+                const float denominator = 1.0f / (v0X * v1Y - v1X * v0Y);
 
                 // Pixel bbox: only pixels whose centers can fall inside.
-                const Vector2D p1 = t2.GetP1();
-                const Vector2D p2 = t2.GetP2();
-                const Vector2D p3 = t2.GetP3();
-                const float minX = Mathematics::Min(p1.X, p2.X, p3.X);
-                const float maxX = Mathematics::Max(p1.X, p2.X, p3.X);
-                const float minY = Mathematics::Min(p1.Y, p2.Y, p3.Y);
-                const float maxY = Mathematics::Max(p1.Y, p2.Y, p3.Y);
+                const float minX = Mathematics::Min(p1X, p2X, p3X);
+                const float maxX = Mathematics::Max(p1X, p2X, p3X);
+                const float minY = Mathematics::Min(p1Y, p2Y, p3Y);
+                const float maxY = Mathematics::Max(p1Y, p2Y, p3Y);
 
                 int pxMin = (int)ceilf(minX * gridScale);
                 int pxMax = (int)floorf(maxX * gridScale);
@@ -443,14 +551,15 @@ private:
 #if DIRECT_RASTERIZER_BACKFACE_CULL
                 {
                     // Signed 2D area; cull when it is on the "back" side.
-                    const float signedArea = (p2.X - p1.X) * (p3.Y - p1.Y) - (p3.X - p1.X) * (p2.Y - p1.Y);
+                    const float signedArea = v0X * v1Y - v1X * v0Y;
                     const bool front = (DIRECT_RASTERIZER_CULL_SIGN > 0) ? (signedArea > 0.0f) : (signedArea < 0.0f);
                     if (!front) { gRasterStats.trianglesCulled++; continue; }
                 }
 #endif
 
                 gRasterStats.trianglesSubmitted++;
-                const float avgZ = t2.averageDepth;
+                const float avgZ = (mScrZ[i1] + mScrZ[i2] + mScrZ[i3]) / 3.0f;
+                Vector3D* normal = nullptr; // computed lazily only if a pixel is shaded
 
                 for (int py = pyMin; py <= pyMax; py++) {
                     const unsigned int rowBase = (unsigned int)py * kGridCols;
@@ -462,18 +571,25 @@ private:
                         if (mZBuffer[idx] <= avgZ) continue;
                         const Vector2D& ray = cachedRays[idx];
 
-                        float u = 0.0f, v = 0.0f, w = 0.0f;
-                        if (!t2.DidIntersect(ray.X, ray.Y, u, v, w)) continue;
+                        // Inline barycentric (same math as Triangle2D::DidIntersect).
+                        const float v2lX = ray.X - p1X;
+                        const float v2lY = ray.Y - p1Y;
+                        const float v = fmaf(v2lX, v1Y, -v1X * v2lY) * denominator;
+                        const float w = fmaf(v0X, v2lY, -v2lX * v0Y) * denominator;
+                        const float u = 1.0f - v - w;
+                        if (!((v > 0.0f) && (v < 1.0f) && (w > 0.0f) && (w < 1.0f) && (u > 0.0f))) continue;
 
                         mZBuffer[idx] = avgZ;
 
-                        Vector3D intersect = (*t2.t3p1 * u) + (*t2.t3p2 * v) + (*t2.t3p3 * w);
+                        if (!normal) normal = t->Normal(); // once per covered triangle
+
+                        Vector3D intersect = (*t->p1 * u) + (*t->p2 * v) + (*t->p3 * w);
                         intersect = rayDirection.UnrotateVector(intersect);
 
                         Vector2D uv;
-                        if (t2.hasUV) uv = (*t2.p1UV * u) + (*t2.p2UV * v) + (*t2.p3UV * w);
+                        if (t->hasUV) uv = (*t->p1UV * u) + (*t->p2UV * v) + (*t->p3UV * w);
 
-                        const ProtoRGBColor color = t2.material->GetRGB(intersect, *t2.normal, Vector3D(uv.X, uv.Y, 0.0f));
+                        const ProtoRGBColor color = material->GetRGB(intersect, *normal, Vector3D(uv.X, uv.Y, 0.0f));
                         colors[idx].R = color.R;
                         colors[idx].G = color.G;
                         colors[idx].B = color.B;
@@ -519,6 +635,12 @@ public:
         protogc::ProtoGC::heapFree(mArenaNodeRefs);
 #if DIRECT_RASTERIZER
         protogc::ProtoGC::heapFree(mZBuffer);
+        protogc::ProtoGC::heapFree(mScrX);
+        protogc::ProtoGC::heapFree(mScrY);
+        protogc::ProtoGC::heapFree(mScrZ);
+#if RASTER_VERIFY_AB
+        protogc::ProtoGC::heapFree(mVerifyBuf);
+#endif
 #endif
     }
 
@@ -570,14 +692,12 @@ public:
         }
         else{
             lookDirection = transform->GetRotation().Conjugate() * lookOffset;
-            Quaternion normLookDir = lookDirection.UnitQuaternion();
-            Quaternion camRot = transform->GetRotation();
-            rayDirection  = camRot.Multiply(lookDirection);
+            rayDirection  = transform->GetRotation().Multiply(lookDirection);
 
 #if DIRECT_RASTERIZER
             // Triangle-driven path for the regular HUB75 grid; the legacy
-            // pixel-driven QuadTree path below remains as fallback and for
-            // A/B comparison (build with -DDIRECT_RASTERIZER=0).
+            // pixel-driven QuadTree path (RasterizeLegacy) remains as fallback
+            // and for on-device A/B verification (RASTER_VERIFY_AB).
             if (!mDirectChecked) {
                 mDirectSupported = CheckDirectSupport();
                 mDirectChecked = true;
@@ -586,11 +706,24 @@ public:
 #endif
             }
             if (mDirectSupported) {
+#if RASTER_VERIFY_AB
+                VerifyAB(scene);
+#else
                 RasterizeDirect(scene);
+#endif
                 return;
             }
 #endif
 
+            RasterizeLegacy(scene);
+        }
+    }
+
+    // ── Legacy pixel-driven ray-cast + QuadTree path ──
+    // Retained as the DIRECT_RASTERIZER=0 fallback and for RASTER_VERIFY_AB
+    // on-device A/B checks. lookDirection/rayDirection are set by Rasterize().
+    void RasterizeLegacy(Scene* scene) {
+            const Quaternion normLookDir = lookDirection.UnitQuaternion();
             EnsureRayCache();
             EnsureFloatCache();
             EnsureArenaRefCache();
@@ -676,7 +809,6 @@ public:
 #else
             RasterizePixelRange(&tree, colors, 0, pixelCount);
 #endif
-        }
     }
-    
+
 };
