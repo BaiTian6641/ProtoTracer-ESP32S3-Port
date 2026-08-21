@@ -14,3 +14,13 @@ src/Auth/TassAuthToken.h
 # Reference clones for research/optimization study (e.g. CubeCoders/Jet) —
 # not part of the ProtoTracer source tree, never committed.
 reference/
+
+# host-tests build artifacts (binaries/objects/logs); sources are committed
+host-tests/*.exe
+host-tests/*.bin
+host-tests/*_obj/
+host-tests/*.log
+# host-tests generated per-run build scripts + stray scratch output
+host-tests/build_legacy.bat
+host-tests/build_direct.bat
+host-tests/script_out.txt

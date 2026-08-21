@@ -39,6 +39,17 @@
 #define CAMERA_RASTER_WORKER_MIN_PIXELS 512
 #endif
 
+// ── Direct triangle rasterizer (Jet-derived) ──
+// When enabled (default) and the pixel group is the regular 64x32 HUB75
+// grid, the camera renders triangle-driven (project → pixel bbox →
+// barycentric test with a per-pixel depth buffer) instead of the legacy
+// pixel-driven ray-cast + QuadTree path. Work scales with covered pixels
+// instead of pixelCount × leaf-triangle tests, and there is no tree build.
+// Define DIRECT_RASTERIZER=0 to force the legacy QuadTree path (A/B).
+#ifndef DIRECT_RASTERIZER
+#define DIRECT_RASTERIZER 1
+#endif
+
 //template<size_t pixelCount>
 class Camera : public CameraBase{
 private:
@@ -87,6 +98,43 @@ private:
         float m10;
         float m11;
     };
+
+#if DIRECT_RASTERIZER
+    // Direct-rasterizer state (triangle-driven, no QuadTree).
+    // Depth buffer stores the closest triangle's average depth per pixel
+    // (smaller = closer), matching the legacy CheckRasterPixel semantics.
+    float* mZBuffer = nullptr;
+    bool mDirectSupported = false;
+    bool mDirectChecked = false;
+    float mGridSpacing = 1.0f;
+    static constexpr unsigned int kGridCols = 64;
+    static constexpr unsigned int kGridRows = 32;
+
+    // Verify the pixel group is the regular row-major HUB75 grid expected
+    // by the direct rasterizer (spacing derived from the first two pixels;
+    // P3HUB75 is a strict 3-unit grid). One-time check at first frame.
+    bool CheckDirectSupport() {
+        if (!pixelGroup) return false;
+        const unsigned int pixelCount = pixelGroup->GetPixelCount();
+        if (pixelCount != kGridCols * kGridRows) return false;
+        const float s = pixelGroup->GetCoordinate(1).X - pixelGroup->GetCoordinate(0).X;
+        if (s <= 0.0f) return false;
+        for (unsigned int i = 0; i < pixelCount; i++) {
+            const Vector2D p = pixelGroup->GetCoordinate(i);
+            if (p.X != (float)(i % kGridCols) * s || p.Y != (float)(i / kGridCols) * s) return false;
+        }
+        mGridSpacing = s;
+        return true;
+    }
+
+    void EnsureZBuffer() {
+        if (mZBuffer) return;
+        mZBuffer = static_cast<float*>(protogc::ProtoGC::internalAlloc(kGridCols * kGridRows * sizeof(float)));
+        if (!mZBuffer) {
+            mZBuffer = static_cast<float*>(protogc::ProtoGC::psramAlloc(kGridCols * kGridRows * sizeof(float)));
+        }
+    }
+#endif
 
     void EnsureRayCache() {
         const unsigned int desired = pixelGroup ? pixelGroup->GetPixelCount() : 0;
@@ -278,6 +326,124 @@ private:
     }
 #endif
 
+#if DIRECT_RASTERIZER
+    // Triangle-driven rasterization for the regular HUB75 grid.
+    // Caller must set lookDirection/rayDirection first (see Rasterize()).
+    void RasterizeDirect(Scene* scene) {
+        EnsureRayCache();
+        EnsureFloatCache();
+        EnsureZBuffer();
+
+        const unsigned int pixelCount = pixelGroup->GetPixelCount();
+        ProtoRGBColor* colors = pixelGroup->GetColors();
+        if (!cachedRays || !tmpX || !tmpY || !rotX || !rotY || !colors || !mZBuffer) {
+            // Allocator failure: fall back to a safe black frame.
+            if (colors) {
+                for (unsigned int i = 0; i < pixelCount; i++) {
+                    colors[i].R = 0; colors[i].G = 0; colors[i].B = 0;
+                }
+            }
+            return;
+        }
+
+        // ── Ray preparation (same math as the legacy path) ──
+        const Vector3D scale = transform->GetScale();
+        const Rotation2D rot2 = BuildRotation2D(lookDirection.UnitQuaternion());
+        for (unsigned int i = 0; i < pixelCount; ++i) {
+            const Vector2D baseRay = pixelGroup->GetCoordinate(i);
+            tmpX[i] = baseRay.X * scale.X;
+            tmpY[i] = baseRay.Y * scale.Y;
+        }
+        dsps_mulc_f32(tmpX, rotX, pixelCount, rot2.m00, 1, 1);
+        dsps_mulc_f32(tmpY, rotY, pixelCount, rot2.m10, 1, 1);
+        dsps_add_f32(rotX, rotY, rotX, pixelCount, 1, 1, 1); // rotX = m00*x + m10*y
+        dsps_mulc_f32(tmpY, rotY, pixelCount, rot2.m11, 1, 1);
+        dsps_mulc_f32(tmpX, tmpX, pixelCount, rot2.m01, 1, 1);
+        dsps_add_f32(rotY, tmpX, rotY, pixelCount, 1, 1, 1); // rotY = m11*y + m01*x
+
+        // Full-frame clear: triangle-driven writes are sparse, and the
+        // depth buffer starts empty (legacy writes every pixel each frame).
+        for (unsigned int i = 0; i < pixelCount; ++i) {
+            cachedRays[i] = Vector2D(rotX[i], rotY[i]);
+            colors[i].R = 0; colors[i].G = 0; colors[i].B = 0;
+            mZBuffer[i] = Mathematics::FLTMAX;
+        }
+
+        const Quaternion invView = rayDirection.UnitQuaternion().Conjugate();
+        const Vector3D camPos = transform->GetPosition();
+        const float gridScale = 1.0f / mGridSpacing;
+        const int maxCol = (int)kGridCols - 1;
+        const int maxRow = (int)kGridRows - 1;
+
+        Object3D** objects = scene->GetCachedObjects();
+        const unsigned int objectCount = scene->GetCachedObjectCount();
+
+        for (unsigned int i = 0; i < objectCount; i++) {
+            Object3D* object = objects[i];
+            if (!object || !object->IsEnabled()) continue;
+            TriangleGroup* triangleGroup = object->GetRenderTriangleGroup();
+            Material* material = object->GetMaterial();
+            if (!triangleGroup || !material) continue;
+
+            Triangle3D* triangles = triangleGroup->GetTriangles();
+            const int triangleCount = triangleGroup->GetTriangleCount();
+
+            for (int j = 0; j < triangleCount; j++) {
+                Triangle2D t2(invView, camPos, &triangles[j], material);
+
+                // Pixel bbox: only pixels whose centers can fall inside.
+                const Vector2D p1 = t2.GetP1();
+                const Vector2D p2 = t2.GetP2();
+                const Vector2D p3 = t2.GetP3();
+                const float minX = Mathematics::Min(p1.X, p2.X, p3.X);
+                const float maxX = Mathematics::Max(p1.X, p2.X, p3.X);
+                const float minY = Mathematics::Min(p1.Y, p2.Y, p3.Y);
+                const float maxY = Mathematics::Max(p1.Y, p2.Y, p3.Y);
+
+                int pxMin = (int)ceilf(minX * gridScale);
+                int pxMax = (int)floorf(maxX * gridScale);
+                int pyMin = (int)ceilf(minY * gridScale);
+                int pyMax = (int)floorf(maxY * gridScale);
+                if (pxMin < 0) pxMin = 0;
+                if (pyMin < 0) pyMin = 0;
+                if (pxMax > maxCol) pxMax = maxCol;
+                if (pyMax > maxRow) pyMax = maxRow;
+                if (pxMin > pxMax || pyMin > pyMax) continue;
+
+                const float avgZ = t2.averageDepth;
+
+                for (int py = pyMin; py <= pyMax; py++) {
+                    const unsigned int rowBase = (unsigned int)py * kGridCols;
+                    for (int px = pxMin; px <= pxMax; px++) {
+                        const unsigned int idx = rowBase + (unsigned int)px;
+                        // Depth arbitration identical to legacy CheckRasterPixel:
+                        // strictly closer average depth wins; equal depth keeps
+                        // the first triangle (later ones fail the strict test).
+                        if (mZBuffer[idx] <= avgZ) continue;
+                        const Vector2D& ray = cachedRays[idx];
+
+                        float u = 0.0f, v = 0.0f, w = 0.0f;
+                        if (!t2.DidIntersect(ray.X, ray.Y, u, v, w)) continue;
+
+                        mZBuffer[idx] = avgZ;
+
+                        Vector3D intersect = (*t2.t3p1 * u) + (*t2.t3p2 * v) + (*t2.t3p3 * w);
+                        intersect = rayDirection.UnrotateVector(intersect);
+
+                        Vector2D uv;
+                        if (t2.hasUV) uv = (*t2.p1UV * u) + (*t2.p2UV * v) + (*t2.p3UV * w);
+
+                        const ProtoRGBColor color = t2.material->GetRGB(intersect, *t2.normal, Vector3D(uv.X, uv.Y, 0.0f));
+                        colors[idx].R = color.R;
+                        colors[idx].G = color.G;
+                        colors[idx].B = color.B;
+                    }
+                }
+            }
+        }
+    }
+#endif
+
 public:
     Camera(Transform* transform, PixelGroup* pixelGroup) {
         this->transform = transform;
@@ -310,6 +476,9 @@ public:
         protogc::ProtoGC::heapFree(rotX);
         protogc::ProtoGC::heapFree(rotY);
         protogc::ProtoGC::heapFree(mArenaNodeRefs);
+#if DIRECT_RASTERIZER
+        protogc::ProtoGC::heapFree(mZBuffer);
+#endif
     }
 
     Transform* GetTransform(){
@@ -363,6 +532,23 @@ public:
             Quaternion normLookDir = lookDirection.UnitQuaternion();
             Quaternion camRot = transform->GetRotation();
             rayDirection  = camRot.Multiply(lookDirection);
+
+#if DIRECT_RASTERIZER
+            // Triangle-driven path for the regular HUB75 grid; the legacy
+            // pixel-driven QuadTree path below remains as fallback and for
+            // A/B comparison (build with -DDIRECT_RASTERIZER=0).
+            if (!mDirectChecked) {
+                mDirectSupported = CheckDirectSupport();
+                mDirectChecked = true;
+#if defined(ARDUINO)
+                Serial.printf("[RASTER] direct=%d gridSpacing=%.2f\n", mDirectSupported ? 1 : 0, mGridSpacing);
+#endif
+            }
+            if (mDirectSupported) {
+                RasterizeDirect(scene);
+                return;
+            }
+#endif
 
             EnsureRayCache();
             EnsureFloatCache();
