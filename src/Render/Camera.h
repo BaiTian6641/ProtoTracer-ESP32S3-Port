@@ -50,6 +50,33 @@
 #define DIRECT_RASTERIZER 1
 #endif
 
+// Optional backface culling for the direct rasterizer. OFF by default: the
+// legacy path draws both sides, and the face mesh's winding is not verified,
+// so culling could hide visible faces. Enable (and visually verify) only
+// after confirming the mesh winding; flip DIRECT_RASTERIZER_CULL_SIGN if the
+// kept side is the wrong one.
+#ifndef DIRECT_RASTERIZER_BACKFACE_CULL
+#define DIRECT_RASTERIZER_BACKFACE_CULL 0
+#endif
+// Signed-area convention for the *kept* (front) side: +1 keeps positive
+// signed area, -1 keeps negative. Only used when BACKFACE_CULL is on.
+#ifndef DIRECT_RASTERIZER_CULL_SIGN
+#define DIRECT_RASTERIZER_CULL_SIGN 1
+#endif
+
+#if DIRECT_RASTERIZER
+// Per-frame rasterizer counters (C++17 inline variable; safe in this
+// header-only build — single instance). Updated by RasterizeDirect() and
+// surfaced in the PRINTINFO telemetry in main.cpp.
+struct RasterStats {
+    uint32_t objectsDrawn = 0;        // enabled objects with a valid mesh+material
+    uint32_t trianglesSubmitted = 0;  // triangles that entered rasterization
+    uint32_t trianglesCulled = 0;     // skipped: empty/off-screen pixel bbox (or backface when enabled)
+    uint32_t pixelsShaded = 0;        // pixels actually written (passed depth + coverage)
+};
+inline RasterStats gRasterStats;
+#endif
+
 //template<size_t pixelCount>
 class Camera : public CameraBase{
 private:
@@ -375,6 +402,8 @@ private:
         const int maxCol = (int)kGridCols - 1;
         const int maxRow = (int)kGridRows - 1;
 
+        gRasterStats = RasterStats{}; // reset per-frame counters
+
         Object3D** objects = scene->GetCachedObjects();
         const unsigned int objectCount = scene->GetCachedObjectCount();
 
@@ -387,6 +416,7 @@ private:
 
             Triangle3D* triangles = triangleGroup->GetTriangles();
             const int triangleCount = triangleGroup->GetTriangleCount();
+            gRasterStats.objectsDrawn++;
 
             for (int j = 0; j < triangleCount; j++) {
                 Triangle2D t2(invView, camPos, &triangles[j], material);
@@ -408,8 +438,18 @@ private:
                 if (pyMin < 0) pyMin = 0;
                 if (pxMax > maxCol) pxMax = maxCol;
                 if (pyMax > maxRow) pyMax = maxRow;
-                if (pxMin > pxMax || pyMin > pyMax) continue;
+                if (pxMin > pxMax || pyMin > pyMax) { gRasterStats.trianglesCulled++; continue; }
 
+#if DIRECT_RASTERIZER_BACKFACE_CULL
+                {
+                    // Signed 2D area; cull when it is on the "back" side.
+                    const float signedArea = (p2.X - p1.X) * (p3.Y - p1.Y) - (p3.X - p1.X) * (p2.Y - p1.Y);
+                    const bool front = (DIRECT_RASTERIZER_CULL_SIGN > 0) ? (signedArea > 0.0f) : (signedArea < 0.0f);
+                    if (!front) { gRasterStats.trianglesCulled++; continue; }
+                }
+#endif
+
+                gRasterStats.trianglesSubmitted++;
                 const float avgZ = t2.averageDepth;
 
                 for (int py = pyMin; py <= pyMax; py++) {
@@ -437,6 +477,7 @@ private:
                         colors[idx].R = color.R;
                         colors[idx].G = color.G;
                         colors[idx].B = color.B;
+                        gRasterStats.pixelsShaded++;
                     }
                 }
             }

@@ -1427,6 +1427,14 @@ void loop()
         static_cast<unsigned long>(MicrophoneFourierIT::GetProcessedFrameCount()),
         static_cast<unsigned long>(MicrophoneFourierIT::GetSamplerDropCount()),
         static_cast<unsigned long>(MicrophoneFourierIT::GetTaskStackHighWater()));
+#if DIRECT_RASTERIZER
+    // Rasterizer counters (direct path): object/triangle/pixel throughput.
+    Serial.printf("[RAST] obj=%u tris=%u culled=%u pix=%u\n",
+        gRasterStats.objectsDrawn,
+        gRasterStats.trianglesSubmitted,
+        gRasterStats.trianglesCulled,
+        gRasterStats.pixelsShaded);
+#endif
   }
 #endif
 }

@@ -24,3 +24,7 @@ host-tests/*.log
 host-tests/build_legacy.bat
 host-tests/build_direct.bat
 host-tests/script_out.txt
+host-tests/build_alt.bat
+
+# local build scratch logs
+build_*.log
