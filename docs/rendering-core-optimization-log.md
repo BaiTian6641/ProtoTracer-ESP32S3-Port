@@ -93,6 +93,11 @@
 - **刻意不改** `Rotation.h`/`Quaternion.h`/相机变换的三角——那里需要 libm 精度且角度误差会累积。
 - 实测（COM6）：稳态 anim ~8.5 ms / render ~5.5 ms（前一次 ~10–17 ms anim / ~6 ms render；anim 方差大，方向为正且无回归，设备稳定）。**诚实结论**：缓动三角从来不是 anim 的主成本（主成本是 morph 混合 + FFT 声检），这是一项安全、可复用的微优化，而非大头收益。
 
+## 多环境构建回归（收尾）
+
+- `esp32s3`（debug）✅、`esp32s3-RELEASE` ✅、`esp32s3-PROFILE` ✅ 全部构建通过。
+- `esp32p4`：**按用户要求放弃**（后续将由 ESP32-S31 替代，ESP32-S3 的进阶继任者）。本次未做 P4 编译验证（且当时 github 网络超时无法下载 P4 工具链）。注意：本分支改动的 `Camera.h`/`Mathematics.h` 被 P4 控制器共享——未来启用 S31 时需重新验证该目标编译。
+
 ## 关于 S6（材质去虚化 / 快速路径）的决定：本阶段**不改**
 
 - 依据遥测：render ~5.5 ms 已非瓶颈（anim 更大）；`Material::GetRGB` 虚调用逐**着色像素**（~258 px）触发，数量小；材质栈（CombineMaterial≤10 层）求值在像素级但当前不在热路径。
