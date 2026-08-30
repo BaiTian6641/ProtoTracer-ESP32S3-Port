@@ -29,3 +29,6 @@ host-tests/build_alt.bat
 
 # local build scratch logs
 build_*.log
+
+# CMake/IDE build output dir (not part of PlatformIO firmware build)
+build/
