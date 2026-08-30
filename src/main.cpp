@@ -498,6 +498,36 @@ inline size_t GetFreePSRAM() {
   return heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
 }
 
+#if defined(SRAM_DUMP)
+// One-shot internal-SRAM breakdown for the memory analysis: heap regions +
+// per-task stack high-water marks. Debug build only (-DSRAM_DUMP).
+static void DumpInternalSram()
+{
+    Serial.println("\n===== INTERNAL SRAM DUMP =====");
+    Serial.printf("heap internal DRAM: free=%u largestBlk=%u minEver=%u\n",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+    // Detailed per-region heap info (prints free/alloc/used blocks per region).
+    heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
+    // Per-task stack high-water marks.
+    UBaseType_t n = uxTaskGetNumberOfTasks();
+    TaskStatus_t* arr = (TaskStatus_t*)malloc(n * sizeof(TaskStatus_t));
+    if (arr) {
+        UBaseType_t got = uxTaskGetSystemState(arr, n, nullptr);
+        Serial.printf("tasks=%u (stack high-water = min free bytes ever seen):\n", (unsigned)got);
+        for (UBaseType_t i = 0; i < got; i++) {
+            Serial.printf("  %-16s prio=%-2u hwm=%u B\n",
+                          arr[i].pcTaskName,
+                          (unsigned)arr[i].uxCurrentPriority,
+                          (unsigned)(arr[i].usStackHighWaterMark * sizeof(StackType_t)));
+        }
+        free(arr);
+    }
+    Serial.println("===== END SRAM DUMP =====\n");
+}
+#endif
+
 static void ProtoGcWarnHandler(protogc::HeapGuard::Level, size_t freeBytes, size_t largestBlock) {
   Serial.printf("[ProtoGC] WARN intFree=%u largestBlk=%u; running light collection\n",
                 static_cast<unsigned>(freeBytes),
@@ -1435,6 +1465,20 @@ void loop()
         gRasterStats.trianglesCulled,
         gRasterStats.pixelsShaded);
 #endif
+  }
+#endif
+
+#if defined(SRAM_DUMP)
+  // One-shot internal-SRAM dump ~6s after entering the Running phase.
+  {
+    static uint32_t sramDumpAt = 0;
+    if (gStartupPhase == StartupPhase::Running) {
+      if (sramDumpAt == 0) sramDumpAt = now;
+      else if (sramDumpAt != 0xFFFFFFFF && (now - sramDumpAt) >= 6000) {
+        DumpInternalSram();
+        sramDumpAt = 0xFFFFFFFF; // dump once
+      }
+    }
   }
 #endif
 }

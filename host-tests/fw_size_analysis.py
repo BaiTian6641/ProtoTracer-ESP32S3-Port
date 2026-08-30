@@ -39,6 +39,8 @@ def libname(path):
 
 per_obj = defaultdict(int)
 per_lib = defaultdict(int)
+per_lib_iram = defaultdict(int)
+per_lib_dram = defaultdict(int)   # dram0.data + dram0.bss (internal RAM residents)
 cur = None
 lib_of_obj = {}
 with open(MAP, 'r', encoding='utf-8', errors='replace') as f:
@@ -54,13 +56,16 @@ with open(MAP, 'r', encoding='utf-8', errors='replace') as f:
         obj = e.group(3).strip()
         if size == 0 or obj.startswith('('):   # skip "(size before relaxing)"
             continue
-        # only count sections that occupy flash or ram
-        if not (cur.startswith('.flash') or cur.startswith('.iram') or cur.startswith('.dram') or cur.startswith('.ext_ram')):
+        is_iram = cur.startswith('.iram')
+        is_dram = cur.startswith('.dram')
+        if not (cur.startswith('.flash') or is_iram or is_dram or cur.startswith('.ext_ram')):
             continue
         per_obj[obj] += size
         lib = libname(obj)
         lib_of_obj[obj] = lib
         per_lib[lib] += size
+        if is_iram: per_lib_iram[lib] += size
+        if is_dram: per_lib_dram[lib] += size
 
 total = sum(per_lib.values())
 print(f"=== attributed flash/iram/dram total: {total} bytes ({total/1024:.1f} KiB / {total/1048576:.2f} MB) ===\n")
@@ -73,3 +78,11 @@ for obj, sz in sorted(per_obj.items(), key=lambda kv: -kv[1])[:20]:
     short = obj.replace('\\', '/')
     if len(short) > 95: short = '...' + short[-92:]
     print(f"  {sz:>9} B ({sz/1024:>8.1f} KiB)  [{lib_of_obj.get(obj,'?')}]  {short}")
+
+print("\n=== TOP 20 libs by IRAM (.iram0.text — code resident in internal SRAM) ===")
+for lib, sz in sorted(per_lib_iram.items(), key=lambda kv: -kv[1])[:20]:
+    print(f"  {sz:>9} B ({sz/1024:>8.1f} KiB)  {lib}")
+
+print("\n=== TOP 20 libs by internal-DRAM static (.dram0.data+.bss) ===")
+for lib, sz in sorted(per_lib_dram.items(), key=lambda kv: -kv[1])[:20]:
+    print(f"  {sz:>9} B ({sz/1024:>8.1f} KiB)  {lib}")
