@@ -8,6 +8,7 @@
 #include <ProtoGC.h>
 #include "UniversalFace.h"
 #include "Morph.h"
+#include "MorphCompact.h"
 #include "../Materials/SimpleMaterial.h"
 #include "../Render/IndexGroup.h"
 #include "../Render/Object3D.h"
@@ -157,6 +158,7 @@ public:
         morphVectorStorage.reserve(morphCount);
 
         size_t morphsSkipped = 0;
+        size_t loadedEntries = 0;
         for (JsonObject morphObj : morphsArray) {
             const uint16_t vCount = morphObj["vertexCount"].as<uint16_t>();
             JsonArray idxArray = morphObj["indices"].as<JsonArray>();
@@ -177,31 +179,34 @@ public:
                 return false;
             }
 
-            std::unique_ptr<int[], ProtoGCArrayDeleter> idxBuf(static_cast<int*>(protogc::ProtoGC::psramAlloc(vCount * sizeof(int))));
-            std::unique_ptr<Vector3D[], ProtoGCArrayDeleter> vecBuf(static_cast<Vector3D*>(protogc::ProtoGC::psramAlloc(vCount * sizeof(Vector3D))));
+            std::unique_ptr<uint16_t[], ProtoGCArrayDeleter> idxBuf(static_cast<uint16_t*>(protogc::ProtoGC::psramAlloc(vCount * sizeof(uint16_t))));
+            std::unique_ptr<float16[], ProtoGCArrayDeleter> vecBuf(static_cast<float16*>(protogc::ProtoGC::psramAlloc(vCount * 3 * sizeof(float16))));
             if (!idxBuf || !vecBuf) {
                 Serial.printf("[WARN] universal_face.json Failed to alloc morph '%s' buffers (PSRAM)\n", morphName);
                 return false;
             }
 
             for (uint16_t i = 0; i < vCount; ++i) {
-                idxBuf[i] = idxArray[i].as<int>();
+                idxBuf[i] = static_cast<uint16_t>(idxArray[i].as<int>());
                 const size_t base = static_cast<size_t>(i) * 3;
-                vecBuf[i] = Vector3D(
-                    vecArray[base].as<float>(),
-                    vecArray[base + 1].as<float>(),
-                    vecArray[base + 2].as<float>());
+                vecBuf[base]     = FloatToHalf(vecArray[base].as<float>());
+                vecBuf[base + 1] = FloatToHalf(vecArray[base + 1].as<float>());
+                vecBuf[base + 2] = FloatToHalf(vecArray[base + 2].as<float>());
             }
 
             morphIndexStorage.push_back(std::move(idxBuf));
             morphVectorStorage.push_back(std::move(vecBuf));
             morphs.emplace_back(vCount, morphIndexStorage.back().get(), morphVectorStorage.back().get());
             morphNames.emplace_back(morphName);
+            loadedEntries += vCount;
         }
 
-        Serial.printf("[INFO] universal_face.json Loaded successfully: vertices=%u, triangles=%u, morphs=%u (skipped=%u, culled=%s)\n",
+        // Compact storage: uint16 index (2 B) + 3x half delta (6 B) = 8 B/entry
+        // (was 16 B/entry with int index + Vector3D float deltas).
+        Serial.printf("[INFO] universal_face.json Loaded successfully: vertices=%u, triangles=%u, morphs=%u (skipped=%u, culled=%s), entries=%u, morphStore=%u B\n",
                       (unsigned)vertexCount, (unsigned)triangleCount, (unsigned)morphNames.size(),
-                      (unsigned)morphsSkipped, usedMorphNames ? "on" : "off");
+                      (unsigned)morphsSkipped, usedMorphNames ? "on" : "off",
+                      (unsigned)loadedEntries, (unsigned)(loadedEntries * 8));
 
         loaded = true;
         return true;
@@ -323,8 +328,8 @@ private:
     std::unique_ptr<IndexGroup[], ProtoGCArrayDeleter> indexBufferStorage;
     std::unique_ptr<TriangleGroup> triangleGroup;
     std::unique_ptr<Object3D> basisObj;
-    std::vector<Morph> morphs;
-    std::vector<std::unique_ptr<int[], ProtoGCArrayDeleter>> morphIndexStorage;
-    std::vector<std::unique_ptr<Vector3D[], ProtoGCArrayDeleter>> morphVectorStorage;
+    std::vector<MorphCompact> morphs;
+    std::vector<std::unique_ptr<uint16_t[], ProtoGCArrayDeleter>> morphIndexStorage;
+    std::vector<std::unique_ptr<float16[], ProtoGCArrayDeleter>> morphVectorStorage;
     std::vector<std::string> morphNames;
 };

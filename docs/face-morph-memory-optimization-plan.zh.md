@@ -206,3 +206,18 @@
 - `host-tests/face_analysis.py`：morph 存储/调用集合/零与微小分量统计、used/unused 明细。
 - `host-tests/face_analysis2.py`：cutoff 可行性、delta 去重空间、各存储模型字节对比、half-float 范围校验。
 - 复跑：`& "C:\Users\weyst\.platformio\penv\Scripts\python.exe" host-tests\face_analysis.py`（penv Python，无额外依赖）。
+
+---
+
+## 实施日志
+
+> 分支 `feature/morph-memory-optimization`（自渲染优化分支切出）。目标：为未来的 BLE/WiFi 远程命令控制等功能腾出内存。设备 COM6 在线 profiling。
+
+### M1 — 按调用集合裁剪 morph（commit `7d1e9e8`，已在 COM6 验证）
+
+- `JsonDrivenProtogenAnimation::CollectUsedMorphNames()`：加载脸之前读取活动动画配置，收集引用的 morph 名（expressions.anim_parameter 键 + auto_link.name + flipped_morphs）+ 硬编码（8 个 viseme、Blink、SEyeBlink、HideMouth）+ 别名（vrc_v_uh↔dd）。**无需调整初始化顺序**（预扫描独立，原 `LoadAnimationConfig→AutoLinkMorphs` 不变）。
+- `JsonNukudeFace::Load` 新增可选 `usedMorphNames` 过滤：未引用 morph 直接跳过、不分配。
+- **首启安全**：本地无动画配置时（首次下载前）不裁剪、全量加载。
+- **设备实测（COM6）**：`[MORPH] morph culling active: 43 used morphs`；脸加载 `morphs=42 skipped=57`；稳态 `psramFree` 从 ~7.68 MB 升到 ~7.96 MB（观测 ~+280 KB；结构账 = morph 存储 68.8→37 KiB，即 -32 KiB，其余为运行期方差 + 分配次数 198→84 的碎片收益）。表情/viseme/眨眼正常、BLE 就绪、无崩溃。
+- **排障记录**：一度"无串口输出"实为设备卡在 download 模式（USB-Serial-JTAG 复位采样 GPIO0 低电平），**与固件无关**；正确脱困 = DTR 置高（IO0 释放）+ RTS 脉冲复位。
+- 风险确认：活跃路径全部按名访问 morph（`FindMorphIndexByName`→当前索引）；枚举索引式访问只存在于未启用的旧动画类（BetaAnimation/ProtogenHUB75Animation 等），裁剪对活跃路径安全。
