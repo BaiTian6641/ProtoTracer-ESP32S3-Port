@@ -36,6 +36,16 @@ public:
     JsonNukudeFace& operator=(JsonNukudeFace&&) = default;
 
     bool Load(fs::FS &fs, const char *path) {
+        return Load(fs, path, nullptr);
+    }
+
+    // Load with an optional morph-name filter. When `usedMorphNames` is
+    // non-null, only morphs whose name appears in the set are allocated/stored
+    // — the rest are skipped entirely (no memory cost). Used-morph culling is
+    // safe because all morph access in the active JSON-driven path is
+    // name-based (FindMorphIndexByName → current index); unreferenced morphs
+    // never receive a non-zero weight, so skipping them changes nothing.
+    bool Load(fs::FS &fs, const char *path, const std::vector<std::string> *usedMorphNames) {
         File file = fs.open(path, "r");
         if (!file) {
             Serial.println("[WARN] universal_face.json Failed to open file.");
@@ -146,11 +156,18 @@ public:
         morphIndexStorage.reserve(morphCount);
         morphVectorStorage.reserve(morphCount);
 
+        size_t morphsSkipped = 0;
         for (JsonObject morphObj : morphsArray) {
             const uint16_t vCount = morphObj["vertexCount"].as<uint16_t>();
             JsonArray idxArray = morphObj["indices"].as<JsonArray>();
             JsonArray vecArray = morphObj["vectors"].as<JsonArray>();
             const char *morphName = morphObj["name"] | "";
+
+            // Morph culling: skip morphs not referenced by the active animation config.
+            if (usedMorphNames && !NameInSet(morphName, *usedMorphNames)) {
+                morphsSkipped++;
+                continue;
+            }
 
             if (!idxArray || !vecArray || idxArray.size() != vCount || vecArray.size() != static_cast<size_t>(vCount) * 3) {
                 Serial.printf("[WARN] universal_face.json Morph '%s' invalid sizes (idx=%u vs %u, vec=%u vs %u)\n",
@@ -182,8 +199,9 @@ public:
             morphNames.emplace_back(morphName);
         }
 
-        Serial.printf("[INFO] universal_face.json Loaded successfully: vertices=%u, triangles=%u, morphs=%u\n",
-                      (unsigned)vertexCount, (unsigned)triangleCount, (unsigned)morphCount);
+        Serial.printf("[INFO] universal_face.json Loaded successfully: vertices=%u, triangles=%u, morphs=%u (skipped=%u, culled=%s)\n",
+                      (unsigned)vertexCount, (unsigned)triangleCount, (unsigned)morphNames.size(),
+                      (unsigned)morphsSkipped, usedMorphNames ? "on" : "off");
 
         loaded = true;
         return true;
@@ -289,6 +307,16 @@ public:
     }
 
 private:
+    // Case-insensitive membership test for the morph-name filter.
+    static bool NameInSet(const char *name, const std::vector<std::string> &set) {
+        if (!name || !name[0]) return false;
+        const size_t len = strlen(name);
+        for (const auto &n : set) {
+            if (n.length() == len && strcasecmp(n.c_str(), name) == 0) return true;
+        }
+        return false;
+    }
+
     bool loaded = false;
     SimpleMaterial simpleMaterial = SimpleMaterial(ProtoRGBColor(128, 128, 128));
     std::unique_ptr<Vector3D[], ProtoGCArrayDeleter> vertexBufferStorage;
