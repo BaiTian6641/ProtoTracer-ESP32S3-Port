@@ -164,9 +164,12 @@ private:
 
     void EnsureZBuffer() {
         if (mZBuffer) return;
-        mZBuffer = static_cast<float*>(protogc::ProtoGC::internalAlloc(kGridCols * kGridRows * sizeof(float)));
+        // PSRAM-first: the z-buffer is read+written per covered pixel, but the
+        // panel is only 2048 px and PSRAM is cached — the per-frame cost is
+        // negligible vs the ~8 KB of internal DRAM it frees for BLE/WiFi.
+        mZBuffer = static_cast<float*>(protogc::ProtoGC::psramAlloc(kGridCols * kGridRows * sizeof(float)));
         if (!mZBuffer) {
-            mZBuffer = static_cast<float*>(protogc::ProtoGC::psramAlloc(kGridCols * kGridRows * sizeof(float)));
+            mZBuffer = static_cast<float*>(protogc::ProtoGC::internalAlloc(kGridCols * kGridRows * sizeof(float)));
         }
     }
 
@@ -272,16 +275,20 @@ private:
             protogc::ProtoGC::heapFree(rotX);
             protogc::ProtoGC::heapFree(rotY);
 
-            tmpX = static_cast<float*>(protogc::ProtoGC::internalAlloc(desired * sizeof(float)));
-            tmpY = static_cast<float*>(protogc::ProtoGC::internalAlloc(desired * sizeof(float)));
-            rotX = static_cast<float*>(protogc::ProtoGC::internalAlloc(desired * sizeof(float)));
-            rotY = static_cast<float*>(protogc::ProtoGC::internalAlloc(desired * sizeof(float)));
+            // PSRAM-first: these are used once per frame in the ESP-DSP ray-prep
+            // batch (and once per pixel to assemble cachedRays). They tolerate
+            // PSRAM latency; keeping them off internal DRAM frees ~32 KB for
+            // connectivity (BLE/WiFi) headroom. Internal only as fallback.
+            tmpX = static_cast<float*>(protogc::ProtoGC::psramAlloc(desired * sizeof(float)));
+            tmpY = static_cast<float*>(protogc::ProtoGC::psramAlloc(desired * sizeof(float)));
+            rotX = static_cast<float*>(protogc::ProtoGC::psramAlloc(desired * sizeof(float)));
+            rotY = static_cast<float*>(protogc::ProtoGC::psramAlloc(desired * sizeof(float)));
 
-            // Fallback to PSRAM if internal allocation fails
-            if (!tmpX) tmpX = static_cast<float*>(protogc::ProtoGC::psramAlloc(desired * sizeof(float)));
-            if (!tmpY) tmpY = static_cast<float*>(protogc::ProtoGC::psramAlloc(desired * sizeof(float)));
-            if (!rotX) rotX = static_cast<float*>(protogc::ProtoGC::psramAlloc(desired * sizeof(float)));
-            if (!rotY) rotY = static_cast<float*>(protogc::ProtoGC::psramAlloc(desired * sizeof(float)));
+            // Fallback to internal if PSRAM allocation fails
+            if (!tmpX) tmpX = static_cast<float*>(protogc::ProtoGC::internalAlloc(desired * sizeof(float)));
+            if (!tmpY) tmpY = static_cast<float*>(protogc::ProtoGC::internalAlloc(desired * sizeof(float)));
+            if (!rotX) rotX = static_cast<float*>(protogc::ProtoGC::internalAlloc(desired * sizeof(float)));
+            if (!rotY) rotY = static_cast<float*>(protogc::ProtoGC::internalAlloc(desired * sizeof(float)));
         }
     }
 

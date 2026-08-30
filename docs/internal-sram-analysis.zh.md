@@ -135,6 +135,19 @@ free=20360  allocated=260892  minEver=15780  largest_free_block=7668
 
 ---
 
+## 6. 实施记录（方案 A 已落地，commit 见 git）
+
+**方案 A 已在 COM6 验证**：
+- 改动：`Camera.h` 的 `EnsureFloatCache`（ESP-DSP 批处理数组 tmpX/Y/rotX/rotY，~32 KB）与 `EnsureZBuffer`（z-buffer，~8 KB）由"内部优先"改为"**PSRAM 优先、内部兜底**"。ESP-DSP 经 cache 读 PSRAM 正常。
+- **设备实测（COM6，PROFILE）**：
+  - `intFree`：**~20.5 K → ~46.5 K**（翻倍以上）；
+  - `largestBlk`：**7668 → 31732**（**4 倍**，碎片化/冻结风险大幅降低）；
+  - render：~6.0 → ~7.3 ms（PSRAM 延迟的适度代价；HUB75 由 DMA 独立扫描，对最终显示无感）；
+  - 表情/动画正常（RAST 计数不变），无崩溃。
+- 内存位置对浮点计算输出无影响（PSRAM 放置输出中性），等价性由既有 `RASTER_VERIFY_AB` 门覆盖（如需回归随时可开）。
+
+---
+
 ## 附：复现方法
 
 ```powershell
