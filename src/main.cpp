@@ -206,7 +206,11 @@ static void BackgroundDownloadTask(void *)
         sources[1].name = gBgFallbackName;
         DownloadUserConfigFromSources(sources, 2, userConfig, false, nullptr);
     }
-    // Face model
+    // Face model — fetched AFTER the user config, using the freshly-downloaded
+    // device_id (not the value captured at task launch). This is the
+    // config-first ordering guarantee: if the config refresh changed device_id,
+    // the face/animation filenames follow the new config.
+    const String faceDeviceId = userConfig.device_id.length() > 0 ? userConfig.device_id : gBgDeviceId;
     {
         FaceUpdateConfig fc[2] = {
             {gBgWifiSsid.c_str(), gBgWifiPass.c_str(),
@@ -214,7 +218,7 @@ static void BackgroundDownloadTask(void *)
             {gBgWifiSsid.c_str(), gBgWifiPass.c_str(),
              gBgFallbackBase, gBgFallbackToken, gBgFallbackAccept, gBgFallbackAuth, gBgFallbackName}
         };
-        EnsureFaceModelJson(fc, 2, gBgDeviceId, nullptr, false); // no I2C — bg task runs on arbitrary core
+        EnsureFaceModelJson(fc, 2, faceDeviceId, nullptr, false); // no I2C — bg task runs on arbitrary core
     }
     Serial.println("[BG] Download task complete");
     gBgDownloadsDone = true;
