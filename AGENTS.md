@@ -97,6 +97,13 @@ pio device monitor -b 115200        # serial monitor (esp32_exception_decoder en
 > for esptool v5 (`--pad-to-size`, not `--fill-flash-size`). Also set `PYTHONIOENCODING=utf-8`
 > when flashing/monitoring from scripts to avoid a GBK console-encoding crash in pio's
 > output reader thread.
+>
+> **Device recovery (COM6):** if the board stops producing app serial output after manual
+> DTR/RTS fiddling, it is stuck in **download mode** (the USB-Serial-JTAG reset samples
+> GPIO0 low). Escape by holding IO0 released while pulsing reset: with pyserial —
+> `s.dtr = True; s.rts = True; sleep(0.15); s.rts = False`. Note the app's console is
+> USB-CDC and re-enumerates on boot, so early boot output can be missed — rely on the
+> periodic `PRINTINFO` telemetry (every ~2 s) rather than the first lines.
 
 Build-time helper scripts wired via `extra_scripts` in `platformio.ini`:
 
@@ -162,6 +169,14 @@ any render-path change.
   object/triangle/pixel counters. Optional `DIRECT_RASTERIZER_BACKFACE_CULL` (default 0) is
   available but unverified against the face mesh winding. See
   `docs/rendering-core-optimization-log.md` for measured timings and the implementation log.
+- **Face/morph memory (PSRAM):** the JSON-loaded face culls morphs not referenced by the
+  active animation config at load time (`JsonDrivenProtogenAnimation::CollectUsedMorphNames`,
+  feeding `JsonNukudeFace::Load`'s `usedMorphNames` filter). Morph deltas are stored as
+  **IEEE-754 half** (`src/Math/HalfFloat.h`) with **uint16** indices (`src/Morph/MorphCompact.h`);
+  triangle indices in `src/Render/IndexGroup.h` are also uint16. Do not change the global
+  `Vector3D` to half — see `docs/face-morph-memory-optimization-plan.zh.md` §4. If you add a
+  new hardcoded morph reference in firmware, add its name to the `kAlwaysUsed` list in
+  `CollectUsedMorphNames` or it will be culled.
 - Feature selection is done almost entirely through **build flags / `#define`s**:
   `TASESP32S3`/`TASESP32P4` (controller), `NEW_GESTURE` (PAJ7620 vs APDS9960),
   `USE_TOKEN_AUTH`, `ENABLE_M5_PIXEL_PREVIEW`, `LANG_CN` (Chinese UI strings via the

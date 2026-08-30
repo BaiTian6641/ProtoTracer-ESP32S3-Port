@@ -221,3 +221,32 @@
 - **设备实测（COM6）**：`[MORPH] morph culling active: 43 used morphs`；脸加载 `morphs=42 skipped=57`；稳态 `psramFree` 从 ~7.68 MB 升到 ~7.96 MB（观测 ~+280 KB；结构账 = morph 存储 68.8→37 KiB，即 -32 KiB，其余为运行期方差 + 分配次数 198→84 的碎片收益）。表情/viseme/眨眼正常、BLE 就绪、无崩溃。
 - **排障记录**：一度"无串口输出"实为设备卡在 download 模式（USB-Serial-JTAG 复位采样 GPIO0 低电平），**与固件无关**；正确脱困 = DTR 置高（IO0 释放）+ RTS 脉冲复位。
 - 风险确认：活跃路径全部按名访问 morph（`FindMorphIndexByName`→当前索引）；枚举索引式访问只存在于未启用的旧动画类（BetaAnimation/ProtogenHUB75Animation 等），裁剪对活跃路径安全。
+
+### M3 — half-float delta + uint16 索引紧凑存储（commit `c14d851`，已在 COM6 验证）
+
+- 新增 `src/Math/HalfFloat.h`（IEEE-754 binary16↔float32 转换器，就近舍入）。**数值验证**（Python 复算位运算）：morph delta 范围 [0.002..25.3] 相对误差 ≤4e-4；**最大 morphed 顶点位置误差实测 0.0026 像素**（视觉无损）；超微小 delta 冲刷为零（与 cutoff 哲学一致）。Xtensa 无 half 硬件，转换仅在 morph 应用时（每帧仅活跃 morph 的受影响顶点，开销可忽略）。
+- 新增 `src/Morph/MorphCompact.h`（uint16 索引 + half delta，8 B/条 vs 16 B），应用时 half→float。**不改共享的 `Morph` 类**（旧的编译期内嵌 NukudeFace 继续用它）。
+- `JsonNukudeFace` 改用 `MorphCompact`；加载时 delta 转 half、索引转 uint16；新增确定性 `morphStore=<N> B` 上报。
+- **设备实测（COM6，确定性数字）**：`morphStore=18960 B`（42 个 morph，2370 条目）。对比：基线 float32 全量 70400 B → M1 裁剪 float32 37920 B → M3 half-float **18960 B = -73%**。运行稳定，表情正常。
+- half-float 判断落实（§4）：**全局 `Vector3D` 未动**；只有 morph delta 存储用紧凑类型，应用时转回 float32。
+
+### M4 — IndexGroup/索引 uint16（commit `1b84a47`，已在 COM6 验证）
+
+- `IndexGroup` 的 A/B/C 由 `unsigned int` 改为 `uint16_t`（顶点数 < 65536）。三角形索引缓冲 6276 B → 3138 B（**省 3.1 KB**）。
+- 关键安全点：IndexGroup 仅在**网格构造时**读取（用于接线三角形顶点指针），渲染热路径用的是已接线的指针——收窄对渲染路径零影响。实测 RAST 计数与改动前完全一致（网格接线不变），设备稳定。
+
+### M2（单 arena）/ M5（去重表）——本期**暂缓**（登记理由）
+
+- **M2（单 PSRAM arena）**：裁剪后 morph 分配次数已从 198 降到 84，且都在 PSRAM（8 MB 充裕，碎片敏感性远低于内部 DRAM）；arena 的收益主要是分配卫生，边际价值低。若未来 morph 数量大幅增长或出现 PSRAM 碎片迹象再做。**注意**：arena 化后裁剪集合变化时需重算总量。
+- **M5（delta 去重表）**：实测 50.9% 顶点共享 delta，有压缩空间，但要在 morph 应用循环加一层间接寻址（表查），且与 half-float 叠加后边际收益递减。列为二期可选，届时用 morph 等价校验（见 §7 M3 验证方法）把关。
+
+### 累计内存收益（新脸 99 morph，结构账）
+
+| 项 | 基线 | 优化后 | 节省 |
+|---|---|---|---|
+| morph 存储（99→42 裁剪 + half） | 70,400 B | 18,960 B | **51,440 B（-73%）** |
+| 三角形索引缓冲（uint16） | 6,276 B | 3,138 B | 3,138 B（-50%） |
+| **合计（结构性）** | | | **~54.6 KB** |
+| 观测 psramFree（含分配次数/碎片收益） | — | — | 多 ~270 KB（含运行期方差，见 M1） |
+
+> 注：morph/face 数据本就在 PSRAM；本阶段释放的是 **PSRAM**。未来 BLE/WiFi 远程命令控制主要消耗**内部 DRAM**——下一阶段若要为 BLE 腾内部 DRAM，应评估"解析期 JSON doc（~343 KB 峰值）流式化/裁剪（方案 F）"与渲染网格 `Triangle3D` 数组（~95 KB ×3 份）的放置，那才是内部 DRAM 的大头。
