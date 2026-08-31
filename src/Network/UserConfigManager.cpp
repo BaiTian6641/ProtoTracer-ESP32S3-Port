@@ -536,7 +536,18 @@ bool EnsureUserConfig(UserConfig &config)
         return SaveUserConfig(config);
     }
 
-    config.device_id = doc["device_id"] | ReadUniqueDeviceId();
+    // Device identity always comes from the chip (eFuse OPTIONAL_UNIQUE_ID, or
+    // the eFuse MAC as fallback) — never from the persisted config. This
+    // guarantees each device uses its own chip-internal device ID even if a
+    // user_config.json was copied/synced from another device.
+    const String chipDeviceId = ReadUniqueDeviceId();
+    const String storedDeviceId = doc["device_id"] | String("");
+    if (storedDeviceId.length() > 0 && storedDeviceId != chipDeviceId)
+    {
+        Serial.printf("[INFO] device_id: chip-internal %s overrides config %s\n",
+                      chipDeviceId.c_str(), storedDeviceId.c_str());
+    }
+    config.device_id = chipDeviceId;
     config.username = doc["username"] | String("Protogen");
     config.user_r = ClampByte(doc["user_r"] | 25);
     config.user_g = ClampByte(doc["user_g"] | 125);
