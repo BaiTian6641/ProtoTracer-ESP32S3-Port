@@ -1,4 +1,4 @@
-﻿function Check-Visemes {
+function Check-Visemes {
     $animationJson = Get-Content "src/Animation/example_animation.json" -Raw | ConvertFrom-Json
     $faceJson = Get-Content "src/Morph/universal_face.json" -Raw | ConvertFrom-Json
     
@@ -17,27 +17,22 @@
 
 function Check-Order {
     $content = Get-Content "src/Animation/JsonDrivenProtogenAnimation.h" -Raw
-    
-    # Match the Initialize method starting at line 1113 approximately
-    # We use a pattern that matches bool Initialize(...) followed by a block
-    $initMatch = [regex]::Match($content, 'bool\s+Initialize\s*\([^)]*\)\s*\{([\s\S]*?)\n\s*\}', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-    
-    if (-not $initMatch.Success) {
-        # Fallback if the block is large and regex hits limits or fails to find end brace easily
-        $startPos = $content.IndexOf("bool Initialize")
-        if ($startPos -eq -1) {
-             Write-Output "Check 2: FAIL (Initialize() not found)"
-             return
-        }
-        $body = $content.Substring($startPos, 5000) # Take a large chunk
-    } else {
-        $body = $initMatch.Groups[1].Value
+
+    # Locate the Initialize method and take a generous window that covers its
+    # whole body. (A regex with a non-greedy body capture stops at the first
+    # inner closing brace and truncates the method — that was the old bug.)
+    $startPos = $content.IndexOf("bool Initialize")
+    if ($startPos -eq -1) {
+         Write-Output "Check 2: FAIL (Initialize() not found)"
+         return
     }
-    
+    $len = [Math]::Min(6000, $content.Length - $startPos)
+    $body = $content.Substring($startPos, $len)
+
     $posLoad = $body.IndexOf("LoadAnimationConfig(config)")
     $posAuto = $body.IndexOf("AutoLinkMorphs()")
     $posLink = $body.IndexOf("LinkParameters()")
-    
+
     if ($posLoad -eq -1) {
         Write-Output "Check 2: FAIL (LoadAnimationConfig not found)"
     } elseif ($posAuto -eq -1 -or $posLink -eq -1) {

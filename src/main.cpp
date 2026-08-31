@@ -126,7 +126,7 @@ constexpr bool kVerboseStartup = false;
 #endif
 
 #ifndef PROTOTRACER_FW_VERSION
-#define PROTOTRACER_FW_VERSION "1.2.12"
+#define PROTOTRACER_FW_VERSION "1.2.13"
 #endif
 
 #ifndef PROTOTRACER_FW_MANIFEST
@@ -206,7 +206,11 @@ static void BackgroundDownloadTask(void *)
         sources[1].name = gBgFallbackName;
         DownloadUserConfigFromSources(sources, 2, userConfig, false, nullptr);
     }
-    // Face model
+    // Face model — fetched AFTER the user config, using the freshly-downloaded
+    // device_id (not the value captured at task launch). This is the
+    // config-first ordering guarantee: if the config refresh changed device_id,
+    // the face/animation filenames follow the new config.
+    const String faceDeviceId = userConfig.device_id.length() > 0 ? userConfig.device_id : gBgDeviceId;
     {
         FaceUpdateConfig fc[2] = {
             {gBgWifiSsid.c_str(), gBgWifiPass.c_str(),
@@ -214,7 +218,7 @@ static void BackgroundDownloadTask(void *)
             {gBgWifiSsid.c_str(), gBgWifiPass.c_str(),
              gBgFallbackBase, gBgFallbackToken, gBgFallbackAccept, gBgFallbackAuth, gBgFallbackName}
         };
-        EnsureFaceModelJson(fc, 2, gBgDeviceId, nullptr, false); // no I2C — bg task runs on arbitrary core
+        EnsureFaceModelJson(fc, 2, faceDeviceId, nullptr, false); // no I2C — bg task runs on arbitrary core
     }
     Serial.println("[BG] Download task complete");
     gBgDownloadsDone = true;
@@ -497,6 +501,42 @@ inline size_t GetLargestFreeInternalBlock() {
 inline size_t GetFreePSRAM() {
   return heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
 }
+
+#if defined(SRAM_DUMP)
+// One-shot internal-SRAM breakdown for the memory analysis: heap regions +
+// per-task stack high-water marks. Debug build only (-DSRAM_DUMP).
+static void DumpInternalSram()
+{
+    Serial.println("\n===== INTERNAL SRAM DUMP =====");
+    Serial.printf("heap internal DRAM: free=%u largestBlk=%u minEver=%u\n",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+    // Detailed per-region heap info (prints free/alloc/used blocks per region).
+    heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
+    Serial.println("--- PSRAM heap ---");
+    Serial.printf("heap PSRAM: free=%u largestBlk=%u minEver=%u\n",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
+        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
+    heap_caps_print_heap_info(MALLOC_CAP_SPIRAM);
+    // Per-task stack high-water marks.
+    UBaseType_t n = uxTaskGetNumberOfTasks();
+    TaskStatus_t* arr = (TaskStatus_t*)malloc(n * sizeof(TaskStatus_t));
+    if (arr) {
+        UBaseType_t got = uxTaskGetSystemState(arr, n, nullptr);
+        Serial.printf("tasks=%u (stack high-water = min free bytes ever seen):\n", (unsigned)got);
+        for (UBaseType_t i = 0; i < got; i++) {
+            Serial.printf("  %-16s prio=%-2u hwm=%u B\n",
+                          arr[i].pcTaskName,
+                          (unsigned)arr[i].uxCurrentPriority,
+                          (unsigned)(arr[i].usStackHighWaterMark * sizeof(StackType_t)));
+        }
+        free(arr);
+    }
+    Serial.println("===== END SRAM DUMP =====\n");
+}
+#endif
 
 static void ProtoGcWarnHandler(protogc::HeapGuard::Level, size_t freeBytes, size_t largestBlock) {
   Serial.printf("[ProtoGC] WARN intFree=%u largestBlk=%u; running light collection\n",
@@ -1427,6 +1467,28 @@ void loop()
         static_cast<unsigned long>(MicrophoneFourierIT::GetProcessedFrameCount()),
         static_cast<unsigned long>(MicrophoneFourierIT::GetSamplerDropCount()),
         static_cast<unsigned long>(MicrophoneFourierIT::GetTaskStackHighWater()));
+#if DIRECT_RASTERIZER
+    // Rasterizer counters (direct path): object/triangle/pixel throughput.
+    Serial.printf("[RAST] obj=%u tris=%u culled=%u pix=%u\n",
+        gRasterStats.objectsDrawn,
+        gRasterStats.trianglesSubmitted,
+        gRasterStats.trianglesCulled,
+        gRasterStats.pixelsShaded);
+#endif
+  }
+#endif
+
+#if defined(SRAM_DUMP)
+  // One-shot internal-SRAM dump ~6s after entering the Running phase.
+  {
+    static uint32_t sramDumpAt = 0;
+    if (gStartupPhase == StartupPhase::Running) {
+      if (sramDumpAt == 0) sramDumpAt = now;
+      else if (sramDumpAt != 0xFFFFFFFF && (now - sramDumpAt) >= 6000) {
+        DumpInternalSram();
+        sramDumpAt = 0xFFFFFFFF; // dump once
+      }
+    }
   }
 #endif
 }

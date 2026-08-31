@@ -5,8 +5,30 @@
 .pio/build/*/
 .pio/build/*/*/
 .pio/build/*/*/*/
+.pio/build/project.checksum
 src/Morph/Commissions
 lib/ElegantOTAPro-3-1-4/
 .pio/libdeps/*/
 .pio/libdeps/.cache/
 src/Auth/TassAuthToken.h
+
+# Reference clones for research/optimization study (e.g. CubeCoders/Jet) —
+# not part of the ProtoTracer source tree, never committed.
+reference/
+
+# host-tests build artifacts (binaries/objects/logs); sources are committed
+host-tests/*.exe
+host-tests/*.bin
+host-tests/*_obj/
+host-tests/*.log
+# host-tests generated per-run build scripts + stray scratch output
+host-tests/build_legacy.bat
+host-tests/build_direct.bat
+host-tests/script_out.txt
+host-tests/build_alt.bat
+
+# local build scratch logs
+build_*.log
+
+# CMake/IDE build output dir (not part of PlatformIO firmware build)
+build/

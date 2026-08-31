@@ -211,6 +211,25 @@ private:
     uint16_t mVrcOhId = 0xFFFF;
     uint16_t mHideMouthId = 0xFFFF;
 
+    // ── Morph culling (方案 A) ──
+    // Morph names actually referenced by the active animation config, collected
+    // before the face loads so unused morphs are never allocated. Active only
+    // when a local animation config exists (fresh boot with no cached config
+    // loads ALL morphs to stay functional until the config is downloaded).
+    std::vector<std::string> mUsedMorphNames;
+    bool mMorphFilterActive = false;
+
+    void AddUsedMorphName(const char *name)
+    {
+        if (!name || !name[0]) return;
+        const size_t len = strlen(name);
+        for (const auto &n : mUsedMorphNames)
+        {
+            if (n.length() == len && strcasecmp(n.c_str(), name) == 0) return; // dedup
+        }
+        mUsedMorphNames.emplace_back(name);
+    }
+
     // Helpers
     Object3D *GetFaceObject()
     {
@@ -380,6 +399,91 @@ private:
         }
     }
 
+    // ── Morph culling pre-scan (方案 A) ──
+    // Reads the active animation config (same path resolution as
+    // LoadAnimationConfig) and collects every morph name the config references
+    // (expressions.*.anim_parameter keys, auto_link[].name, flipped_morphs[]),
+    // plus the hardcoded voice/blink/mouth morphs and the vrc_v_uh<->dd alias.
+    // The result filters which morphs the face loader allocates.
+    void CollectUsedMorphNames(const UserConfig &config)
+    {
+        mUsedMorphNames.clear();
+        mMorphFilterActive = false;
+
+        // Always-needed morphs (referenced from firmware code, not the config):
+        static const char *kAlwaysUsed[] = {
+            "vrc_v_ss", "vrc_v_ee", "vrc_v_ih", "vrc_v_dd",
+            "vrc_v_rr", "vrc_v_ch", "vrc_v_aa", "vrc_v_oh", "vrc_v_uh",
+            "Blink", "SEyeBlink", "HideMouth",
+        };
+        for (const char *n : kAlwaysUsed) AddUsedMorphName(n);
+
+        String filename = config.user_animation.length() > 0 ? config.user_animation : (config.device_id + String("_animation.json"));
+        String path = "/" + filename;
+        String fallbackPath = "/example_animation.json";
+
+        String jsonText;
+        String usedPath;
+        if (LittleFS.exists(path))
+        {
+            File f = LittleFS.open(path, "r");
+            if (f) { jsonText = f.readString(); f.close(); usedPath = path; }
+        }
+        else if (LittleFS.exists(fallbackPath))
+        {
+            File f = LittleFS.open(fallbackPath, "r");
+            if (f) { jsonText = f.readString(); f.close(); usedPath = fallbackPath; }
+        }
+
+        if (jsonText.isEmpty())
+        {
+            // Fresh device: animation config is downloaded later in Initialize.
+            // Load ALL morphs so the first boot is fully functional.
+            Serial.println("[MORPH] No local animation config — morph culling disabled this boot");
+            return;
+        }
+
+        AnimJsonDocument doc(jsonText.length() + 1024);
+        if (deserializeJson(doc, jsonText))
+        {
+            Serial.println("[MORPH] animation config pre-scan parse failed — morph culling disabled this boot");
+            return;
+        }
+
+        if (doc.containsKey("expressions"))
+        {
+            for (JsonPair kv : doc["expressions"].as<JsonObject>())
+            {
+                JsonObject e = kv.value().as<JsonObject>();
+                if (!e || !e.containsKey("anim_parameter")) continue;
+                for (JsonPair ap : e["anim_parameter"].as<JsonObject>())
+                {
+                    AddUsedMorphName(ap.key().c_str());
+                }
+            }
+        }
+        if (doc.containsKey("auto_link"))
+        {
+            for (JsonVariant v : doc["auto_link"].as<JsonArray>())
+            {
+                const char *n = v["name"] | "";
+                if (n[0]) AddUsedMorphName(n);
+            }
+        }
+        if (doc.containsKey("flipped_morphs"))
+        {
+            for (JsonVariant v : doc["flipped_morphs"].as<JsonArray>())
+            {
+                const char *n = v.as<const char *>();
+                if (n && n[0]) AddUsedMorphName(n);
+            }
+        }
+
+        mMorphFilterActive = true;
+        Serial.printf("[MORPH] morph culling active: %u used morphs (config: %s)\n",
+                      (unsigned)mUsedMorphNames.size(), usedPath.c_str());
+    }
+
     bool TryLoadFaceFromPath(const String &path)
     {
         if (!LittleFS.exists(path))
@@ -387,7 +491,8 @@ private:
             return false;
         }
 
-        jsonFaceLoaded = jsonFace.Load(LittleFS, path.c_str());
+        jsonFaceLoaded = jsonFace.Load(LittleFS, path.c_str(),
+                                       mMorphFilterActive ? &mUsedMorphNames : nullptr);
         if (jsonFaceLoaded)
         {
             Serial.printf("[INFO] Loaded face model from %s\n", path.c_str());
@@ -509,8 +614,12 @@ private:
     }
 
 
-    void LoadJsonFaceBlocking()
+    void LoadJsonFaceBlocking(const UserConfig &config)
     {
+        // Collect the used-morph set before loading so unused morphs are never
+        // allocated (方案 A morph culling).
+        CollectUsedMorphNames(config);
+
         const String preferredFacePath = deviceId.length() > 0 ? "/" + deviceId + String("_face.json") : String();
         const String fallbackFacePath = "/universal_face.json";
 
@@ -1630,7 +1739,7 @@ public:
         Menu::SetBrightness(config.user_brightness);
         activeBrightness = -1;
 
-        LoadJsonFaceBlocking();
+        LoadJsonFaceBlocking(config);
 
         Object3D *faceObject = GetFaceObject();
         if (faceObject)

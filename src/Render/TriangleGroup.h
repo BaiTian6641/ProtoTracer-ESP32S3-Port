@@ -90,6 +90,9 @@ public:
 
     TriangleGroup(TriangleGroup* triangleGroup) : vertexCount(triangleGroup->GetVertexCount()), triangleCount(triangleGroup->GetTriangleCount()){
         indexGroup = triangleGroup->GetIndexGroup();//use existing reference, will not change
+        ownsIndexGroup = false;//borrowed: the source owns and frees indexGroup; copying it
+        //               and also freeing here would double-free (latent bug — masked today
+        //               only because render objects are never destroyed).
         vertices = new Vector3D[vertexCount];//copy to new array
         triangles = new Triangle3D[triangleCount];//copy to new array
 

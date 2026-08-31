@@ -11,6 +11,7 @@ def merge_bin(source, target, env):
     flash_images = env.Flatten(env.get("FLASH_EXTRA_IMAGES", [])) + ["$ESP32_APP_OFFSET", APP_BIN]
 
     # Run esptool to merge images into a single binary
+    # (esptool v5 click CLI: --pad-to-size replaces the legacy --fill-flash-size)
     env.Execute(
         " ".join(
             [
@@ -19,7 +20,7 @@ def merge_bin(source, target, env):
                 "--chip",
                 BOARD_CONFIG.get("build.mcu", "esp32s3"),
                 "merge_bin",
-                "--fill-flash-size",
+                "--pad-to-size",
                 BOARD_CONFIG.get("upload.flash_size", "4MB"),
                 "-o",
                 MERGED_BIN,
