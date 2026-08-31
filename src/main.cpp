@@ -514,6 +514,12 @@ static void DumpInternalSram()
         (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     // Detailed per-region heap info (prints free/alloc/used blocks per region).
     heap_caps_print_heap_info(MALLOC_CAP_INTERNAL);
+    Serial.println("--- PSRAM heap ---");
+    Serial.printf("heap PSRAM: free=%u largestBlk=%u minEver=%u\n",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
+        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
+    heap_caps_print_heap_info(MALLOC_CAP_SPIRAM);
     // Per-task stack high-water marks.
     UBaseType_t n = uxTaskGetNumberOfTasks();
     TaskStatus_t* arr = (TaskStatus_t*)malloc(n * sizeof(TaskStatus_t));

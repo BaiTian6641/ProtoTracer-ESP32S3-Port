@@ -69,29 +69,40 @@ ESP32-S3 内部 SRAM 共 **512 KB**。当前：**IRAM 代码 ~96 KB + DRAM 静�
 
 ## 3. 运行时堆（设备实测，`SRAM_DUMP`）
 
-稳态（启动完成后）内部 DRAM 堆：
+稳态（启动完成后）内部 DRAM 堆。**注意：下面这组"前后"对照——左列是方案 A（渲染暂存移 PSRAM）之前，右列是之后**：
 
 ```
-free=20360  allocated=260892  minEver=15780  largest_free_block=7668
+方案A前: free=20360  allocated=260892  minEver=15780  largest_free_block=7668
+方案A后: free=37260  allocated=243960  minEver=33060  largest_free_block=22516
 ```
 
-按区域（`heap_caps_print_heap_info`）：
+按区域（`heap_caps_print_heap_info`，方案A后）：
 
 | 区域基址 | 总量 | 空闲 | 已分配 | 块数 |
 |---|---|---|---|---|
 | `0x600fe000` | 8,152 | 7,760 | 0 | 1 |
-| `0x3fce9710` | 22,308 | **32** | 19,800 | 110 |
-| `0x3fcf0000` | 32,768 | 5,896 | 26,076 | 4 |
-| `0x3fcb1ad0` | **228,416** | 6,672 | **215,016** | **367** |
+| `0x3fce9710` | 22,308 | 128 | 19,768 | 110 |
+| `0x3fcf0000` | 32,768 | **23,312**（方案A前仅 5,896） | 8,692 | 4 |
+| `0x3fcb1ad0` | **228,416** | 6,060 | **215,500** | **369** |
 
-- 主堆区（`0x3fcb1ad0`，228 KB）已分配 215 KB、**367 个分配块、仅 6 个空闲块**——**严重碎片化**。
-- `0x3fce9710` 区（22 KB）几乎用满（仅剩 32 B）。
+- 主堆区（`0x3fcb1ad0`，228 KB）已分配 ~215 KB、数百个分配块——**碎片化主要在这里**。
+- 方案 A 把渲染暂存移走后，`0x3fcf0000` 区空闲从 5.9 KB 涨到 23.3 KB，全局 largestBlk 从 7.7 KB 涨到 22.5 KB。
 
-### 任务栈（13 个任务，hwm = 历史最小空闲，即余量）
+### PSRAM 堆（方案 A + morph 优化后，设备实测）
+
+```
+free=7715360  allocated=669256  minEver=7691596  largest_free_block=7602164
+```
+
+- PSRAM（8 MB）目前只用了 ~669 KB——脸部/morph 数据 + 渲染暂存（已迁入）+ JSON 解析。
+- **PSRAM 完全不紧张**；morph/face 紧凑化省的正是 PSRAM。所以"给 BLE/WiFi 腾地方"的正确发力点是**内部 DRAM**（方案 A 已做）。
+
+### 任务栈（14 个任务，hwm = 历史最小空闲，即余量）
 
 | 任务 | 优先级 | 栈余量 hwm | 说明 |
 |---|---|---|---|
 | esp_timer | 22 | **7,640 B** | 余量很大（栈可缩小） |
+| ProtoAnim | 1 | 5,776 B | 动画任务（ANIM_TASK_CORE 0，栈 8192 B） |
 | MicFFT | 1 | 5,264 B | 麦克风 FFT 采样任务 |
 | nimble_host | 21 | 2,812 B | BLE host（常驻） |
 | btController | 23 | 2,772 B | BLE controller（常驻） |
@@ -102,6 +113,13 @@ free=20360  allocated=260892  minEver=15780  largest_free_block=7668
 | Tmr Svc | 1 | 2,320 B | FreeRTOS 定时器服务 |
 | IDLE0/1 | 0 | 144/344 B | 空闲任务 |
 | ipc0/1 | 24 | 88/256 B | 核间 IPC |
+
+### 关于"符号追踪"（符号级归因）的说明
+
+- **静态内存**（IRAM/DRAM/flash）：本报告 §2 已按库/符号归因（map 解析 + nm 符号尺寸）。
+- **运行时堆**：ESP-IDF 的 PC 级 heap 追踪（`heap_trace_*` + addr2line）依赖 `CONFIG_HEAP_TRACING`，但本项目的预编译框架（pioarduino 预编译库）**没有链接** `heap_trace_*` 符号（已在 ELF 中确认），因此无法开箱即用。当前可用的归因手段是：`heap_caps_print_heap_info`（区域级）+ 任务栈高水位（`uxTaskGetSystemState`）+ 代码侧已知大分配点（渲染暂存、z-buffer、animation 对象、morph 缓冲）的人工对账。
+- 若未来要做真正的 PC 级 heap 追踪，需要重建带 `CONFIG_HEAP_TRACING` 的框架（成本高，且预编译框架不易改 CONFIG）——**不建议**为此重建；区域级 + 任务级画像对定位冻结/泄漏已足够。
+- 任何捕获到的崩溃地址都可用 `xtensa-esp32s3-elf-addr2line.exe -e firmware.elf <addr>` 反查符号/源码行（工具链自带，本机可用）。
 
 > 任务栈本身从堆分配。上表是**余量**（hwm），不是栈总量。栈总量 = 创建时设定值（如动画任务 8192 B、后台下载 8192 B——后台下载任务完成后栈已释放）。
 
