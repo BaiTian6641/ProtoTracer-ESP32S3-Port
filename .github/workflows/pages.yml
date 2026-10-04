@@ -31,6 +31,9 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
+      - name: Check remote protocol and media codec
+        run: node --test web-app/media-format.test.cjs web-app/hue-math.test.cjs web-app/fw-rotation-sim.test.cjs
+
       - name: Prepare deploy directory
         run: |
           mkdir -p _deploy

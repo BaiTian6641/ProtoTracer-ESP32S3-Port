@@ -60,6 +60,12 @@ powershell -File compare.ps1 -LegacyBin legacy.bin -DirectBin direct.bin
 
 ## Notes
 
+`build_materials.cmd` validates the real spiral/gradient headers against the
+original shader math, plus owned/external palettes, absolute hue changes,
+virtual destruction and lazy PSRAM spectrum state/failure. It compiles with
+`material-shim/` before `shim/` to track explicitly requested PSRAM allocations.
+See `docs/s3-dynamic-material-optimization-2026-10-04.md` for device measurements.
+
 - Deterministic: fixed scene, no time/random inputs. Both builds use the same
   scalar `esp_dsp.h` shim, so only the render algorithm differs.
 - `src/` is never modified; only headers are consumed.

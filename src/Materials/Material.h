@@ -20,6 +20,7 @@ public:
         EfficientMask
     };
 
+    virtual ~Material() = default;
     virtual ProtoRGBColor GetRGB(Vector3D position, Vector3D normal, Vector3D uvw) = 0;
   
 };

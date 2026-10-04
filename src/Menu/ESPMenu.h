@@ -46,8 +46,13 @@
 extern M5GFX *display;
 extern bool gColoredPreview;
 extern bool gDisplayIsRelayMc; // set by main.cpp when display uses a relay MCU (M5UnitGLASS, UnitLCD)
-extern uint16_t gHudBuffer[64 * 32];
+extern uint16_t* gHudBuffer;
 extern ProtoRGBColor* volatile gHudColors;
+
+// Auxiliary status/preview refresh must not pace the HUB75 render loop.
+#ifndef MENU_DISPLAY_INTERVAL_MS
+#define MENU_DISPLAY_INTERVAL_MS 100
+#endif
 
 #ifdef NEW_GESTURE
 #include "RevEng_PAJ7620.h"
@@ -59,6 +64,8 @@ extern ProtoRGBColor* volatile gHudColors;
 #include "../Signals/TimeStep.h"
 #include "../Flash/Icons/Icons.h"
 #include "../Network/UserConfigManager.h"
+#include "../Controls/OledCare.h"
+#include "../Media/MediaService.h"
 
 #define DEMO_MODE 0
 
@@ -343,6 +350,12 @@ namespace
         visual["red"] = userConfig.user_r;
         visual["green"] = userConfig.user_g;
         visual["blue"] = userConfig.user_b;
+        JsonObject media = doc.createNestedObject("media");
+        media["version"] = 1;
+        media["width"] = 64; media["height"] = 32;
+        media["stream"] = true; media["gif"] = true;
+        media["max_file_bytes"] = MediaService::MaxFile;
+        media["slots"] = MediaService::Slots;
 
         JsonObject repo = doc.createNestedObject("repo");
         repo["asset_base_url"] = relayBaseUrl;
@@ -386,7 +399,7 @@ namespace
             return;
         }
 
-        const size_t chunkLength = std::min(kBleJsonChunkBytes, sBleNotifyPayload.length() - sBleNotifyOffset);
+        const size_t chunkLength = std::min(size_t(MediaService::chunkBytes), sBleNotifyPayload.length() - sBleNotifyOffset);
         // Arduino-ESP32 2.x BLE setValue() takes a non-const uint8_t* (the data is
         // copied internally); 3.x adds a const overload. const_cast builds on both.
         bleTxCharacteristic->setValue(const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(sBleNotifyPayload.c_str() + sBleNotifyOffset)), chunkLength);
@@ -414,7 +427,7 @@ namespace
         String payload;
 
         portENTER_CRITICAL(&gCommandQueueMux);
-        pending = bleJsonPayloadPending;
+        pending = bleJsonPayloadPending && sBleNotifyPayload.isEmpty();
         if (pending)
         {
             payload = blePendingJsonPayload;
@@ -665,6 +678,8 @@ namespace
         }
 
         const String op = doc["op"] | String("");
+        if (op.startsWith("media.")) return MediaService::Submit(doc);
+        OledCare::RequestWake();
         Serial.printf("BLE JSON op received: %s bytes=%u\n", op.c_str(), static_cast<unsigned>(rxValue.size()));
         if (op == "config.get" || op == "pair.discover" || op == "pair.info")
         {
@@ -837,9 +852,11 @@ namespace
         {
             portENTER_CRITICAL(&gBleFlagMux);
             bleDeviceConnected = true;
+            OledCare::RequestWake();
             portEXIT_CRITICAL(&gBleFlagMux);
             bleRxJsonBuffer = String("");
             ClearQueuedLegacyCommands();
+            MediaService::chunkBytes = 20;
             Serial.println("BLE client connected — bleDeviceConnected=true");
         }
 
@@ -847,11 +864,29 @@ namespace
         {
             portENTER_CRITICAL(&gBleFlagMux);
             bleDeviceConnected = false;
+            OledCare::RequestWake();
             portEXIT_CRITICAL(&gBleFlagMux);
             bleRxJsonBuffer = String("");
             ClearQueuedLegacyCommands();
+            MediaService::Disconnect();
             Serial.println("BLE client disconnected — bleDeviceConnected=false");
         }
+#if defined(CONFIG_BLUEDROID_ENABLED)
+        void onMtuChanged(BLEServer*, esp_ble_gatts_cb_param_t* param) override
+        {
+            MediaService::chunkBytes = uint16_t(std::min<size_t>(244, param->mtu.mtu > 3 ? param->mtu.mtu - 3 : 20));
+        }
+#elif defined(CONFIG_NIMBLE_ENABLED)
+        void onMtuChanged(BLEServer*, ble_gap_conn_desc*, uint16_t mtu) override
+        {
+            MediaService::chunkBytes = uint16_t(std::min<size_t>(244, mtu > 3 ? mtu - 3 : 20));
+        }
+        void onConnect(BLEServer* server, ble_gap_conn_desc* desc) override
+        {
+            // Request 7.5–15 ms without slave latency; the phone chooses the final interval.
+            server->updateConnParams(desc->conn_handle, 6, 12, 0, 400);
+        }
+#endif
     };
 
     class MenuBleRxCallbacks : public BLECharacteristicCallbacks
@@ -864,6 +899,7 @@ namespace
             {
                 return;
             }
+            if (MediaService::Receive(data, length)) return;
 
             std::string rxValue(reinterpret_cast<const char *>(data), length);
             LogBleWritePreview(rxValue);
@@ -1161,8 +1197,11 @@ private:
             {
                 facialexpression = tempvalue;
                 confirm = 0;
-                { const int16_t s = gColoredPreview ? 2 : 1; display->fillRect(65 * s, 37 * s, 14 * s, 12 * s, TFT_BLACK); }
-                display->display();
+                if (!OledCare::enabled) {
+                    const int16_t s = gColoredPreview ? 2 : 1;
+                    display->fillRect(65 * s, 37 * s, 14 * s, 12 * s, TFT_BLACK);
+                    display->display();
+                }
             }
         }
         else if (data_type == 1)
@@ -1173,8 +1212,11 @@ private:
             {
                 bright = tempvalue;
                 confirm = 0;
-                { const int16_t s = gColoredPreview ? 2 : 1; display->fillRect(40 * s, 50 * s, 20 * s, 12 * s, TFT_BLACK); }
-                display->display();
+                if (!OledCare::enabled) {
+                    const int16_t s = gColoredPreview ? 2 : 1;
+                    display->fillRect(40 * s, 50 * s, 20 * s, 12 * s, TFT_BLACK);
+                    display->display();
+                }
             }
         }
         else if (data_type == 2)
@@ -1184,8 +1226,11 @@ private:
             if (confirm == 255 && voiceenable != tempvalue)
             {
                 voiceenable = tempvalue;
-                { const int16_t s = gColoredPreview ? 2 : 1; display->fillRect(65 * s, 50 * s, 60 * s, 12 * s, TFT_BLACK); }
-                display->display();
+                if (!OledCare::enabled) {
+                    const int16_t s = gColoredPreview ? 2 : 1;
+                    display->fillRect(65 * s, 50 * s, 60 * s, 12 * s, TFT_BLACK);
+                    display->display();
+                }
                 confirm = 0;
             }
         }
@@ -1233,6 +1278,7 @@ private:
         }
 
         BLEDevice::init(user_name.c_str());
+        BLEDevice::setMTU(247);
         bleServer = BLEDevice::createServer();
         if (!bleServer)
         {
@@ -1478,6 +1524,12 @@ public:
 
         if (bleServer != nullptr)
         {
+            if (bleDeviceConnected)
+            {
+                // Cached/reconnected centrals need not deliver a fresh MTU callback.
+                const uint16_t mtu = bleServer->getPeerMTU(bleServer->getConnId());
+                MediaService::chunkBytes = uint16_t(std::max<size_t>(20, std::min<size_t>(244, mtu > 3 ? mtu - 3 : 20)));
+            }
             if (!bleDeviceConnected && bleOldDeviceConnected)
             {
                 if (bleReAdvertiseAtMs == 0)
@@ -1518,22 +1570,44 @@ public:
             QueueBleJsonPayload(bleCachedManifestJson);
         }
 
+        // Keep media replies separate from an in-flight multi-chunk JSON reply.
+        bool mediaCanReply;
+        portENTER_CRITICAL(&gCommandQueueMux);
+        mediaCanReply = !bleJsonPayloadPending;
+        portEXIT_CRITICAL(&gCommandQueueMux);
+        if (mediaCanReply && sBleNotifyPayload.isEmpty()) MediaService::Poll(QueueBleJsonPayload);
         FlushQueuedBleJsonPayload();
 
-        // ── Display throttle for relay-MCU displays (M5UnitGLASS, UnitLCD) ──
+        // Throttle auxiliary displays independently of face animation.
         // These displays use a command-based I2C protocol with a relay
         // microcontroller that adds 5-16ms of busy-wait per frame.
         // Throttling to 5 Hz recovers frame rate on the main HUB75 output.
         static uint32_t sLastDisplayUpdateMs = 0;
         const uint32_t nowMs = millis();
-        const bool kDoDisplayUpdate = !gDisplayIsRelayMc ||
-            (nowMs - sLastDisplayUpdateMs >= 200);
+        const uint32_t displayIntervalMs = gDisplayIsRelayMc
+            ? std::max<uint32_t>(200, MENU_DISPLAY_INTERVAL_MS)
+            : MENU_DISPLAY_INTERVAL_MS;
+        // Wake for user input, never for continuously changing animation/audio.
+        static bool sWasNear = false;
+        if (didBegin && sProximityFresh)
+        {
+            const bool near = sCachedProximity >= proximity;
+            if (near && !sWasNear) OledCare::Activity(nowMs);
+            sWasNear = near;
+        }
+        if (manifestReq) OledCare::Activity(nowMs);
+#ifdef OTA_BTN
+        if (digitalRead(OTA_BTN) == LOW) OledCare::Activity(nowMs);
+#endif
+        OledCare::Poll(nowMs);
+        const bool kDoDisplayUpdate = !OledCare::IsAsleep() &&
+                                     nowMs - sLastDisplayUpdateMs >= displayIntervalMs;
 
         // ── HUD preview: build RGB565 buffer BEFORE the I2C transaction ──
         // Keeps the I2C bus held only for the actual push, preventing
         // framerate drops and HUB75 DMA starvation.
         // Skip buffer conversion on throttled frames for relay-MCU displays.
-        if (kDoDisplayUpdate && gHudColors) {
+        if (kDoDisplayUpdate && gHudColors && gHudBuffer) {
             uint16_t *buf = gHudBuffer;
             const ProtoRGBColor *colors = gHudColors;
             for (uint16_t y = 0; y < 32; y++) {
@@ -1558,6 +1632,7 @@ public:
         bool consumedQueuedCommand = false;
         while (DequeueLegacyCommand(&queuedCommand))
         {
+            OledCare::Activity(nowMs);
             ApplyLegacyCommand(queuedCommand);
             ESPMENU_LOG_PRINTF(
                 "ESPMenu applied remote raw=0x%08lx type=%u face=%u bright=%u hue=%u voice=%u\n",
@@ -1571,6 +1646,9 @@ public:
         }
         if (!consumedQueuedCommand)
         {
+            static uint32_t sPreviousCommand = 0;
+            if (raw_data != sPreviousCommand) OledCare::Activity(nowMs);
+            sPreviousCommand = raw_data;
             ApplyLegacyCommand(raw_data);
         }
 
@@ -1678,48 +1756,55 @@ public:
         // ── Fan PWM: apply stored speed every frame ──
         //ledcWrite(FAN_PIN, fanSpeed);
 
-        // ── Display drawing: throttled for relay-MCU displays ──
+        // Auxiliary display drawing is independent of HUB75 frame cadence.
         // On M5UnitGLASS / UnitLCD the I2C relay MCU adds 5-16ms per
         // display() call; skipping most frames recovers HUB75 frame rate.
         if (kDoDisplayUpdate) {
             display->startWrite();
             sLastDisplayUpdateMs = nowMs;
+            const int dx = OledCare::OffsetX();
+            const int dy = OledCare::OffsetY();
+            if (OledCare::enabled && (OledCare::TakeRedraw() || consumedQueuedCommand))
+                display->fillScreen(TFT_BLACK);
+            if (OledCare::enabled) display->setTextColor(TFT_WHITE, TFT_BLACK);
 
             // display->endWrite();
             //display->qrcode(BLE_RX2_UUID, 70, 2, 29, 3);
             // Scale text for UnitLCD: 2× larger with doubled coordinates
             const int16_t tsize = gColoredPreview ? 2 : 1;
-            display->drawString(TXT("Exp Number:", "表情编号："), 5 * tsize, 37 * tsize);
-            display->drawNumber(facialexpression, 70 * tsize, 37 * tsize);
+            display->drawString(TXT("Exp Number:", "表情编号："), 5 * tsize + dx, 37 * tsize + dy);
+            if (OledCare::enabled) display->fillRect(70 + dx, 37 + dy, 24, 12, TFT_BLACK);
+            display->drawNumber(facialexpression, 70 * tsize + dx, 37 * tsize + dy);
 
-            display->drawString(TXT("Bright:", "亮度："), 5 * tsize, 50 * tsize);
-            display->drawNumber(bright, TXT(55, 40) * tsize, 50 * tsize);
+            display->drawString(TXT("Bright:", "亮度："), 5 * tsize + dx, 50 * tsize + dy);
+            if (OledCare::enabled) display->fillRect(TXT(55, 40) + dx, 50 + dy, 24, 12, TFT_BLACK);
+            display->drawNumber(bright, TXT(55, 40) * tsize + dx, 50 * tsize + dy);
 
             if(WiFi.isConnected()){
-                display->pushImageDMA(100 * tsize, 38 * tsize, 24, 24, epd_bitmap_cloud);
+                display->pushImageDMA(100 * tsize + dx, 38 * tsize + dy, 24, 24, epd_bitmap_cloud);
             }else{
-                display->fillRect(100 * tsize, 38 * tsize, 24, 24, TFT_BLACK);
+                display->fillRect(100 * tsize + dx, 38 * tsize + dy, 24, 24, TFT_BLACK);
             }
 
             //display->drawNumber(free_mem, 80, 37);
 
             if(voiceenable == 1){
-                display->pushImageDMA(66 * tsize, 0, 24, 24, epd_bitmap_microphone);
+                display->pushImageDMA(66 * tsize + dx, dy, 24, 24, epd_bitmap_microphone);
             }else{
-                display->pushImageDMA(66 * tsize, 0, 24, 24, epd_bitmap_microphone_off);
+                display->pushImageDMA(66 * tsize + dx, dy, 24, 24, epd_bitmap_microphone_off);
             }
             if(bleDeviceConnected){
-                display->pushImageDMA(90 * tsize, 0, 24, 24, epd_bitmap_bluetooth);
+                display->pushImageDMA(90 * tsize + dx, dy, 24, 24, epd_bitmap_bluetooth);
             }else{
-                display->fillRect(90 * tsize, 0, 24, 24, TFT_BLACK);
+                display->fillRect(90 * tsize + dx, dy, 24, 24, TFT_BLACK);
             }
 
             // ── HUD preview: push pre-built buffer (conversion done above) ──
             // The RGB565 buffer was already built before startWrite(), so the
             // I2C transaction is short — just drawRect + pushImage.
-            if (gHudColors) {
-                display->drawRect(0, 0, 66, 34, TFT_WHITE);
-                display->pushImage(1, 1, 64, 32, gHudBuffer);
+            if (gHudColors && gHudBuffer) {
+                display->drawRect(dx, dy, 66, 34, TFT_WHITE);
+                display->pushImage(1 + dx, 1 + dy, 64, 32, gHudBuffer);
             }
 
             display->display();

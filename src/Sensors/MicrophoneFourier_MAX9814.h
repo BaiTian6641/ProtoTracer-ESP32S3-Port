@@ -18,6 +18,7 @@
 #include "../Filter/FFTFilter.h"
 #include "../Filter/PeakDetection.h"
 #include "../Signals/TimeStep.h"
+#include <new>
 //volatile SemaphoreHandle_t timerSemaphore;
 static const char *TAG = "main";
 
@@ -83,7 +84,7 @@ private:
     static float* noiseMagnitude;
     static float pendingThreshold;
     static float publishedThreshold;
-    static FFTFilter fftFilters[OutputBins];
+    static FFTFilter* fftFilters;          // CPU-only filter history in PSRAM
 
     
     //static arm_cfft_radix4_instance_f32 RadixFFT;
@@ -91,9 +92,9 @@ private:
     static float AverageMagnitude(uint16_t binL, uint16_t binH){
         float average = 0.0f;
 
-        for (uint16_t i = 1; i < FFTSize; i++){
-            if (i >= binL && i <= binH) average += SampleArray[i*2];
-        }
+        const uint16_t first = binL > 1 ? binL : 1;
+        const uint16_t last = binH < FFTSize ? binH : FFTSize - 1;
+        for (uint16_t i = first; i <= last; i++) average += SampleArray[i*2];
 
         return average / float(binH - binL + 1);
     }
@@ -174,16 +175,13 @@ private:
         }
 
         for (int i = 0; i < FFTSize; ++i) {
-            float real = SampleArray[i * 2];
-            float imag = SampleArray[i * 2 + 1];
-            float magnitude = sqrtf(real * real + imag * imag);
-            float phase = atan2f(imag, real);
-        
-            float subtractedMag = magnitude - noiseMagnitude[i];
+            // Raw 12-bit ADC values are nonnegative real numbers, with zero
+            // imaginary part. Their phase is zero and magnitude is the value.
+            float subtractedMag = SampleArray[i * 2] - noiseMagnitude[i];
             if (subtractedMag < 0.0f) subtractedMag = 0.0f;
         
-            SampleArray[i * 2] = subtractedMag * cosf(phase);
-            SampleArray[i * 2 + 1] = subtractedMag * sinf(phase);
+            SampleArray[i * 2] = subtractedMag;
+            SampleArray[i * 2 + 1] = 0.0f;
         }
         
         dsps_fft4r_fc32(SampleArray, FFTSize);
@@ -290,13 +288,24 @@ public:
         publishedOutputData    = (float*)MIC_PSRAM_ALLOC(OutputBins * sizeof(float));
         publishedOutputDataFilt= (float*)MIC_PSRAM_ALLOC(OutputBins * sizeof(float));
         noiseMagnitude     = (float*)MIC_PSRAM_ALLOC(FFTSize * sizeof(float));
+        fftFilters         = (FFTFilter*)MIC_PSRAM_ALLOC(OutputBins * sizeof(FFTFilter));
         #undef MIC_PSRAM_ALLOC
 
-        if (!SampleArray || !inputStorage || !outputData || !noiseMagnitude) {
+        if (!SampleArray || !inputStorage || !outputData || !outputDataFilt ||
+            !pendingInputStorage || !pendingOutputData || !pendingOutputDataFilt ||
+            !publishedInputStorage || !publishedOutputData || !publishedOutputDataFilt ||
+            !noiseMagnitude || !fftFilters) {
             Serial.println("[MIC] PSRAM alloc failed — audio disabled");
+            float** buffers[] = {&SampleArray, &inputStorage, &outputData, &outputDataFilt,
+                &pendingInputStorage, &pendingOutputData, &pendingOutputDataFilt,
+                &publishedInputStorage, &publishedOutputData, &publishedOutputDataFilt, &noiseMagnitude};
+            for (float** buffer : buffers) { heap_caps_free(*buffer); *buffer = nullptr; }
+            heap_caps_free(fftFilters);
+            fftFilters = nullptr;
             isInitialized = false;
             return;
         }
+        for (uint8_t i = 0; i < OutputBins; ++i) new (&fftFilters[i]) FFTFilter();
 
         float windowRange = float(sampleRate) / 2.0f / float(OutputBins);
 
@@ -435,7 +444,7 @@ float* MicrophoneFourierIT::publishedOutputDataFilt = nullptr;
 float* MicrophoneFourierIT::noiseMagnitude = nullptr;
 float MicrophoneFourierIT::pendingThreshold = 0.0f;
 float MicrophoneFourierIT::publishedThreshold = 0.0f;
-FFTFilter MicrophoneFourierIT::fftFilters[];
+FFTFilter* MicrophoneFourierIT::fftFilters = nullptr;
 
 //arm_cfft_radix4_instance_f32 MicrophoneFourierIT::RadixFFT;
 

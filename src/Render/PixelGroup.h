@@ -23,10 +23,10 @@ private:
   	ProtoRGBColor* pixelBuffer;
     bool pixelColorsManaged = false;
     bool pixelBufferManaged = false;
-    uint16_t* up;
-    uint16_t* down;
-    uint16_t* left;
-    uint16_t* right;
+    uint16_t* up = nullptr;
+    uint16_t* down = nullptr;
+    uint16_t* left = nullptr;
+    uint16_t* right = nullptr;
 
     Vector2D* rectCoords = nullptr; // precomputed coordinates for rectangular layouts
     bool rectCoordsBuilt = false;
@@ -39,14 +39,17 @@ private:
     uint16_t colCount;
     Vector2D size;
     Vector2D position;
+    bool proceduralGrid = false;
+    Vector2D gridOrigin;
+    Vector2D gridStep;
 
     //Allocate all array on external PSRAM
-    void AllocateMemory() {
+    void AllocateMemory(bool needsNeighbors = true) {
         // Try to keep hot color buffers in internal RAM for steadier bandwidth; fall back to PSRAM/new on failure.
         const size_t colorBytes = pixelCount * sizeof(ProtoRGBColor);
         pixelColors = static_cast<ProtoRGBColor*>(protogc::ProtoGC::internalAlloc(colorBytes));
         pixelColorsManaged = pixelColors != nullptr;
-        pixelBuffer = static_cast<ProtoRGBColor*>(protogc::ProtoGC::internalAlloc(colorBytes));
+        pixelBuffer = static_cast<ProtoRGBColor*>(protogc::ProtoGC::psramAlloc(colorBytes));
         pixelBufferManaged = pixelBuffer != nullptr;
 
         if (!pixelColors) {
@@ -54,16 +57,18 @@ private:
             pixelColorsManaged = pixelColors != nullptr;
         }
         if (!pixelBuffer) {
-            pixelBuffer = static_cast<ProtoRGBColor*>(protogc::ProtoGC::psramAlloc(colorBytes));
+            pixelBuffer = static_cast<ProtoRGBColor*>(protogc::ProtoGC::internalAlloc(colorBytes));
             pixelBufferManaged = pixelBuffer != nullptr;
         }
         if (!pixelColors) pixelColors = new ProtoRGBColor[pixelCount];
         if (!pixelBuffer) pixelBuffer = new ProtoRGBColor[pixelCount];
 
-        up = new uint16_t[pixelCount];
-        down = new uint16_t[pixelCount];
-        left = new uint16_t[pixelCount];
-        right = new uint16_t[pixelCount];
+        if (needsNeighbors) {
+            up = new uint16_t[pixelCount];
+            down = new uint16_t[pixelCount];
+            left = new uint16_t[pixelCount];
+            right = new uint16_t[pixelCount];
+        }
     }
 
     //Deallocate those arrays
@@ -80,8 +85,24 @@ private:
     }
 
 public:
+    // Positive-spacing, row-major grid: coordinates and neighbors need no tables.
+    PixelGroup(uint16_t columns, uint16_t rows, Vector2D origin, Vector2D step)
+        : pixelCount(size_t(columns) * rows), rowCount(columns), colCount(rows),
+          proceduralGrid(true), gridOrigin(origin), gridStep(step) {
+        isRectangular = true;
+        AllocateMemory(false);
+        size = Vector2D(columns * step.X, rows * step.Y);
+        position = origin + size / 2.0f;
+        bounds.UpdateBounds(origin);
+        bounds.UpdateBounds(origin + Vector2D((columns - 1) * step.X, (rows - 1) * step.Y));
+        for (size_t i = 0; i < pixelCount; ++i) {
+            pixelColors[i] = ProtoRGBColor();
+            pixelBuffer[i] = ProtoRGBColor();
+        }
+    }
+
     PixelGroup(size_t pCount, Vector2D size, Vector2D position, uint16_t rowCount) : pixelCount(pCount) {
-        AllocateMemory(); // Allocate memory in PSRAM
+        AllocateMemory(false);
 
         this->size = size;
         this->position = position;
@@ -131,6 +152,10 @@ public:
         if (count >= pixelCount) return Vector2D();
 
         if (isRectangular){
+            if (proceduralGrid) {
+                return gridOrigin + Vector2D(float(count % rowCount) * gridStep.X,
+                                             float(count / rowCount) * gridStep.Y);
+            }
             return rectCoordsBuilt ? rectCoords[count] : Vector2D();
         }
         else{
@@ -144,6 +169,12 @@ public:
     }
 
     int GetPixelIndex(Vector2D location) override {
+        if (proceduralGrid) {
+            const float x = (location.X - gridOrigin.X) / gridStep.X;
+            const float y = (location.Y - gridOrigin.Y) / gridStep.Y;
+            if (!(x >= 0 && y >= 0 && x < rowCount && y < colCount)) return -1;
+            return int(x) + int(y) * rowCount;
+        }
         float row = Mathematics::Map(location.X, position.X - size.X / 2.0f, position.X + size.X / 2.0f, 0.0f, float(rowCount));
         float col = Mathematics::Map(location.Y, position.Y - size.Y / 2.0f, position.Y + size.Y / 2.0f, 0.0f, float(colCount));
 
@@ -188,6 +219,7 @@ public:
     // --- MODIFIED: Neighbor-finding methods now check for the sentinel value ---
 
     bool GetUpIndex(unsigned int count, unsigned int* upIndex) override {
+        if (count >= pixelCount) return false;
         if (isRectangular){
             unsigned int index = count + rowCount;
             if (index < pixelCount){
@@ -206,6 +238,7 @@ public:
     }
 
     bool GetDownIndex(unsigned int count, unsigned int* downIndex) override {
+        if (count >= pixelCount) return false;
         if (isRectangular){
             long index = static_cast<long>(count) - rowCount; // Use long for check
             if (index >= 0){
@@ -224,6 +257,7 @@ public:
     }
 
     bool GetLeftIndex(unsigned int count, unsigned int* leftIndex) override {
+        if (count >= pixelCount) return false;
         if (isRectangular){
             if (count > 0 && (count % rowCount != 0)) {
                 *leftIndex = count - 1;
@@ -241,6 +275,7 @@ public:
     }
 
     bool GetRightIndex(unsigned int count, unsigned int* rightIndex) override {
+        if (count >= pixelCount) return false;
         if (isRectangular){
             if ((count + 1) < pixelCount && ((count + 1) % rowCount != 0)) {
                 *rightIndex = count + 1;

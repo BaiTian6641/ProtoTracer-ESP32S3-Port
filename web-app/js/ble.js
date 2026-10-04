@@ -32,8 +32,54 @@ const ProtoTracerBLE = (() => {
   let connected       = false;
   let cachedManifest  = null;
   let txBuffer        = '';     // Accumulator for incoming chunked JSON
+  let txDecoder       = new TextDecoder(); // Preserve UTF-8 across notify boundaries.
   let eventCallbacks  = {};
   let writeQueue      = Promise.resolve();
+  let mediaId = 0;
+  const mediaPending = new Map();
+  let mediaChunkBytes = 20;
+
+  function rejectMedia() {
+    for (const waiter of mediaPending.values()) waiter.reject(new Error('Bluetooth disconnected'));
+    mediaPending.clear();
+  }
+  function mediaWait(key, timeout = 20000) {
+    let resolve, reject;
+    const promise = new Promise((a, b) => { resolve = a; reject = b; });
+    const timer = setTimeout(() => reject(new Error('Media reply timeout')), timeout);
+    const done = callback => value => { clearTimeout(timer); mediaPending.delete(key); callback(value); };
+    mediaPending.set(key, { resolve: done(resolve), reject: done(reject) });
+    // Sending may fail before the caller awaits the reply.
+    promise.catch(() => {});
+    return { promise, cancel: done(reject) };
+  }
+  async function mediaRequest(op, fields = {}) {
+    const rid = ++mediaId >>> 0;
+    const waiter = mediaWait('r' + rid, 30000);
+    try {
+      await sendCommand({ ...fields, op, rid }, Math.min(160, mediaChunkBytes));
+      const result = await waiter.promise;
+      if (!result.ok) throw new Error(result.error || 'Media request rejected');
+      mediaChunkBytes = Math.max(20, Math.min(244, result.chunk_bytes || 20));
+      return result;
+    } catch (error) { waiter.cancel(error); throw error; }
+  }
+  async function mediaTransfer(kind, bytes) {
+    if (!connected) throw new Error('Bluetooth disconnected');
+    const id = ++mediaId >>> 0;
+    const waiter = mediaWait('a' + id);
+    try {
+      await queueWrite(async () => {
+        const payloadSize = mediaChunkBytes - 16;
+        for (let offset = 0; offset < bytes.length; offset += payloadSize) {
+          await writeChunk(MediaFormat.fragment(kind, id, bytes.length, offset, bytes.subarray(offset, offset + payloadSize)));
+        }
+      });
+      const ack = await waiter.promise;
+      if (!ack.ok) throw new Error('Media transfer rejected');
+      return ack;
+    } catch (error) { waiter.cancel(error); throw error; }
+  }
 
   // --- Public API ---
 
@@ -278,6 +324,7 @@ const ProtoTracerBLE = (() => {
 
   /** Reset connection state (preserves device reference for reconnection) */
   function resetState() {
+    rejectMedia();
     connected = false;
     // device is intentionally preserved — the browser owns its lifecycle
     // and we may need it for reconnection without re-scanning.
@@ -291,7 +338,7 @@ const ProtoTracerBLE = (() => {
    * Send a JSON command to the device.
    * Automatically chunks writes > BLE_CHUNK_BYTES.
    */
-  async function sendCommand(jsonObj) {
+  async function sendCommand(jsonObj, chunkLimit = cachedManifest?.media?.version === 1 ? Math.min(160, mediaChunkBytes) : BLE_CHUNK_BYTES) {
     if (!connected || !rxCharacteristic) {
       throw new Error(I18N.t('err.notConnected'));
     }
@@ -301,12 +348,12 @@ const ProtoTracerBLE = (() => {
     const bytes = encoder.encode(payload);
 
     await queueWrite(async () => {
-      if (bytes.length <= BLE_CHUNK_BYTES) {
+      if (bytes.length <= chunkLimit) {
         await writeChunk(bytes);
       } else {
         // Chunked send
-        for (let offset = 0; offset < bytes.length; offset += BLE_CHUNK_BYTES) {
-          const chunk = bytes.slice(offset, Math.min(offset + BLE_CHUNK_BYTES, bytes.length));
+        for (let offset = 0; offset < bytes.length; offset += chunkLimit) {
+          const chunk = bytes.slice(offset, Math.min(offset + chunkLimit, bytes.length));
           await writeChunk(chunk);
           // Small delay between chunks to let device process
           await sleep(10);
@@ -363,8 +410,7 @@ const ProtoTracerBLE = (() => {
     const value = event.target.value;
     if (!value) return;
 
-    const decoder = new TextDecoder();
-    const chunk = decoder.decode(value);
+    const chunk = txDecoder.decode(value, { stream: true });
 
     txBuffer += chunk;
 
@@ -416,6 +462,12 @@ const ProtoTracerBLE = (() => {
   function handleMessage(msg) {
     const op = msg.op || '';
     emit('received', msg);
+    if (op === 'media.reply' || op === 'media.ack') {
+      const waiter = mediaPending.get(op === 'media.reply' ? 'r' + msg.rid : 'a' + msg.id);
+      if (waiter) waiter.resolve(msg);
+      emit('media', msg);
+      return;
+    }
 
     switch (op) {
       case 'control.state':
@@ -439,6 +491,7 @@ const ProtoTracerBLE = (() => {
 
   /** Handle device disconnect (may fire from intentional or unexpected disconnects) */
   function onDisconnected() {
+    rejectMedia();
     const wasConnected = connected;
 
     // Clean up characteristic references but do NOT null `device` here —
@@ -467,6 +520,7 @@ const ProtoTracerBLE = (() => {
     rxCharacteristic = null;
     txCharacteristic = null;
     txBuffer = '';
+    txDecoder = new TextDecoder();
   }
 
   function createTimeoutError(message) {
@@ -553,5 +607,7 @@ const ProtoTracerBLE = (() => {
     requestManifest,
     controlSet,
     ping,
+    mediaRequest,
+    mediaTransfer,
   };
 })();

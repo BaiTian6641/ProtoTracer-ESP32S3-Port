@@ -116,4 +116,6 @@
     <string name="error_ble_not_supported">此设备不支持 BLE。</string>
     <string name="error_connection_failed">连接失败。</string>
     <string name="error_service_discovery">服务发现失败。</string>
+    <string name="ctrl_media">内置动画 / 恢复表情</string>
+    <string name="media_restore">停止媒体并恢复表情</string>
 </resources>

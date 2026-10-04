@@ -5,10 +5,11 @@
 #endif
 #define ELEGANTOTA_USE_ASYNC_WEBSERVER 1
 #define NEW_GESTURE
-// ── Gesture/boop diagnostics (enabled while tracking the newer-board
-//    gesture fault): live proximity values, boop pipeline logs, initial
-//    sensor read.  Set back to 0 once resolved to silence [BOOP] prints.
-#define BOOP_DEBUG_LOG 1
+// Optional gesture/boop diagnostics; avoid periodic animation-worker console
+// writes during normal rendering. Enable with -DBOOP_DEBUG_LOG=1 when needed.
+#ifndef BOOP_DEBUG_LOG
+#define BOOP_DEBUG_LOG 0
+#endif
 // #define NEW_HUB75
 //  #define PRINTINFO
 #define VERBOSE_STARTUP
@@ -73,6 +74,9 @@ M5GFX *display = nullptr;
 #include "Network/FirmwareUpdater.h"
 #include "Network/RemoteFileSync.h"
 #include "Network/UserConfigManager.h"
+#include "Controls/DeviceRegistrationScreen.h"
+#include "Debug/SerialDebug.h"
+#include "Debug/BestEffortLog.h"
 
 #ifndef ANIM_RENDER_PIPELINE
 #define ANIM_RENDER_PIPELINE 1
@@ -126,7 +130,7 @@ constexpr bool kVerboseStartup = false;
 #endif
 
 #ifndef PROTOTRACER_FW_VERSION
-#define PROTOTRACER_FW_VERSION "1.2.13"
+#define PROTOTRACER_FW_VERSION "1.3.0"
 #endif
 
 #ifndef PROTOTRACER_FW_MANIFEST
@@ -339,10 +343,24 @@ Adafruit_NeoPixel nowpixels(1, 20, NEO_GRB + NEO_KHZ800);
 #endif
 
 JsonDrivenProtogenAnimation animation = JsonDrivenProtogenAnimation();
+#ifdef PRINTINFO
+#include "Debug/MaterialProfileCheck.h"
+Material* gProfileMaterial = nullptr;
+bool SetMaterialProfile(const char* name)
+{
+  if (strcmp(name, "verify") == 0) return MaterialProfileCheck::Run();
+  if (strcmp(name, "normal") == 0) { gProfileMaterial = nullptr; return true; }
+  Material* material = animation.GetProfileMaterial(name);
+  if (!material) return false;
+  gProfileMaterial = material;
+  return true;
+}
+#endif
 
 namespace
 {
   constexpr const char *kUserConfigPath = "/user_config.json";
+  bool gRegistrationDisplayHeld = false;
 
   bool HasLocalFaceAsset(const UserConfig &config)
   {
@@ -358,36 +376,46 @@ namespace
     return LittleFS.exists(animFile) || LittleFS.exists("/example_animation.json");
   }
 
-  void ShowOfflineStartupFailure(bool hasConfig, bool hasFace, bool hasAnimation)
+  void RefreshRegistrationDisplay(bool force = false)
   {
-    Serial.printf("[FATAL] Offline boot blocked: config=%d face=%d animation=%d\n",
-                  hasConfig ? 1 : 0,
-                  hasFace ? 1 : 0,
-                  hasAnimation ? 1 : 0);
+    OledCare::Poll(millis());
+    if (!gRegistrationDisplayHeld) return;
+    const bool redraw = OledCare::TakeRedraw();
+    if (force || redraw)
+      ShowDeviceRegistrationScreen(display, userConfig.device_id.isEmpty() ? ReadUniqueDeviceId() : userConfig.device_id,
+                                    GetSetupPortalPassword(userConfig));
+  }
 
-    if (!display)
-    {
-      return;
-    }
-
-    display->fillScreen(TFT_BLACK);
-    DrawSadComputerStartupIcon(display, 36, 2, 3, TFT_WHITE, TFT_BLACK);
-    display->setTextColor(TFT_WHITE, TFT_BLACK);
-    display->setCursor(6, 72);
-    display->println(TXT("Offline boot blocked", "离线启动失败"));
-    if (!hasConfig) display->println(TXT("Missing: user_config", "缺少: user_config"));
-    if (!hasFace) display->println(TXT("Missing: face model", "缺少: 面部模型"));
-    if (!hasAnimation) display->println(TXT("Missing: animation", "缺少: 动画配置"));
-    display->println("0F00 0042");
-    display->display();
+  void HoldRegistrationDisplay(bool hold)
+  {
+    gRegistrationDisplayHeld = hold;
+    if (display) display->setTextScroll(!hold);
+    OledCare::SetRegistration(hold, millis());
+    RefreshRegistrationDisplay(hold);
   }
 
   [[noreturn]] void HaltStartupOfflineFailure(bool hasConfig, bool hasFace, bool hasAnimation)
   {
-    ShowOfflineStartupFailure(hasConfig, hasFace, hasAnimation);
+    Serial.printf("[REGISTER] Waiting for assets: config=%u face=%u animation=%u\n",
+                  unsigned(hasConfig), unsigned(hasFace), unsigned(hasAnimation));
+    HoldRegistrationDisplay(true);
     nowpixels.setBrightness(80);
+    uint32_t lastCheck = millis();
     while (true)
     {
+      if (digitalRead(OTA_BTN) == LOW) OledCare::Activity(millis());
+      RefreshRegistrationDisplay();
+      if (millis() - lastCheck >= 10000)
+      {
+        lastCheck = millis();
+        const bool configReady = LittleFS.exists(kUserConfigPath);
+        const bool faceReady = HasLocalFaceAsset(userConfig);
+        const bool animationReady = HasLocalAnimationAsset(userConfig);
+        Serial.printf("[REGISTER] held=1 config=%u face=%u animation=%u\n",
+                      unsigned(configReady), unsigned(faceReady), unsigned(animationReady));
+        // Resume with a fresh initialization only after every required file exists.
+        if (configReady && faceReady && animationReady) ESP.restart();
+      }
       nowpixels.setPixelColor(0, nowpixels.Color(120, 0, 0));
       nowpixels.show();
       delay(250);
@@ -595,6 +623,10 @@ void setup()
   pinMode(OTA_BTN, INPUT_PULLUP);
   pinMode(21, OUTPUT);  // LED/backlight — set early to avoid GPIO spam before Menu::Initialize
   Serial.begin(115200);
+#if ARDUINO_USB_CDC_ON_BOOT
+  // USB attachment does not imply that a host is consuming the console.
+  Serial.setTxTimeoutMs(0);
+#endif
   protogc::HeapGuard::onWarning(ProtoGcWarnHandler);
   protogc::HeapGuard::onCritical(ProtoGcCriticalHandler);
   Serial.println("/nStarting...");
@@ -644,13 +676,22 @@ void setup()
     gColoredPreview = true;
   }
 
+  // Capture file absence before defaults are written; show registration before
+  // HUB75 boot tests, asset checks and the factory indicator delay.
+  const bool fsReady = RemoteFileSync::EnsureFsMounted();
+  const bool hadLocalUserConfig = fsReady && LittleFS.exists(kUserConfigPath);
+  Serial.printf("[REGISTER] Boot config=%u\n", unsigned(hadLocalUserConfig));
+
   if (display)
   {
     // Color depth: 1-bit monochrome for GLASS/OLED, color for UnitLCD
     display->setColorDepth(gColoredPreview ? 16 : 1);
     display->setEpdMode(epd_mode_t::epd_fastest);
     display->setRotation(1);
-    display->setBrightness(45);
+    display->setBrightness(gDisplayType == DisplayType::UnitOLED ? 255 : 45);
+    OledCare::Configure(display, gDisplayType == DisplayType::UnitOLED ||
+                                 gDisplayType == DisplayType::GLASS2, millis());
+    OledCare::Poll(millis());
 
     nowpixels.begin();
     nowpixels.clear();
@@ -667,8 +708,15 @@ void setup()
     // display->progressBar(14,50,100,8,75);
     // display->display();
     // delay(2000);
-    display->println(TXT("Starting...", "启动中..."));
-    delay(1000);
+    if (!hadLocalUserConfig)
+    {
+      HoldRegistrationDisplay(true);
+    }
+    else
+    {
+      display->println(TXT("Starting...", "启动中..."));
+      delay(1000);
+    }
   }
 
 #ifdef TASESP32S3
@@ -676,13 +724,18 @@ void setup()
   EnsureControllerInitialized();
 #endif
 
-  const bool fsReady = RemoteFileSync::EnsureFsMounted();
-  const bool hadLocalUserConfig = fsReady && LittleFS.exists(kUserConfigPath);
-
   if (!EnsureUserConfig(userConfig))
   {
-    if (display) { display->println(TXT("Config load fail", "配置加载失败")); display->display(); }
+    Serial.println("[WARN] Config load failed; holding registration screen");
   }
+
+  const bool registrationRequired = !hadLocalUserConfig || !HasLocalFaceAsset(userConfig) || !HasLocalAnimationAsset(userConfig);
+  if (registrationRequired) HoldRegistrationDisplay(true);
+  Serial.printf("[REGISTER] held=%u config=%u face=%u animation=%u\n",
+                unsigned(gRegistrationDisplayHeld), unsigned(LittleFS.exists(kUserConfigPath)),
+                unsigned(HasLocalFaceAsset(userConfig)), unsigned(HasLocalAnimationAsset(userConfig)));
+  // Progress output is kept away from the registration screen until assets exist.
+  M5GFX* startupDisplay = gRegistrationDisplayHeld ? nullptr : display;
 
 #ifdef TASESP32S3
   // Apply HUB75 color channel compensation from user config. The first
@@ -740,7 +793,7 @@ void setup()
   user_name = userConfig.username.c_str();
 
   // Show unique device ID for registration
-  if (display) {
+  if (display && !gRegistrationDisplayHeld) {
     display->println(TXT("Device ID:", "设备ID:"));
     display->println(userConfig.device_id);
     display->display();
@@ -758,7 +811,7 @@ void setup()
 #endif
     WiFi.mode(WIFI_AP);
     WiFi.softAP(userConfig.ota_ssid.c_str(), userConfig.ota_password.c_str());
-    if (display) {
+    if (display && !gRegistrationDisplayHeld) {
     display->clearDisplay();
 #ifdef LANG_CN
     display->println("进入无线OTA模式！");
@@ -813,6 +866,8 @@ void setup()
     server.begin();
     while (true)
     {
+      if (digitalRead(OTA_BTN) == LOW) OledCare::Activity(millis());
+      RefreshRegistrationDisplay();
       nowpixels.setPixelColor(0, nowpixels.Color(0, 140, 170));
       nowpixels.show();
 #if defined(USING_ELEGANTOTA_PRO) || defined(USING_ELEGANTOTA)
@@ -826,15 +881,17 @@ void setup()
   WiFi.mode(WIFI_AP_STA);
   delay(200); // Let RF calibration settle before NetWizard AP start
 
-  bool wifiConnected = ConnectWifiWithNetWizard(userConfig, server, 15000, display);
+  bool wifiConnected = ConnectWifiWithNetWizard(userConfig, server, 15000, display, gRegistrationDisplayHeld);
+  RefreshRegistrationDisplay(true);
 
   // ── Network update block ──
   // All remote operations are gated behind a single WiFi guard.
   // When WiFi is unavailable, skip everything and continue with local files.
   bool networkAvailable = wifiConnected && (WiFi.status() == WL_CONNECTED);
-  const bool localConfigExists = hadLocalUserConfig;
+  const bool localConfigExists = LittleFS.exists(kUserConfigPath);
   const bool localFaceExists = HasLocalFaceAsset(userConfig);
   const bool localAnimExists = HasLocalAnimationAsset(userConfig);
+  bool animationSyncedBeforeInit = false;
 
   // ── Probe Gitee → GitHub, cache faster source ──
   // Determine which remote has lower HTTP latency, then use it as the
@@ -871,7 +928,7 @@ void setup()
     if (cachedName.isEmpty() || cachedName == "0")
     {
       // Probe Gitee first (for China users), then GitHub
-      if (display) { display->println(TXT("Probing Gitee...", "测速 Gitee...")); display->display(); }
+      if (startupDisplay) { startupDisplay->println(TXT("Probing Gitee...", "测速 Gitee...")); startupDisplay->display(); }
 
       uint32_t giteeLatency = 0;
       uint32_t githubLatency = 0;
@@ -887,7 +944,7 @@ void setup()
         }
       }
 
-      if (display) { display->println(TXT("Probing GitHub...", "测速 GitHub...")); display->display(); }
+      if (startupDisplay) { startupDisplay->println(TXT("Probing GitHub...", "测速 GitHub...")); startupDisplay->display(); }
 
       {
         WiFiClient probeClient;
@@ -993,8 +1050,8 @@ void setup()
     arr[1].name = fallbackName;
   };
 
-  if (display)
-    display->printf(TXT("WiFi: %s\n", "WiFi: %s\n"),
+  if (startupDisplay)
+    startupDisplay->printf(TXT("WiFi: %s\n", "WiFi: %s\n"),
                    networkAvailable ? TXT("Connected", "已连接") : TXT("Skipped", "已跳过"));
 
   if (!networkAvailable)
@@ -1006,10 +1063,10 @@ void setup()
     }
 
     gStartupPhase = StartupPhase::WifiTeardown;
-    if (display) {
-      display->println(TXT("Network unavailable", "网络不可用"));
-      display->println(TXT("Using local files", "使用本地文件"));
-      display->display();
+    if (startupDisplay) {
+      startupDisplay->println(TXT("Network unavailable", "网络不可用"));
+      startupDisplay->println(TXT("Using local files", "使用本地文件"));
+      startupDisplay->display();
       delay(1200);
     }
   }
@@ -1029,10 +1086,10 @@ void setup()
     {
       // Assets present — start rendering NOW, queue bg download
       Serial.println("[INFO] Local assets present — fast path, background download queued");
-      if (display) {
-        display->println(TXT("Local assets OK", "本地文件就绪"));
-        display->println(TXT("Rendering...", "渲染中..."));
-        display->display();
+      if (startupDisplay) {
+        startupDisplay->println(TXT("Local assets OK", "本地文件就绪"));
+        startupDisplay->println(TXT("Rendering...", "渲染中..."));
+        startupDisplay->display();
       }
 
       // Capture source info for background task
@@ -1047,11 +1104,11 @@ void setup()
 
       // Run firmware update check before launching background downloads.
       // Non-blocking: failure is logged but does not stall startup.
-      if (display) {
-        display->clearDisplay();
-        display->setCursor(0, 0);
-        display->println(TXT("Checking firmware...", "检查固件更新..."));
-        display->display();
+      if (startupDisplay) {
+        startupDisplay->clearDisplay();
+        startupDisplay->setCursor(0, 0);
+        startupDisplay->println(TXT("Checking firmware...", "检查固件更新..."));
+        startupDisplay->display();
       }
       {
         FirmwareUpdateConfig fwCfg;
@@ -1069,19 +1126,19 @@ void setup()
         fwCfg.fallbackName = fallbackName;
         fwCfg.manifestFilename = kFirmwareManifest;
         fwCfg.currentVersion = kFirmwareVersion;
-        fwCfg.display = display;
+        fwCfg.display = startupDisplay;
         fwCfg.verbose = kVerboseStartup;
         Serial.printf("[INFO] Checking firmware update via %s before background downloads...\n", primaryName);
         const FirmwareUpdateResult fwResult = FirmwareUpdater::CheckAndUpdate(fwCfg);
         if (fwResult == FirmwareUpdateResult::Failed)
         {
           Serial.println("[WARN] Firmware update check failed; continuing with background downloads");
-          if (display && kVerboseStartup) {
-            display->clearDisplay();
-            display->setCursor(0, 0);
-            display->println(TXT("FW check failed", "固件检查失败"));
-            display->println(TXT("Continuing...", "继续启动..."));
-            display->display();
+          if (startupDisplay && kVerboseStartup) {
+            startupDisplay->clearDisplay();
+            startupDisplay->setCursor(0, 0);
+            startupDisplay->println(TXT("FW check failed", "固件检查失败"));
+            startupDisplay->println(TXT("Continuing...", "继续启动..."));
+            startupDisplay->display();
             delay(800);
           }
         }
@@ -1100,12 +1157,12 @@ void setup()
     else
     {
       // Missing assets — download synchronously before rendering
-      if (display) { display->println(TXT("Downloading assets...", "下载资源中...")); display->display(); }
+      if (startupDisplay) { startupDisplay->println(TXT("Downloading assets...", "下载资源中...")); startupDisplay->display(); }
 
       RemoteFileSource userConfigSources[2];
       buildSources(userConfigSources);
       DownloadUserConfigFromSources(userConfigSources, 2, userConfig,
-                                    kVerboseStartup, display);
+                                    kVerboseStartup, startupDisplay);
       protogc::ProtoGC::collectFull("post-user-config");
 
       FirmwareUpdateConfig firmwareUpdateConfig;
@@ -1123,7 +1180,7 @@ void setup()
       firmwareUpdateConfig.fallbackName = fallbackName;
       firmwareUpdateConfig.manifestFilename = kFirmwareManifest;
       firmwareUpdateConfig.currentVersion = kFirmwareVersion;
-      firmwareUpdateConfig.display = display;
+      firmwareUpdateConfig.display = startupDisplay;
       firmwareUpdateConfig.verbose = kVerboseStartup;
 
       Serial.printf("[INFO] Checking firmware update via %s after config sync...\n", primaryName);
@@ -1140,28 +1197,31 @@ void setup()
         {userConfig.wifi_ssid.c_str(), userConfig.wifi_password.c_str(),
          fallbackBaseUrl, fallbackToken, fallbackAccept, fallbackAuthScheme, fallbackName}
       };
-      bool faceReady = EnsureFaceModelJson(faceConfigs, 2, userConfig.device_id,
-                                           display, kVerboseStartup);
-      if (!faceReady)
-      {
-        if (!LittleFS.exists("/universal_face.json") &&
-            !LittleFS.exists(deviceFaceFile))
-        {
-          if (display) {
-            display->println(TXT("Face model missing", "面部模型缺失"));
-            display->println(TXT("Restarting...", "重启中..."));
-            display->display();
-            delay(2000);
-          }
-          ESP.restart();
-        }
-      }
+      EnsureFaceModelJson(faceConfigs, 2, userConfig.device_id, startupDisplay, kVerboseStartup);
       protogc::ProtoGC::collectFull("post-face-sync");
+
+      // Check both assets before Initialize() can load a missing face or animation.
+      // A failed download keeps the registration page instead of rebooting.
+      const String animationFilename = userConfig.user_animation.length() > 0
+                                       ? userConfig.user_animation : userConfig.device_id + "_animation.json";
+      AnimationDownloadConfig animationDownload{user_config_base_url, user_config_gitee_base_url,
+          user_config_github_token, user_config_gitee_token, startupDisplay, kVerboseStartup};
+      AnimationDownloader::Download(animationDownload, animationFilename);
+      animationSyncedBeforeInit = true;
+      protogc::ProtoGC::collectFull("post-animation-sync");
 
       // Skip background phase — go straight to WiFi teardown below
       gStartupPhase = StartupPhase::WifiTeardown;
     }
   }
+
+  const bool configReady = LittleFS.exists(kUserConfigPath);
+  const bool faceReady = HasLocalFaceAsset(userConfig);
+  const bool animationReady = HasLocalAnimationAsset(userConfig);
+  if (!(configReady && faceReady && animationReady))
+    HaltStartupOfflineFailure(configReady, faceReady, animationReady);
+  if (gRegistrationDisplayHeld) HoldRegistrationDisplay(false);
+  Serial.println("[REGISTER] Assets ready; starting renderer");
 
   // Always update these from config regardless of network availability
   user_name = userConfig.username.c_str();
@@ -1180,11 +1240,12 @@ void setup()
   }
 #endif
 
+  const bool syncAnimationInInit = networkAvailable && !animationSyncedBeforeInit;
   animation.Initialize(userConfig,
-                       networkAvailable ? user_config_base_url : nullptr,
-                       networkAvailable ? user_config_gitee_base_url : nullptr,
-                       networkAvailable ? user_config_github_token : nullptr,
-                       networkAvailable ? user_config_gitee_token : nullptr,
+                       syncAnimationInInit ? user_config_base_url : nullptr,
+                       syncAnimationInInit ? user_config_gitee_base_url : nullptr,
+                       syncAnimationInInit ? user_config_github_token : nullptr,
+                       syncAnimationInInit ? user_config_gitee_token : nullptr,
                        display,
                        kVerboseStartup);
   protogc::ProtoGC::collectFull("post-animation-init");
@@ -1230,8 +1291,88 @@ void setup()
   if (display) display->clear();
 }
 
+#if SERIAL_DEBUG_ENABLED && defined(TASESP32S3)
+static bool ResolveDebugView(const char* name, SerialDebug::View& view)
+{
+  if (!strcmp(name, "hud")) {
+    view = {gHudBuffer, 64 * 32 * sizeof(uint16_t), "rgb565le", 64, 32};
+    return gHudBuffer && gHudColors;
+  }
+  if (!strncmp(name, "dmafront", 8) || !strncmp(name, "dmaback", 7)) {
+    const bool front = !strncmp(name, "dmafront", 8);
+    size_t row = 0;
+    if (!dma_display || !SerialDebug::Number(name + (front ? 8 : 7), row) || row >= 16) return false;
+    view.data = dma_display->debugRowView(front, unsigned(row), view.bytes, view.width, view.height);
+    view.format = "dma16le";
+    return view.data != nullptr;
+  }
+  if (MicrophoneFourierIT::IsInitialized()) {
+    if (!strcmp(name, "samples")) {
+      view = {MicrophoneFourierIT::GetSamples(), 256 * sizeof(float), "f32le", 256, 1};
+      return true;
+    }
+    if (!strcmp(name, "fft") || !strcmp(name, "filtered")) {
+      view = {!strcmp(name, "fft") ? MicrophoneFourierIT::GetFourier() : MicrophoneFourierIT::GetFourierFiltered(),
+          128 * sizeof(float), "f32le", 128, 1};
+      return true;
+    }
+  }
+  const char* suffix = nullptr;
+  unsigned kind = 0;
+  if (!strncmp(name, "rgb", 3)) { suffix = name + 3; kind = 0; }
+  else if (!strncmp(name, "scratch", 7)) { suffix = name + 7; kind = 1; }
+  else if (!strncmp(name, "vertices", 8)) { suffix = name + 8; kind = 2; }
+  else if (!strncmp(name, "indices", 7)) { suffix = name + 7; kind = 3; }
+  size_t index = 0;
+  if (!SerialDebug::Number(suffix, index)) return false;
+  if (kind < 2) {
+    if (index >= controller.GetCameraCount()) return false;
+    IPixelGroup* pixels = controller.GetCameras()[index]->GetPixelGroup();
+    view = {kind ? pixels->GetColorBuffer() : pixels->GetColors(),
+        pixels->GetPixelCount() * sizeof(ProtoRGBColor), "rgb888", 64, 32};
+  } else {
+    Scene* scene = animation.GetScene();
+    if (index >= scene->GetObjectCount()) return false;
+    TriangleGroup* mesh = scene->GetObjects()[index]->GetRenderTriangleGroup();
+    if (!mesh) return false;
+    if (kind == 2) view = {mesh->GetVertices(), size_t(mesh->GetVertexCount()) * sizeof(Vector3D),
+        "xyzf32le", unsigned(mesh->GetVertexCount()), 1};
+    else view = {mesh->GetIndexGroup(), size_t(mesh->GetTriangleCount()) * sizeof(IndexGroup),
+        "abcu16le", unsigned(mesh->GetTriangleCount()), 1};
+  }
+  return view.data != nullptr;
+}
+
+static void DebugStats(char* output, size_t capacity)
+{
+  unsigned animStack = 0;
+#if ANIM_RENDER_PIPELINE
+  if (gAnimTaskHandle) animStack = uxTaskGetStackHighWaterMark(gAnimTaskHandle);
+#endif
+  snprintf(output, capacity,
+      "@DBG STATS intFree=%u largest=%u min=%u psram=%u\n"
+      "@DBG STACK loop=%u anim=%u mic=%u\n"
+      "@DBG TIMING animUs=%u renderUs=%u micFrames=%lu micDrops=%lu\n",
+      unsigned(GetFreeInternalDRAM()), unsigned(GetLargestFreeInternalBlock()),
+      unsigned(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)), unsigned(GetFreePSRAM()),
+      unsigned(uxTaskGetStackHighWaterMark(nullptr)), animStack,
+      unsigned(MicrophoneFourierIT::GetTaskStackHighWater()),
+      unsigned(animation.GetAnimationTime() * 1000000), unsigned(controller.GetRenderTime() * 1000000),
+      static_cast<unsigned long>(MicrophoneFourierIT::GetProcessedFrameCount()),
+      static_cast<unsigned long>(MicrophoneFourierIT::GetSamplerDropCount()));
+}
+#endif
+
 void loop()
 {
+#ifdef PRINTINFO
+  const uint32_t frameStartUs = micros();
+  static uint64_t frameTotalUs = 0;
+  static uint64_t displayTotalUs = 0;
+  static uint64_t menuTotalUs = 0;
+  static uint32_t measuredFrames = 0;
+  static uint32_t frameMaxUs = 0;
+#endif
   const uint32_t now = millis();
 
   // ── Startup phase machine: wait for background downloads to fully
@@ -1386,6 +1527,9 @@ void loop()
   // the animation task and written by MenuUpdate; on ESP32-S3 aligned
   // word accesses are hardware-atomic, so stale-read is the worst case.
 
+  if (MediaService::Active()) {
+    animation.MenuUpdate();
+  } else {
 #if ANIM_RENDER_PIPELINE
   if (gPipelineActive) {
     // Signal core 0 to begin animation computation
@@ -1393,7 +1537,13 @@ void loop()
     xSemaphoreGive(gRenderDoneSemaphore);
 
     // Core 1: do I2C/display/gesture work while core 0 runs animation
+#ifdef PRINTINFO
+    const uint32_t menuStartUs = micros();
+#endif
     animation.MenuUpdate();
+#ifdef PRINTINFO
+    menuTotalUs += micros() - menuStartUs;
+#endif
 
     // Wait for the animation task to finish this frame before rasterization.
     xSemaphoreTake(gAnimDoneSemaphore, portMAX_DELAY);
@@ -1401,7 +1551,13 @@ void loop()
 #endif
   {
     yield(); // Feed watchdog before animation update
+#ifdef PRINTINFO
+    const uint32_t menuStartUs = micros();
+#endif
     animation.MenuUpdate();
+#ifdef PRINTINFO
+    menuTotalUs += micros() - menuStartUs;
+#endif
     yield();
     animation.UpdateTime(ratio);
     // Publish the completed frame to the render buffer so Camera reads
@@ -1409,8 +1565,19 @@ void loop()
     PublishSceneVertices(animation.GetScene());
     yield(); // Feed watchdog before render
   }
+  }
 
-  controller.Render(animation.GetScene());
+#ifdef PRINTINFO
+  Object3D* profileFace = animation.GetProfileFaceObject();
+  Material* originalMaterial = profileFace ? profileFace->GetMaterial() : nullptr;
+  if (profileFace && gProfileMaterial) profileFace->SetMaterial(gProfileMaterial);
+#endif
+  if (MediaService::Active()) {
+    MediaService::CopyTo(controller.GetCameras()[0]->GetPixelGroup()->GetColors());
+  } else controller.Render(animation.GetScene());
+#ifdef PRINTINFO
+  if (profileFace && gProfileMaterial) profileFace->SetMaterial(originalMaterial);
+#endif
   yield(); // Feed watchdog before display
 #elif defined(TASESP32P4)
   // TODO: add panel-clearing logic for P4 HUB75 if needed
@@ -1448,8 +1615,24 @@ void loop()
 
   // controller.
 
+#ifdef PRINTINFO
+  const uint32_t displayStartUs = micros();
+#endif
   controller.Display();
+#ifdef PRINTINFO
+  displayTotalUs += micros() - displayStartUs;
+#endif
   yield(); // Feed watchdog after display update
+
+#if SERIAL_DEBUG_ENABLED && defined(TASESP32S3)
+  // Animation has completed and is waiting for next frame's semaphore.
+  static uint32_t debugFrame = 0;
+#ifdef PRINTINFO
+  SerialDebug::Poll(ResolveDebugView, DebugStats, ++debugFrame, SetMaterialProfile);
+#else
+  SerialDebug::Poll(ResolveDebugView, DebugStats, ++debugFrame);
+#endif
+#endif
 
 #ifdef PRINTINFO
   static uint32_t lastPrintMs = 0;
@@ -1457,7 +1640,17 @@ void loop()
   // Sample every ~2 seconds to avoid serial bottleneck
   if (nowPrint - lastPrintMs >= 2000) {
     lastPrintMs = nowPrint;
-    Serial.printf("anim=%.2fms render=%.2fms pipe=%d intFree=%u largestBlk=%u psramFree=%u micFrames=%lu micDrops=%lu micStack=%lu\n",
+    if (measuredFrames && frameTotalUs) {
+      BestEffortLog::Printf("[FRAME] fps=%.2f avg=%.2fms max=%.2fms menu=%.2fms display=%.2fms\n",
+          double(measuredFrames) * 1000000.0 / double(frameTotalUs),
+          double(frameTotalUs) / measuredFrames / 1000.0,
+          double(frameMaxUs) / 1000.0,
+          double(menuTotalUs) / measuredFrames / 1000.0,
+          double(displayTotalUs) / measuredFrames / 1000.0);
+    }
+    frameTotalUs = displayTotalUs = menuTotalUs = 0;
+    measuredFrames = frameMaxUs = 0;
+    BestEffortLog::Printf("anim=%.2fms render=%.2fms pipe=%d intFree=%u largestBlk=%u psramFree=%u micFrames=%lu micDrops=%lu micStack=%lu\n",
         animation.GetAnimationTime() * 1000.0f,
         controller.GetRenderTime() * 1000.0f,
         gPipelineActive ? 1 : 0,
@@ -1469,7 +1662,7 @@ void loop()
         static_cast<unsigned long>(MicrophoneFourierIT::GetTaskStackHighWater()));
 #if DIRECT_RASTERIZER
     // Rasterizer counters (direct path): object/triangle/pixel throughput.
-    Serial.printf("[RAST] obj=%u tris=%u culled=%u pix=%u\n",
+    BestEffortLog::Printf("[RAST] obj=%u tris=%u culled=%u pix=%u\n",
         gRasterStats.objectsDrawn,
         gRasterStats.trianglesSubmitted,
         gRasterStats.trianglesCulled,
@@ -1490,5 +1683,13 @@ void loop()
       }
     }
   }
+#endif
+#ifdef PRINTINFO
+  // Include debug transport and telemetry in the frame budget. Reporting only
+  // the render/display portion would hide a stalled USB console from FPS.
+  const uint32_t frameUs = micros() - frameStartUs;
+  frameTotalUs += frameUs;
+  if (frameUs > frameMaxUs) frameMaxUs = frameUs;
+  ++measuredFrames;
 #endif
 }

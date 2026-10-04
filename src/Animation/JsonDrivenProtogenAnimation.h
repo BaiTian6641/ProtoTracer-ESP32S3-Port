@@ -1009,7 +1009,7 @@ private:
                 spectrum[i] = ToColor(colors[i], spectrum[i]);
             }
         }
-        ownedMaterials.push_back(std::make_unique<GradientMaterial<N>>(spectrum, period, isRadial));
+        ownedMaterials.push_back(std::make_unique<GradientMaterial<N>>(spectrum, period, isRadial, false, true));
         GradientMaterial<N> *mat = static_cast<GradientMaterial<N> *>(ownedMaterials.back().get());
         RegisterHueShiftable(mat);
         return mat;
@@ -1781,6 +1781,17 @@ public:
     }
 
     uint8_t GetBoopSensorThreshold() const { return boopSensorThreshold; }
+
+#ifdef PRINTINFO
+    Material* GetProfileMaterial(const char* name)
+    {
+        if (strcmp(name, "spiral") == 0) return &rainbowSpiral;
+        if (strcmp(name, "gradient") == 0) return &gradientMat;
+        if (strcmp(name, "solid") == 0) return &expressionColor;
+        return nullptr;
+    }
+    Object3D* GetProfileFaceObject() { return GetFaceObject(); }
+#endif
 
     uint8_t GetAccentBrightness()
     {

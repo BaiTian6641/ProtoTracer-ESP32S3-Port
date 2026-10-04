@@ -250,6 +250,7 @@
   }
 
   function onDataReceived(data) {
+    if (data.op === 'media.ack') return;
     if (data.op === 'control.state' || data.op === 'pong') return;
     const preview = JSON.stringify(data).substring(0, 120);
     addLog('data', I18N.t('log.recv', { preview: preview + (preview.length >= 120 ? '\u2026' : '') }));

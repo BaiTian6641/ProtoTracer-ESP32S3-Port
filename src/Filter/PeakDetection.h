@@ -70,8 +70,9 @@ public:
                     filData[i] = data[i];
                 }
 
-                GetStdDev(i - lag + 1, i, data, avg[i], std[i]);
-                
+                // Keep the existing fixed-baseline detector. The former call
+                // used i as a window length, read past data, and its results
+                // were immediately overwritten by these assignments.
                 avg[i] = average;
                 std[i] = stdDev;
             }

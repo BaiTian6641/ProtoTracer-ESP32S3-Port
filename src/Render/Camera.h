@@ -115,6 +115,9 @@ private:
     float* tmpY = nullptr;
     float* rotX = nullptr;
     float* rotY = nullptr;
+    bool directRaysValid = false;
+    Quaternion directRayRotation;
+    Vector3D directRayScale;
 
 #if CAMERA_RASTER_WORKER
     TaskHandle_t rasterTaskHandle = nullptr;
@@ -132,6 +135,33 @@ private:
         float m01;
         float m10;
         float m11;
+    };
+
+    // Preserve RotateVector's arithmetic, but normalize once per object instead
+    // of once per vertex. The original quaternion coefficients are intentional.
+    struct PreparedRotation3D {
+        Quaternion original;
+        Quaternion unit;
+        float s2;
+        float dPUU;
+        bool identity;
+
+        explicit PreparedRotation3D(Quaternion rotation) : original(rotation) {
+            identity = rotation.IsClose(Quaternion(), Mathematics::EPSILON);
+            unit = identity ? Quaternion() : rotation.UnitQuaternion();
+            s2 = unit.W * 2.0f;
+            dPUU = unit.W * unit.W - (unit.X * unit.X + unit.Y * unit.Y + unit.Z * unit.Z);
+        }
+
+        Vector3D Apply(Vector3D v) const {
+            if (identity) return v;
+            const float dPUV = (unit.X * v.X + unit.Y * v.Y + unit.Z * v.Z) * 2.0f;
+            return Vector3D{
+                original.X * dPUV + v.X * dPUU + ((unit.Y * v.Z) - (unit.Z * v.Y)) * s2,
+                original.Y * dPUV + v.Y * dPUU + ((unit.Z * v.X) - (unit.X * v.Z)) * s2,
+                original.Z * dPUV + v.Z * dPUU + ((unit.X * v.Y) - (unit.Y * v.X)) * s2
+            };
+        }
     };
 
 #if DIRECT_RASTERIZER
@@ -255,6 +285,7 @@ private:
         if (desired == 0) return;
 
         if (cachedRayCount != desired || cachedRays == nullptr) {
+            directRaysValid = false;
             protogc::ProtoGC::heapFree(cachedRays);
             // Move to PSRAM — not used during DSP hot path, only for QuadTree intersect loop
             cachedRays = static_cast<Vector2D*>(protogc::ProtoGC::psramAlloc(desired * sizeof(Vector2D)));
@@ -466,28 +497,40 @@ private:
 
         // ── Ray preparation (same math as the legacy path) ──
         const Vector3D scale = transform->GetScale();
-        const Rotation2D rot2 = BuildRotation2D(lookDirection.UnitQuaternion());
-        for (unsigned int i = 0; i < pixelCount; ++i) {
-            const Vector2D baseRay = pixelGroup->GetCoordinate(i);
-            tmpX[i] = baseRay.X * scale.X;
-            tmpY[i] = baseRay.Y * scale.Y;
+        const bool rebuildRays = !directRaysValid ||
+            !directRayRotation.IsEqual(lookDirection) ||
+            directRayScale.X != scale.X || directRayScale.Y != scale.Y;
+        if (rebuildRays) {
+            const Rotation2D rot2 = BuildRotation2D(lookDirection.UnitQuaternion());
+            for (unsigned int i = 0; i < pixelCount; ++i) {
+                const Vector2D baseRay = pixelGroup->GetCoordinate(i);
+                tmpX[i] = baseRay.X * scale.X;
+                tmpY[i] = baseRay.Y * scale.Y;
+            }
+            dsps_mulc_f32(tmpX, rotX, pixelCount, rot2.m00, 1, 1);
+            dsps_mulc_f32(tmpY, rotY, pixelCount, rot2.m10, 1, 1);
+            dsps_add_f32(rotX, rotY, rotX, pixelCount, 1, 1, 1); // rotX = m00*x + m10*y
+            dsps_mulc_f32(tmpY, rotY, pixelCount, rot2.m11, 1, 1);
+            dsps_mulc_f32(tmpX, tmpX, pixelCount, rot2.m01, 1, 1);
+            dsps_add_f32(rotY, tmpX, rotY, pixelCount, 1, 1, 1); // rotY = m11*y + m01*x
+
+            for (unsigned int i = 0; i < pixelCount; ++i) {
+                cachedRays[i] = Vector2D(rotX[i], rotY[i]);
+            }
+            directRayRotation = lookDirection;
+            directRayScale = scale;
+            directRaysValid = true;
         }
-        dsps_mulc_f32(tmpX, rotX, pixelCount, rot2.m00, 1, 1);
-        dsps_mulc_f32(tmpY, rotY, pixelCount, rot2.m10, 1, 1);
-        dsps_add_f32(rotX, rotY, rotX, pixelCount, 1, 1, 1); // rotX = m00*x + m10*y
-        dsps_mulc_f32(tmpY, rotY, pixelCount, rot2.m11, 1, 1);
-        dsps_mulc_f32(tmpX, tmpX, pixelCount, rot2.m01, 1, 1);
-        dsps_add_f32(rotY, tmpX, rotY, pixelCount, 1, 1, 1); // rotY = m11*y + m01*x
 
         // Full-frame clear: triangle-driven writes are sparse, and the
         // depth buffer starts empty (legacy writes every pixel each frame).
         for (unsigned int i = 0; i < pixelCount; ++i) {
-            cachedRays[i] = Vector2D(rotX[i], rotY[i]);
             colors[i].R = 0; colors[i].G = 0; colors[i].B = 0;
             mZBuffer[i] = Mathematics::FLTMAX;
         }
 
         Quaternion invView = rayDirection.UnitQuaternion().Conjugate(); // non-const: RotateVector/UnitQuaternion mutate
+        const PreparedRotation3D vertexRotation(invView);
         const Vector3D camPos = transform->GetPosition();
         const float gridScale = 1.0f / mGridSpacing;
         const int maxCol = (int)kGridCols - 1;
@@ -517,7 +560,7 @@ private:
             EnsureVertexScratch((unsigned int)vertexCount);
             if (!mScrX || !mScrY || !mScrZ) continue; // scratch alloc failed: skip object
             for (int k = 0; k < vertexCount; k++) {
-                const Vector3D r = invView.RotateVector(groupVerts[k] - camPos);
+                const Vector3D r = vertexRotation.Apply(groupVerts[k] - camPos);
                 mScrX[k] = r.X; mScrY[k] = r.Y; mScrZ[k] = r.Z;
             }
             gRasterStats.objectsDrawn++;
@@ -537,7 +580,6 @@ private:
                 // Barycentric denominator (same as Triangle2D ctor).
                 const float v0X = p2X - p1X, v0Y = p2Y - p1Y;
                 const float v1X = p3X - p1X, v1Y = p3Y - p1Y;
-                const float denominator = 1.0f / (v0X * v1Y - v1X * v0Y);
 
                 // Pixel bbox: only pixels whose centers can fall inside.
                 const float minX = Mathematics::Min(p1X, p2X, p3X);
@@ -554,6 +596,7 @@ private:
                 if (pxMax > maxCol) pxMax = maxCol;
                 if (pyMax > maxRow) pyMax = maxRow;
                 if (pxMin > pxMax || pyMin > pyMax) { gRasterStats.trianglesCulled++; continue; }
+                const float denominator = 1.0f / (v0X * v1Y - v1X * v0Y);
 
 #if DIRECT_RASTERIZER_BACKFACE_CULL
                 {
@@ -730,6 +773,8 @@ public:
     // Retained as the DIRECT_RASTERIZER=0 fallback and for RASTER_VERIFY_AB
     // on-device A/B checks. lookDirection/rayDirection are set by Rasterize().
     void RasterizeLegacy(Scene* scene) {
+            // Legacy repopulates the shared cache; never reuse it as a direct cache.
+            directRaysValid = false;
             const Quaternion normLookDir = lookDirection.UnitQuaternion();
             EnsureRayCache();
             EnsureFloatCache();

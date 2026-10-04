@@ -116,4 +116,6 @@
     <string name="error_ble_not_supported">BLE is not supported on this device.</string>
     <string name="error_connection_failed">Connection failed.</string>
     <string name="error_service_discovery">Service discovery failed.</string>
+    <string name="ctrl_media">Built-in clips / restore face</string>
+    <string name="media_restore">Stop media and restore face</string>
 </resources>

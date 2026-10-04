@@ -173,6 +173,25 @@ The badge next to the slider is tinted with an approximation of the effective co
 - **Linux:** BlueZ may need `Experimental Web Platform features` flag; some distributions require `chrome://flags/#enable-web-bluetooth-new-permissions-backend`
 - **Android:** Works in Chrome; grant location permission when prompted (required by Android BLE stack)
 
+## Projection and GIF (firmware 1.3.0+)
+
+Connect the device, then use **Projection & GIF · 64×32**. Camera, local images and
+videos can stream; screen sharing is shown with a browser-support check (many phone
+browsers do not expose `getDisplayMedia`). Keep the page in the foreground. RGB332
+usually gives higher FPS; RGB565 gives better color. Actual FPS is displayed and
+depends on content and the negotiated BLE connection.
+
+Choose a GIF, wait for phone-side conversion, select one of eight slots, and upload.
+Existing slots are replaced only after a complete validated upload. The list supports
+play/delete and includes the Wave, Hex and Orb built-ins. Device playback works after
+disconnecting Bluetooth. **Stop / restore face** returns to the existing expression.
+GIFs are scaled to 64×32, preserve frame delays, and loop continuously. Each converted
+clip can be at most 1 MiB; available flash space is shown. The original GIF is decoded
+in a browser Worker and never uploaded to an external service. `omggif` is vendored
+under MIT with its license in `js/vendor/omggif.js`.
+
+See [BLE media protocol and limits](../docs/ble-media.md) for implementation and tests.
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Solution |

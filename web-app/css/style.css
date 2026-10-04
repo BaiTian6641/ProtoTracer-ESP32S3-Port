@@ -590,3 +590,13 @@ input[type="text"]::placeholder { color: var(--text-muted); }
   .expression-grid { grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); }
   .card { padding: 14px; }
 }
+/* Low-resolution media preview and phone-friendly library controls. */
+#mediaPreview { display: block; width: min(100%, 512px); aspect-ratio: 2; margin: 16px auto; background: #000; image-rendering: pixelated; border-radius: 8px; }
+.media-options { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0; }
+.media-options select { background: var(--bg-secondary, #20232b); color: inherit; border: 1px solid #555; border-radius: 6px; padding: 8px; }
+.media-hint { font-size: .85rem; opacity: .75; line-height: 1.5; }
+.media-library { display: grid; gap: 8px; }
+.media-library > div { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.media-library span { flex: 1; min-width: 120px; }
+#mediaProgress { width: 100%; }
+#mediaStatus { overflow-wrap: anywhere; font-size: .9rem; }

@@ -78,3 +78,11 @@ This workspace currently has Gradle 8.5 cached under the user Gradle wrapper cac
 - Android 6.0 / API 23 or newer
 - Bluetooth permissions granted at runtime
 - Location permission and Location services enabled on Android 6 through 11 for BLE scanning
+# Media protocol v1
+
+Firmware 1.3.0 adds an optional `media` capability to the manifest. The native
+remote now recognizes media replies and offers Wave/Hex/Orb playback and
+**Stop media and restore face**. Existing face controls remain compatible.
+Phone-side camera/video capture and GIF conversion/upload/management are available
+in the web remote; they are not implemented in the native Android app in this release.
+See [BLE media protocol](../docs/ble-media.md).

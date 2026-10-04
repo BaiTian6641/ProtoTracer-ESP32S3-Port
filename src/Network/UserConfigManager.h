@@ -34,10 +34,14 @@ bool SaveUserConfig(const UserConfig &config);
 // Read the ESP32-S3 unique ID as a lowercase hex string.
 String ReadUniqueDeviceId();
 
+// Resolve the exact setup AP password (trim/fallback) used by NetWizard.
+String GetSetupPortalPassword(const UserConfig &config);
+
 // Connect to Wi-Fi using stored credentials and enter NetWizard captive portal when needed.
 // On first boot with no saved Wi-Fi, setup starts automatically. When a display is provided,
 // the setup AP SSID/password/IP and connection state are shown during the portal flow.
-bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsigned long connectTimeoutMs = 15000, M5GFX *display = nullptr);
+// Registration QR remains visible during first-boot portal waiting when requested.
+bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsigned long connectTimeoutMs = 15000, M5GFX *display = nullptr, bool showRegistrationQr = false);
 
 // Download user_config.json from a GitHub base URL using device_id as filename (<base>/<device_id>.json).
 // Optional: provide a GitHub token for private repos via the Authorization header.

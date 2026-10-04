@@ -27,6 +27,9 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <algorithm>
+using std::max; // Arduino's max helper for the signal-processing header.
+#include "../src/Filter/PeakDetection.h"
 
 // Host shim first: defines IRAM_ATTR & String before any firmware header
 // (mirrors the firmware, where main.cpp includes <Arduino.h> first).
@@ -83,11 +86,54 @@ bool WriteFrame(const char* path, const ProtoRGBColor* colors) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // Removing the discarded, out-of-bounds statistics call must preserve
+    // the existing fixed-baseline detector over successive audio frames.
+    PeakDetection<128> detector(8, 2.0f, 0.5f);
+    bool detected[128] = {}, expectedPeaks[128] = {};
+    for (unsigned int frame = 0; frame < 128; ++frame) {
+        float samples[128];
+        float maximum = 0, average = 0, variance = 0;
+        for (unsigned int i = 0; i < 128; ++i) {
+            samples[i] = frame % 4 ? 0.5f + float(i % 7) * 0.1f : 0.0f;
+            if (frame % 4 && i == 16 + frame % 80) samples[i] += 6;
+            maximum = std::max(maximum, samples[i]);
+        }
+        if (maximum > 2) {
+            for (unsigned int i = 0; i < 8; ++i) average += samples[i];
+            average /= 8;
+            for (unsigned int i = 0; i < 8; ++i) variance += powf(samples[i] - average, 2);
+            const float deviation = sqrtf(variance / 8);
+            for (unsigned int i = 8; i < 120; ++i) {
+                if (fabs(samples[i] - average) > 2 * deviation) {
+                    if (samples[i] > average) expectedPeaks[i] = true;
+                } else expectedPeaks[i] = false;
+            }
+        } else std::memset(expectedPeaks, 0, sizeof(expectedPeaks));
+        detector.Calculate(samples, detected);
+        if (std::memcmp(detected, expectedPeaks, sizeof(detected))) return 4;
+    }
+    std::printf("[audio] 128 frames preserve fixed-baseline peak decisions\n");
     const char* outPath = (argc > 1) ? argv[1] : "frame.bin";
     std::printf("[build] DIRECT_RASTERIZER=%d\n", DIRECT_RASTERIZER);
 
     // ── Pixel group: the real device grid (64x32, 3-unit spacing, row-major) ──
-    PixelGroup pixels(kPixelCount, P3HUB75);
+    PixelGroup pixels(64, 32, Vector2D(0, 0), Vector2D(3, 3));
+    PixelGroup referencePixels(kPixelCount, P3HUB75);
+    using Neighbor = bool (PixelGroup::*)(unsigned int, unsigned int*);
+    const Neighbor neighbors[] = {&PixelGroup::GetUpIndex, &PixelGroup::GetDownIndex,
+                                  &PixelGroup::GetLeftIndex, &PixelGroup::GetRightIndex};
+    for (unsigned int i = 0; i < kPixelCount; ++i) {
+        const Vector2D actual = pixels.GetCoordinate(i);
+        if (actual.X != P3HUB75[i].X || actual.Y != P3HUB75[i].Y ||
+            pixels.GetPixelIndex(actual) != int(i)) return 2;
+        for (Neighbor neighbor : neighbors) {
+            unsigned int a = 0, b = 0;
+            const bool validA = (pixels.*neighbor)(i, &a);
+            const bool validB = (referencePixels.*neighbor)(i, &b);
+            if (validA != validB || (validA && a != b)) return 2;
+        }
+    }
+    std::printf("[grid] all coordinates and neighbors match P3HUB75\n");
 
     // ── Mesh: 4 triangles, all inside the grid, overlapping + tilted ──
     // Vertices (world space). Camera is at origin looking -Z after the
@@ -141,6 +187,24 @@ int main(int argc, char** argv) {
 
     // ── Render one frame ──
     camera.Rasterize(&scene);
+
+#if DIRECT_RASTERIZER
+    // Repeated frames and changed camera parameters must match a fresh cache.
+    ProtoRGBColor expected[kPixelCount];
+    std::memcpy(expected, pixels.GetColors(), sizeof(expected));
+    camera.Rasterize(&scene);
+    if (std::memcmp(expected, pixels.GetColors(), sizeof(expected))) return 3;
+    const Vector3D scales[] = {Vector3D(0.9f, 1.1f, 1), Vector3D(1, 1, 1)};
+    for (const Vector3D& scale : scales) {
+        camT.SetScale(scale);
+        camera.Rasterize(&scene);
+        std::memcpy(expected, pixels.GetColors(), sizeof(expected));
+        Camera fresh(&camT, &layout, &pixels);
+        fresh.Rasterize(&scene);
+        if (std::memcmp(expected, pixels.GetColors(), sizeof(expected))) return 3;
+    }
+    std::printf("[cache] repeated frames and scale invalidation match fresh camera\n");
+#endif
 
     // ── Dump + report ──
     const ProtoRGBColor* colors = pixels.GetColors();

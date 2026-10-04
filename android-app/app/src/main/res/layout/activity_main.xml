@@ -520,6 +520,18 @@
                         app:strokeWidth="1dp" />
 
                     <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_media"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:visibility="gone"
+                        android:text="@string/ctrl_media"
+                        android:textAllCaps="false"
+                        android:textColor="@color/text_primary"
+                        app:backgroundTint="@color/bg_secondary"
+                        app:cornerRadius="8dp" />
+
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/btn_disconnect"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"

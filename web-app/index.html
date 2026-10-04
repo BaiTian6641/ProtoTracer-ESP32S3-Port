@@ -130,6 +130,38 @@
         </div>
       </div>
 
+      <div class="card" id="mediaCard">
+        <h3 data-media-text="title">投屏与 GIF · 64×32</h3>
+        <p id="mediaSupport" class="media-hint"></p>
+        <div id="mediaControls" hidden>
+          <canvas id="mediaPreview" width="64" height="32" aria-label="64 by 32 pixel preview"></canvas>
+          <div class="media-options">
+            <label><span data-media-text="color">色彩</span> <select id="mediaQuality"><option value="332">RGB332 · 256</option><option value="565">RGB565 · 65536</option></select></label>
+            <label><span data-media-text="fit">缩放</span> <select id="mediaFit"><option value="contain" data-media-text="contain">完整画面</option><option value="cover" data-media-text="cover">填满裁切</option></select></label>
+            <label>FPS <select id="mediaFPS"><option>5</option><option selected>10</option><option>15</option><option>20</option></select></label>
+            <label><input id="mediaMirror" type="checkbox" /> <span data-media-text="mirror">镜像</span></label>
+          </div>
+          <div class="action-grid">
+            <button id="mediaCamera" class="btn secondary" data-media-text="camera">摄像头投屏</button>
+            <button id="mediaScreen" class="btn secondary" data-media-text="screen">共享屏幕</button>
+            <label class="btn secondary"><span data-media-text="video">图片 / 视频投屏</span><input id="mediaSourceFile" type="file" accept="image/*,video/*" hidden /></label>
+            <button id="mediaStop" class="btn danger" data-media-text="stop">停止并恢复表情</button>
+          </div>
+          <p class="media-hint" data-media-text="hint">摄像头、图片和视频在手机上处理；共享屏幕取决于浏览器支持。保持此页面在前台。</p>
+          <hr />
+          <div class="media-options">
+            <label><span data-media-text="slot">GIF 槽位</span> <select id="mediaSlot"></select></label>
+            <label class="btn secondary"><span data-media-text="gif">选择 GIF</span><input id="mediaGIF" type="file" accept="image/gif,.gif" hidden /></label>
+            <button id="mediaUpload" class="btn primary" disabled data-media-text="upload">上传到设备</button>
+            <button id="mediaRefresh" class="btn secondary" data-media-text="refresh">刷新动画列表</button>
+          </div>
+          <p id="mediaGIFInfo" class="media-hint"></p>
+          <progress id="mediaProgress" max="1" value="0" hidden></progress>
+          <div id="mediaLibrary" class="media-library"></div>
+          <p id="mediaStatus" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+
       <!-- Quick Actions -->
       <div class="card">
         <h3 data-i18n="ctrl.quickActions">Quick Actions</h3>
@@ -163,6 +195,8 @@
   <!-- Scripts -->
   <script src="js/i18n.js"></script>
   <script src="js/ble.js"></script>
+  <script src="js/media-format.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/media.js"></script>
 </body>
 </html>

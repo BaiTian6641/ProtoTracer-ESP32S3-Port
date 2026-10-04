@@ -21,10 +21,10 @@ function Read-Bytes([string]$path) {
 }
 
 function Get-Fnv1a32([byte[]]$data) {
-    $h = [uint32]0x811c9dc5
+    $h = [uint32]2166136261
     foreach ($b in $data) {
         $h = $h -bxor $b
-        $h = ($h * 0x01000193) -band 0xFFFFFFFF
+        $h = [uint32](([uint64]$h * 16777619) -band [uint64]4294967295)
     }
     return $h
 }
@@ -63,7 +63,7 @@ for ($i = 0; $i -lt $a.Length; $i++) {
 
 if ($diffCount -eq 0) {
     Write-Host ""
-    Write-Host "PASS: byte-identical output ($($a.Length) bytes, FNV-1a 0x{0:X8})" -f (Get-Fnv1a32 $a)
+    Write-Host ("PASS: byte-identical output ($($a.Length) bytes, FNV-1a 0x{0:X8})" -f (Get-Fnv1a32 $a))
     Write-Host "      legacy QuadTree ray-cast path == direct triangle rasterizer path"
     exit 0
 } else {

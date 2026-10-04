@@ -82,7 +82,7 @@ extern bool gColoredPreview;
 //     gHudColors (set below), converts to RGB565 into gHudBuffer, and
 //     pushes it to the secondary M5 display — all inside its existing
 //     I2C transaction on the main-loop core.  No FreeRTOS task needed.
-EXT_RAM_BSS_ATTR uint16_t gHudBuffer[64 * 32];
+uint16_t* gHudBuffer = nullptr;
 ProtoRGBColor* volatile gHudColors = nullptr;
 
 // placeholder for the matrix object
@@ -131,7 +131,7 @@ private:
     Transform camTransform1 = Transform(Vector3D(0.0f,0.0f,0.0f), Vector3D(0.0f, 0.0f, -500.0f), Vector3D(1, 1, 1));
     uint8_t lastDmaBrightness = 0xFF;
 
-    PixelGroup* camPixels1 = new PixelGroup(2048,P3HUB75);
+    PixelGroup* camPixels1 = new PixelGroup(64, 32, Vector2D(0, 0), Vector2D(3, 3));
     
     Camera* camMain1 = new Camera(&camTransform1, &cameraLayout, camPixels1);
 
@@ -155,6 +155,12 @@ public:
     TasESP32S3KitV1(uint8_t maxBrightness) : Controller(cameras, 1, maxBrightness, 0){}
 
     void Initialize() override{
+        if (!gHudBuffer) {
+            gHudBuffer = static_cast<uint16_t*>(heap_caps_malloc(64 * 32 * sizeof(uint16_t),
+                                                               MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (!gHudBuffer) Serial.println("[HUD] PSRAM allocation failed; preview disabled");
+            else memset(gHudBuffer, 0, 64 * 32 * sizeof(uint16_t));
+        }
         // Guard: if the DMA driver already exists, this is a re-init call.
         // Tear down the old driver cleanly before creating a new one.
         if (dma_display) {

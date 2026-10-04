@@ -192,6 +192,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         view<MaterialButton>(R.id.btn_ping).setOnClickListener { sendPing() }
+        view<MaterialButton>(R.id.btn_media).setOnClickListener {
+            val names = arrayOf(getString(R.string.media_restore), "Wave", "Hex", "Orb")
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(R.string.ctrl_media)
+                .setItems(names) { _, index ->
+                    val command = JsonObject().apply {
+                        addProperty("op", if (index == 0) "media.stop" else "media.play")
+                        addProperty("rid", 1)
+                        if (index > 0) addProperty("builtin", names[index].lowercase(java.util.Locale.ROOT))
+                    }
+                    ble.send(command.toString())
+                }.show()
+        }
         view<MaterialButton>(R.id.btn_refresh_manifest).setOnClickListener {
             requestManifest()
             addLog("info", getString(R.string.log_manifest_refresh))
@@ -424,6 +437,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun onBleMessage(message: JsonObject, raw: String) {
         when (message.string("op")) {
+            "media.reply" -> addLog(if (message.bool("ok") == true) "success" else "error", raw.take(160))
+            "media.ack" -> { /* Binary transfer acknowledgement: reserved for media clients. */ }
             "control.state" -> applyControlState(message)
             "pong" -> {
                 val name = message.string("name") ?: currentDeviceName
@@ -445,6 +460,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyManifest(message: JsonObject) {
+        val media = message.getAsJsonObject("media")
+        view<MaterialButton>(R.id.btn_media).visibility =
+            if (media?.get("version")?.asInt == 1) View.VISIBLE else View.GONE
         addLog("success", getString(R.string.log_manifest_received))
         val visual = message.obj("visual")
         val device = message.obj("device")

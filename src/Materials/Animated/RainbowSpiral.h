@@ -20,9 +20,7 @@ public:
     }
 
     void HueShift(float hueDeg){
-        for(uint8_t i = 0; i < 6; i++){
-            rainbowSpectrum[i] = rainbowSpectrum[i].HueShift(hueDeg);
-        }
+        spiralMaterial.HueShift(hueDeg);
     }
 
     Material* GetMaterial() override{

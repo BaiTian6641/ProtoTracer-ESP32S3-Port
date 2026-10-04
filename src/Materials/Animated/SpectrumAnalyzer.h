@@ -3,17 +3,22 @@
 #include "../Material.h"
 #include "../GradientMaterial.h"
 #include "../../Controls/BouncePhysics.h"
+#include <new>
+#ifdef ESP32
+#include <esp_heap_caps.h>
+#endif
 
 class SpectrumAnalyzer : public Material {
 private:
-    BouncePhysics* bPhy[128];
+    BouncePhysics* bPhy = nullptr;
+    bool bounceStateAttempted = false;
     Vector2D size;
     Vector2D offset;
     float angle = 0.0f;
     float hueAngle = 0.0f;
     uint8_t colors;
-    float* data;
-    float bounceData[128];
+    float* data = nullptr;
+    float bounceData[128] = {};
     uint8_t bins = 128;
     bool mirrorY = false;
     bool flipY = false;
@@ -24,6 +29,20 @@ private:
 
     Material* material;
 
+    void EnsureBounceState(){
+        if (!bounce || bounceStateAttempted) return;
+        bounceStateAttempted = true;
+        // Do not allocate before PSRAM initialization or for an unused effect.
+#ifdef ESP32
+        bPhy = static_cast<BouncePhysics*>(heap_caps_malloc(
+            128 * sizeof(BouncePhysics), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+#else
+        bPhy = static_cast<BouncePhysics*>(::operator new(
+            128 * sizeof(BouncePhysics), std::nothrow));
+#endif
+        if (bPhy) for (unsigned i = 0; i < 128; ++i) new (&bPhy[i]) BouncePhysics(35.0f, 15.0f);
+    }
+
 public:
     SpectrumAnalyzer(Vector2D size, Vector2D offset, bool bounce = false, bool flipY = false, bool mirrorY = false){
         this->size = size.Divide(2.0f);
@@ -33,19 +52,18 @@ public:
         this->bounce = bounce;
         this->material = &gM;
 
-        if (bounce){
-            for (uint8_t i = 0; i < 128; i++){
-                bPhy[i] = new BouncePhysics(35.0f, 15.0f);
-            }
-        }
     }
 
-    ~SpectrumAnalyzer(){
-        for (uint8_t i = 0; i < 128; i++){
-            delete bPhy[i];
-        }
-
+    ~SpectrumAnalyzer() override{
+        if (bPhy) for (unsigned i = 0; i < 128; ++i) bPhy[i].~BouncePhysics();
+#ifdef ESP32
+        heap_caps_free(bPhy);
+#else
+        ::operator delete(bPhy);
+#endif
     }
+    SpectrumAnalyzer(const SpectrumAnalyzer&) = delete;
+    SpectrumAnalyzer& operator=(const SpectrumAnalyzer&) = delete;
 
     void SetMirrorYState(bool state){
         mirrorY = state;
@@ -86,6 +104,8 @@ public:
 
     void Update(float* readData){
         data = readData;
+        if (!data) return;
+        EnsureBounceState();
         
         // Precompute hue-shifted gradient colors once per frame
         if (hueAngle != 0.0f) {
@@ -97,8 +117,8 @@ public:
         }
         
         for (uint8_t i = 0; i < 128; i++){
-            if(bounce){
-                bounceData[i] = bPhy[i]->Calculate(data[i], 0.1f);
+            if(bounce && bPhy){
+                bounceData[i] = bPhy[i].Calculate(data[i], 0.1f);
             }
             else{
                 bounceData[i] = data[i];
@@ -107,6 +127,7 @@ public:
     }
 
     ProtoRGBColor GetRGB(Vector3D position, Vector3D normal, Vector3D uvw) override {
+        if (!data) return ProtoRGBColor();
         Vector2D rPos = Mathematics::IsClose(angle, 0.0f, 0.1f) ? Vector2D(position.X, position.Y) - offset : Vector2D(position.X, position.Y).Rotate(angle, offset) - offset;
 
         // Fix: use || for out-of-range rejection (was impossible &&)

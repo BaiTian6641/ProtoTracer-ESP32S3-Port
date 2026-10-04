@@ -1,6 +1,7 @@
 #include "UserConfigManager.h"
 
 #include "RemoteFileSync.h"
+#include "../Controls/DeviceRegistrationScreen.h"
 
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -35,6 +36,7 @@ namespace
     bool g_netWizardDisplayActive = false;
     String g_netWizardPortalSsid;
     String g_netWizardPortalPassword;
+    String g_netWizardRegistrationDeviceId;
 
     bool EnsureFsMounted()
     {
@@ -75,6 +77,13 @@ namespace
     {
         if (!g_netWizardDisplay || !g_netWizardDisplayActive)
         {
+            return;
+        }
+
+        if (!g_netWizardRegistrationDeviceId.isEmpty())
+        {
+            ShowDeviceRegistrationScreen(g_netWizardDisplay, g_netWizardRegistrationDeviceId,
+                                          g_netWizardPortalPassword);
             return;
         }
 
@@ -222,6 +231,8 @@ namespace
             }
 
             const String hint = status == NetWizardConnectionStatus::CONNECTED ? WiFi.localIP().toString() : String();
+            OledCare::Activity(millis());
+            OledCare::Poll(millis());
             ShowNetWizardDisplay(ConnectionStatusText(status), hint);
         });
 
@@ -231,6 +242,8 @@ namespace
                 return;
             }
 
+            OledCare::Activity(millis());
+            OledCare::Poll(millis());
             String hint;
             if (state == NetWizardPortalState::IDLE)
             {
@@ -268,12 +281,47 @@ namespace
                       portalSsid.c_str(),
                       CurrentPortalIpString().c_str());
 
-        wizard.autoConnect(portalSsid.c_str(), portalPassword.c_str());
+        if (OledCare::enabled)
+        {
+            // Service the same NetWizard state machine on this application task,
+            // so OLED protection also runs during an indefinite first-boot wait.
+            // NetWizard closes the AP on portal exit/timeout; its HTTP exit grace
+            // and WiFi reconnection remain managed by wizard.loop().
+            wizard.setStrategy(NetWizardStrategy::NON_BLOCKING);
+            wizard.autoConnect(portalSsid.c_str(), portalPassword.c_str());
+            uint32_t lastDisplayPollMs = 0;
+            uint8_t lastStations = WiFi.softAPgetStationNum();
+            while (WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA)
+            {
+                wizard.loop();
+                const uint32_t now = millis();
+                if (now - lastDisplayPollMs >= 100)
+                {
+                    lastDisplayPollMs = now;
+                    const uint8_t stations = WiFi.softAPgetStationNum();
+                    if (stations != lastStations) OledCare::Activity(now);
+                    lastStations = stations;
+#ifdef OTA_BTN
+                    if (digitalRead(OTA_BTN) == LOW) OledCare::Activity(now);
+#endif
+                    OledCare::Poll(now);
+                    if (OledCare::TakeRedraw() && !g_netWizardRegistrationDeviceId.isEmpty())
+                        ShowDeviceRegistrationScreen(display, g_netWizardRegistrationDeviceId,
+                                                      g_netWizardPortalPassword);
+                }
+                delay(1);
+            }
+            wizard.setStrategy(NetWizardStrategy::BLOCKING);
+        }
+        else
+        {
+            wizard.autoConnect(portalSsid.c_str(), portalPassword.c_str());
+        }
 
         config.wifi_ssid = wizard.getSSID();
         config.wifi_password = wizard.getPassword();
 
-        // autoConnect in BLOCKING mode should already have WiFi connected.
+        // The completed portal flow should already have WiFi connected.
         // Calling WiFi.begin() again would tear down the existing connection and
         // restart DHCP, which can fail to re-assign an IP. Only fall back to a
         // manual connect if the wizard's internal connection didn't stabilize.
@@ -320,7 +368,12 @@ namespace
         }
         SaveUserConfig(config);
 
-        if (display)
+        const bool keepRegistration = !g_netWizardRegistrationDeviceId.isEmpty();
+        OledCare::SetRegistration(keepRegistration, millis());
+        OledCare::Poll(millis());
+        if (keepRegistration)
+            ShowDeviceRegistrationScreen(display, g_netWizardRegistrationDeviceId, portalPassword);
+        else if (display)
         {
             display->clearDisplay();
             display->setCursor(0, 0);
@@ -346,6 +399,7 @@ namespace
         }
 
         g_netWizardDisplayActive = false;
+        g_netWizardRegistrationDeviceId = String();
         return connected;
     }
 
@@ -474,6 +528,11 @@ String ReadUniqueDeviceId()
     return hex;
 }
 
+String GetSetupPortalPassword(const UserConfig &config)
+{
+    return BuildSetupPortalPassword(config);
+}
+
 bool SaveUserConfig(const UserConfig &config)
 {
     if (!EnsureFsMounted())
@@ -570,8 +629,9 @@ bool EnsureUserConfig(UserConfig &config)
     return true;
 }
 
-bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsigned long connectTimeoutMs, M5GFX *display)
+bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsigned long connectTimeoutMs, M5GFX *display, bool showRegistrationQr)
 {
+    g_netWizardRegistrationDeviceId = showRegistrationQr ? ReadUniqueDeviceId() : String();
     static NetWizard wizard(&server);
     wizard.setStrategy(NetWizardStrategy::BLOCKING);
     wizard.setConnectTimeout(connectTimeoutMs);
@@ -585,7 +645,7 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
     {
         for (int attempt = 1; attempt <= 1 && !connected; ++attempt)
         {
-            if (display)
+            if (display && !showRegistrationQr)
             {
                 display->clearDisplay();
                 display->setCursor(0, 0);
@@ -598,7 +658,7 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
             connected = ConnectAndStabilizeWifi(config.wifi_ssid, config.wifi_password, connectTimeoutMs, &connectedIp);
             if (connected)
             {
-                if (display)
+                if (display && !showRegistrationQr)
                 {
                     display->clearDisplay();
                     display->setCursor(0, 0);
@@ -607,7 +667,7 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
                     display->display();
                 }
             }
-            else if (display)
+            else if (display && !showRegistrationQr)
             {
                 display->clearDisplay();
                 display->setCursor(0, 0);
@@ -645,7 +705,7 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
             break;
         }
 
-        if (display)
+        if (display && !showRegistrationQr)
         {
             uint32_t now = millis();
             if (now - lastUiMs > 250)
@@ -680,9 +740,9 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
             }
         }
 
-        if (!animExists)
+        if (!animExists || showRegistrationQr)
         {
-            if (display)
+            if (display && !showRegistrationQr)
             {
                 display->clearDisplay();
                 display->setCursor(0, 0);
@@ -695,7 +755,7 @@ bool ConnectWifiWithNetWizard(UserConfig &config, AsyncWebServer &server, unsign
             return RunNetWizardSetupPortal(config, wizard, portalReconnectTimeoutMs, display, &connectedIp);
         }
 
-        if (display)
+        if (display && !showRegistrationQr)
         {
             display->clearDisplay();
             display->setCursor(0, 0);

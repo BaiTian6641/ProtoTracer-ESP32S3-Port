@@ -3,38 +3,35 @@
 #include "Material.h"
 #include "../Math/Mathematics.h"
 #include "../Math/Vector2D.h"
+#include "PreparedMaterialRotation.h"
 
 template<size_t colorCount>
 class GradientMaterial : public Material {
 private:
     ProtoRGBColor rgbColors[colorCount];
     ProtoRGBColor* baseRGBColors;
+    ProtoRGBColor ownedBaseRGBColors[colorCount];
+    bool ownsBaseRGBColors = false;
     Vector2D positionOffset;
     Vector2D rotationOffset;//point to rotate about
     float gradientPeriod = 1.0f;
     float rotationAngle = 0.0f;//rotate input xyPosition
     bool isRadial = false;
     bool isStepped = false;
+    PreparedMaterialRotation rotation;
   
 public:
-    GradientMaterial(ProtoRGBColor* rgbColors, float gradientPeriod, bool isRadial){
-        this->gradientPeriod = gradientPeriod;
-        this->isRadial = isRadial;
-        this->baseRGBColors = rgbColors;
-
-        for(uint8_t i = 0; i < colorCount; i++){
-            this->rgbColors[i] = rgbColors[i];
-        }
-    }
-
-    GradientMaterial(ProtoRGBColor* rgbColors, float gradientPeriod, bool isRadial, bool  ){
+    GradientMaterial(ProtoRGBColor* rgbColors, float gradientPeriod, bool isRadial,
+                     bool isStepped = false, bool copyBaseColors = false){
         this->gradientPeriod = gradientPeriod;
         this->isRadial = isRadial;
         this->isStepped = isStepped;
         this->baseRGBColors = rgbColors;
+        this->ownsBaseRGBColors = copyBaseColors;
 
         for(uint8_t i = 0; i < colorCount; i++){
             this->rgbColors[i] = rgbColors[i];
+            if (copyBaseColors) ownedBaseRGBColors[i] = rgbColors[i];
         }
     }
 
@@ -54,7 +51,9 @@ public:
     }
 
     void SetRotationAngle(float rotationAngle){
+        if (this->rotationAngle == rotationAngle) return;
         this->rotationAngle = rotationAngle;
+        rotation.SetAngle(rotationAngle);
     }
 
     void SetGradientPeriod(float gradientPeriod){
@@ -63,21 +62,19 @@ public:
 
     void HueShift(float hueDeg){
         for(uint8_t i = 0; i < colorCount; i++){
-            rgbColors[i] = baseRGBColors[i].HueShift(hueDeg);
+            rgbColors[i] = (ownsBaseRGBColors ? ownedBaseRGBColors[i] : baseRGBColors[i]).HueShift(hueDeg);
         }
     }
 
     void UpdateRGB(){
         for(uint8_t i = 0; i < colorCount; i++){
-            rgbColors[i] = baseRGBColors[i];
+            rgbColors[i] = ownsBaseRGBColors ? ownedBaseRGBColors[i] : baseRGBColors[i];
         }
     }
     
     ProtoRGBColor GetRGB(Vector3D position, Vector3D normal, Vector3D uvw) override {
         if(rotationAngle != 0){
-            Quaternion temp = Rotation(EulerAngles(Vector3D(0, 0, rotationAngle), EulerConstants::EulerOrderXYZS)).GetQuaternion();
-
-            position = temp.RotateVector(position);
+            position = rotation.Apply(position);
         }
 
         float pos = 0;
