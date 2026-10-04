@@ -31,7 +31,7 @@ self.onmessage = ({ data }) => {
       saved = frame.disposal === 3 ? rgba.slice() : null;
       gif.decodeAndBlitFrameRGBA(i, rgba);
       ctx.putImageData(new ImageData(rgba, gif.width, gif.height), 0, 0);
-      MediaFormat.draw(out, source, gif.width, gif.height, data.fit);
+      MediaFormat.draw(out, source, gif.width, gif.height, data.fit, false, data.rotation || 0);
       const encoded = MediaFormat.encode(out.getImageData(0, 0, 64, 32).data, data.quality);
       frames.push({ delay: frame.delay ? frame.delay * 10 : 100, bytes: encoded });
       size += 4 + encoded.length;

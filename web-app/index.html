@@ -137,7 +137,8 @@
           <canvas id="mediaPreview" width="64" height="32" aria-label="64 by 32 pixel preview"></canvas>
           <div class="media-options">
             <label><span data-media-text="color">色彩</span> <select id="mediaQuality"><option value="332">RGB332 · 256</option><option value="565">RGB565 · 65536</option></select></label>
-            <label><span data-media-text="fit">缩放</span> <select id="mediaFit"><option value="contain" data-media-text="contain">完整画面</option><option value="cover" data-media-text="cover">填满裁切</option></select></label>
+            <label><span data-media-text="fit">缩放</span> <select id="mediaFit"><option value="stretch" data-media-text="stretch">填满横屏 64×32</option><option value="contain" data-media-text="contain">完整画面</option><option value="cover" data-media-text="cover">填满裁切</option></select></label>
+            <label><span data-media-text="rotation">旋转</span> <select id="mediaRotation"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>
             <label>FPS <select id="mediaFPS"><option>5</option><option selected>10</option><option>15</option><option>20</option></select></label>
             <label><input id="mediaMirror" type="checkbox" /> <span data-media-text="mirror">镜像</span></label>
           </div>
@@ -157,7 +158,14 @@
           </div>
           <p id="mediaGIFInfo" class="media-hint"></p>
           <progress id="mediaProgress" max="1" value="0" hidden></progress>
-          <div id="mediaLibrary" class="media-library"></div>
+          <div id="mediaLibrary" class="media-library">
+            <label for="mediaPlaylist" data-media-text="playlist">动画播放列表</label>
+            <select id="mediaPlaylist"></select>
+            <div>
+              <button id="mediaPlay" class="btn secondary" disabled data-media-text="play">播放所选动画</button>
+              <button id="mediaDelete" class="btn danger" disabled data-media-text="delete">删除所选 GIF</button>
+            </div>
+          </div>
           <p id="mediaStatus" role="status" aria-live="polite"></p>
         </div>
       </div>

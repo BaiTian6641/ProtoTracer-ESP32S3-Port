@@ -45,7 +45,7 @@ async function main() {
             if(op==='media.delete')clips.splice(0);
             if(op==='media.stop')mode='face';
             if(op==='media.play')mode=fields.builtin?'builtin':'gif';
-            return {ok:true,slots:8,mode,free_bytes:1000000,builtins:['wave','hex','orb'],clips};
+            return {ok:true,slots:8,mode,free_bytes:1000000,builtins:['wave','hex','orb','badapple'],clips};
           }, mediaTransfer:async(kind,bytes)=> {if(kind===1)streamCount++;else received+=bytes.length;return{ok:true,offset:received};}
         };
       })();` }));
@@ -53,7 +53,30 @@ async function main() {
     await page.evaluate(() => { localStorage.setItem('prototracer-lang', 'zh'); });
     await page.reload();
     await page.evaluate(() => fakeConnect());
-    await page.waitForFunction(() => document.querySelectorAll('#mediaLibrary > div').length === 3);
+    await page.waitForFunction(() => document.querySelectorAll('#mediaPlaylist option').length === 4);
+    assert.equal(await page.locator('#mediaFit').inputValue(), 'stretch');
+    const orientation = await page.evaluate(() => {
+      const source = new OffscreenCanvas(8, 16), s = source.getContext('2d');
+      for (const [color, x, y] of [['#f00',0,0],['#0f0',4,0],['#00f',0,8],['#ff0',4,8]]) {
+        s.fillStyle = color; s.fillRect(x, y, 4, 8);
+      }
+      const target = new OffscreenCanvas(64, 32), t = target.getContext('2d');
+      const corners = () => [[2,2],[61,2],[2,29],[61,29]].map(([x,y]) => Array.from(t.getImageData(x,y,1,1).data).slice(0,3));
+      const result = [];
+      for (const angle of [0,90,180,270]) { MediaFormat.draw(t, source, 8, 16, 'stretch', false, angle); result.push(corners()); }
+      MediaFormat.draw(t, source, 8, 16, 'stretch', true); result.push(corners());
+      MediaFormat.draw(t, source, 8, 16); result.push(corners());
+      return { width: target.width, height: target.height, result };
+    });
+    const red = [255,0,0], green = [0,255,0], blue = [0,0,255], yellow = [255,255,0];
+    assert.equal(orientation.width, 64); assert.equal(orientation.height, 32);
+    assert.deepEqual(orientation.result, [[red,green,blue,yellow], [blue,red,yellow,green],
+      [yellow,blue,green,red], [green,yellow,red,blue], [green,red,yellow,blue], [red,green,blue,yellow]]);
+    await page.locator('#mediaPlaylist').selectOption('builtin:badapple');
+    assert.equal(await page.locator('#mediaDelete').isEnabled(), false);
+    await page.locator('#mediaPlay').click();
+    await page.waitForFunction(() => sentMedia.some(m => m.builtin === 'badapple'));
+    await page.waitForFunction(() => !document.querySelector('#mediaCamera').disabled);
     const result = await page.evaluate(async buffer => {
       const worker = new Worker('js/gif-worker.js');
       const bytes = Uint8Array.from(buffer);
@@ -80,13 +103,19 @@ async function main() {
     await page.locator('#mediaGIF').setInputFiles({ name: 'disposal.gif', mimeType: 'image/gif', buffer: gif });
     await page.waitForFunction(() => !document.querySelector('#mediaUpload').disabled);
     await page.locator('#mediaUpload').click();
-    await page.waitForFunction(() => document.querySelectorAll('#mediaLibrary > div').length === 4 && !document.querySelector('#mediaRefresh').disabled);
-    await page.locator('#mediaLibrary > div').last().getByRole('button', { name: '播放' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('#mediaPlaylist option').length === 5 && !document.querySelector('#mediaRefresh').disabled);
+    assert.equal(await page.locator('#mediaPlaylist').inputValue(), 'gif:0');
+    await page.locator('#mediaRefresh').click();
+    await page.waitForFunction(() => !document.querySelector('#mediaRefresh').disabled);
+    assert.equal(await page.locator('#mediaPlaylist').inputValue(), 'gif:0');
+    assert.equal(await page.locator('#mediaDelete').isEnabled(), true);
+    await page.locator('#mediaPlay').click();
     await page.waitForFunction(() => sentMedia.some(m=>m.op==='media.play' && m.slot===0));
     await page.locator('#mediaStop').click();
     await page.waitForFunction(() => document.querySelector('#mediaStatus').textContent.includes('恢复'));
-    await page.locator('#mediaLibrary > div').last().getByRole('button', { name: '删除' }).click();
-    await page.waitForFunction(() => document.querySelectorAll('#mediaLibrary > div').length===3);
+    await page.locator('#mediaDelete').click();
+    await page.waitForFunction(() => document.querySelectorAll('#mediaPlaylist option').length===4);
+    assert.equal(await page.locator('#mediaDelete').isEnabled(), false);
     await page.locator('#btnLangToggle').click();
     await page.waitForFunction(() => document.querySelector('#mediaStop').textContent==='Stop / restore face');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -95,7 +124,7 @@ async function main() {
     await page.evaluate(() => fakeDisconnect());
     assert.equal(await page.locator('#mediaControls').isVisible(), false);
     assert.deepEqual(errors, []);
-    console.log('PASS Chromium: camera capture/stream, GIF disposal 1/2/3, frame timing, worker conversion, upload/play/delete, stop, languages, phone layout, disconnect');
+    console.log('PASS Chromium: landscape 64x32, portrait fill, rotations/mirror, dropdown playlist, refresh selection, protected built-ins, Bad Apple selection, camera/GIF, upload/play/delete, stop, languages, phone layout, disconnect');
   } finally { if (browser) await browser.close(); server.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode=1; });

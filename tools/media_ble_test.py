@@ -154,7 +154,7 @@ async def main(args):
             assert (await link.command('media.status'))['mode'] == 'gif'
             assert (await link.command('media.delete', slot=slot))['ok']; slot = None
             log('PASS offline GIF / reconnect / delete')
-        for name in ('wave', 'hex', 'orb'):
+        for name in ('wave', 'hex', 'orb', 'badapple'):
             assert (await link.command('media.play', builtin=name))['ok']
             await asyncio.sleep(.25)
             first = await dump(); await asyncio.sleep(.3); second = await dump()

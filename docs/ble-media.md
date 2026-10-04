@@ -1,10 +1,14 @@
-# BLE media v1 (ESP32-S3, firmware 1.3.0)
+# BLE media v1 (ESP32-S3, firmware 1.3.0+)
 
 The Web Bluetooth remote supports camera, image/video and browser screen capture,
-GIF conversion/upload/play/delete, and the Wave, Hex and Orb flash clips. Media
+GIF conversion/upload/play/delete, and the Wave, Hex, Orb and Bad Apple flash clips. Media
 uses the existing RX/TX UUIDs; legacy JSON controls remain compatible. Android's
 native remote recognizes the capability and offers built-in clips / restore face;
 capture and GIF upload are currently provided by the web remote.
+The web playlist is a dropdown grouped into built-in clips and uploaded GIFs.
+Play acts on the selected entry; Delete is enabled only for uploaded GIFs. Refresh
+keeps the selection when that entry still exists, and a successful upload selects
+the uploaded clip. Selected clips loop until stopped or replaced by another selection.
 
 ## Runtime
 
@@ -22,7 +26,13 @@ the main loop skips animation-worker dispatch and 3D rasterization, then copies
 media to the existing camera color buffer. HUB75 panel chaining, channel mapping,
 brightness and auxiliary preview use the existing controller. Exiting resumes the
 same scene/expression state without moving vertices or changing morph settings.
-Camera/audio capture permissions are requested by the browser; capture uses no audio.
+Camera capture permission is requested by the browser; capture uses no audio.
+Since 1.3.1, projection defaults to filling a landscape canvas: 64 pixels wide and
+32 pixels high. This scales the source horizontally/vertically to fill every pixel.
+Aspect-fit (letterbox) and aspect-fill (crop) are selectable alternatives. Rotation
+0/90/180/270 degrees and horizontal mirroring run on the phone before compression;
+rotation is also applied during GIF conversion. The transmitted frame stays 64x32
+for every source orientation.
 
 Media buffers are allocated once on first use in PSRAM: two RGB888 frames (12,288 B)
 plus one 4,101 B assembly buffer. No extra task or internal frame buffer is added.
@@ -62,7 +72,7 @@ Failures include `error`. `chunk_bytes` reflects the current negotiated link.
 | `media.status` | — | mode, frames, packet capacity and storage limits |
 | `media.stream` | — | Black background, accept live frames |
 | `media.stop` | — | Cancel upload, stop playback, restore face |
-| `media.play` | slot **or** builtin | Loop stored GIF or `wave`/`hex`/`orb` |
+| `media.play` | slot **or** builtin | Loop stored GIF or `wave`/`hex`/`orb`/`badapple` |
 | `media.delete` | slot | Remove clip and label; stop it if currently playing |
 | `media.upload.begin` | slot, size, hash, optional name | Start temporary file |
 | `media.upload.end` | — | Validate and atomically publish |
@@ -105,9 +115,12 @@ encoded bytes. Exact EOF is mandatory; trailing bytes are rejected.
 ## Built-in conversion and verification
 
 `python tools/pack_builtin_media.py` regenerates `src/Media/BuiltinMedia.h` from
-`src/Flash/ImageSequences/{Wave,Hex,Orb}.h` with aspect-fit nearest sampling,
-RGB332/RLE, 50 ms frames. All 147 source frames are preserved. The generated
-flash data is about 80 KB rather than compiling the multi-megabyte source arrays.
+`src/Flash/ImageSequences/{Wave,Hex,Orb,BadApple}.h` with nearest sampling,
+RGB332/RLE, 50 ms frames. Wave/Hex/Orb retain aspect-fit sampling. Bad Apple fills
+the complete 64x32 landscape area and preserves all 300 frames of the repository's
+supplied excerpt (15 seconds per loop; no audio). All 447 source frames are preserved.
+The generated flash data is 152,109 bytes, including 72,196 bytes for Bad Apple,
+rather than compiling the multi-megabyte source arrays.
 The old Image/ImageSequence helpers are not used, avoiding their existing palette
 bound/index and frame-selection problems.
 
@@ -160,3 +173,16 @@ compiled and exercised in RELEASE.
 
 Flashed RELEASE SHA256:
 `bff05a3450d6b8824f11469e7e745aaf377b9529565f3016c4fec25bde2288db`.
+
+### RELEASE 1.3.1 follow-up
+
+Flashed COM5 at application offset 0x10000, preserving the filesystem. Real BLE
+regression passed again, including all four built-ins advancing, exact display
+buffer matching, upload/play/delete, interrupted replacement, offline playback,
+and restoration to face mode. Four-codec host checks decoded all 447 built-in
+frames. Edge checks passed for the dropdown playlist, selection persistence,
+built-in deletion protection, GIF processing and camera capture, plus exact 64x32
+landscape output with all four rotations and mirroring.
+
+Flashed RELEASE SHA256:
+`5d52aa910f79d9a6af22bb1058ee4a4e77aa82e87e32a0ddfc99f03fa1434da2`.

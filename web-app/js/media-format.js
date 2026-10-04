@@ -72,11 +72,18 @@ const MediaFormat = (() => {
     v.setUint32(4, id, true); v.setUint32(8, offset, true); v.setUint32(12, total, true);
     out.set(payload, 16); return out;
   }
-  function draw(ctx, source, width, height, fit = 'contain', mirror = false) {
-    const scale = fit === 'cover' ? Math.max(64 / width, 32 / height) : Math.min(64 / width, 32 / height);
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 64, 32); ctx.save();
-    if (mirror) { ctx.translate(64, 0); ctx.scale(-1, 1); }
-    ctx.drawImage(source, (64 - width * scale) / 2, (32 - height * scale) / 2, width * scale, height * scale);
+  function draw(ctx, source, width, height, fit = 'stretch', mirror = false, rotation = 0) {
+    const angle = Number(rotation);
+    if (![0, 90, 180, 270].includes(angle) || width <= 0 || height <= 0) throw Error('Invalid source orientation');
+    const sideways = angle === 90 || angle === 270;
+    const orientedWidth = sideways ? height : width, orientedHeight = sideways ? width : height;
+    const scale = fit === 'cover' ? Math.max(WIDTH / orientedWidth, HEIGHT / orientedHeight) : Math.min(WIDTH / orientedWidth, HEIGHT / orientedHeight);
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, WIDTH, HEIGHT); ctx.save();
+    ctx.translate(WIDTH / 2, HEIGHT / 2);
+    if (mirror) ctx.scale(-1, 1);
+    ctx.scale(fit === 'stretch' ? WIDTH / orientedWidth : scale, fit === 'stretch' ? HEIGHT / orientedHeight : scale);
+    ctx.rotate(angle * Math.PI / 180);
+    ctx.drawImage(source, -width / 2, -height / 2, width, height);
     ctx.restore();
   }
   return { WIDTH, HEIGHT, PIXELS, hash, encode, decode, clip, frameTransfer, fragment, draw };

@@ -183,10 +183,18 @@ depends on content and the negotiated BLE connection.
 
 Choose a GIF, wait for phone-side conversion, select one of eight slots, and upload.
 Existing slots are replaced only after a complete validated upload. The list supports
-play/delete and includes the Wave, Hex and Orb built-ins. Device playback works after
+play/delete through a dropdown playlist grouped into uploaded GIFs and the
+Wave, Hex, Orb and Bad Apple built-ins. Select an entry and press Play;
+Delete is available for uploaded GIFs. Refresh preserves the selected entry.
+Device playback works after
 disconnecting Bluetooth. **Stop / restore face** returns to the existing expression.
 GIFs are scaled to 64×32, preserve frame delays, and loop continuously. Each converted
-clip can be at most 1 MiB; available flash space is shown. The original GIF is decoded
+clip can be at most 1 MiB; available flash space is shown. Projection defaults to
+filling a landscape frame, **64 pixels wide × 32 pixels high**. Choose rotation
+0/90/180/270 degrees for differently oriented sources; full-image and crop scaling
+remain available. GIF conversion uses the same scaling/rotation settings.
+Bad Apple uses the repository's 300-frame excerpt, looping for 15 seconds without
+audio. The original GIF is decoded
 in a browser Worker and never uploaded to an external service. `omggif` is vendored
 under MIT with its license in `js/vendor/omggif.js`.
 

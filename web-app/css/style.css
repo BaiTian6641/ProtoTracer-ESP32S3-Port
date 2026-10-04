@@ -596,6 +596,7 @@ input[type="text"]::placeholder { color: var(--text-muted); }
 .media-options select { background: var(--bg-secondary, #20232b); color: inherit; border: 1px solid #555; border-radius: 6px; padding: 8px; }
 .media-hint { font-size: .85rem; opacity: .75; line-height: 1.5; }
 .media-library { display: grid; gap: 8px; }
+.media-library select { width: 100%; min-width: 0; background: var(--bg-secondary, #20232b); color: inherit; border: 1px solid #555; border-radius: 6px; padding: 10px; }
 .media-library > div { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .media-library span { flex: 1; min-width: 120px; }
 #mediaProgress { width: 100%; }

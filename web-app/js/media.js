@@ -4,10 +4,12 @@
   const canvas = $('mediaPreview'), ctx = canvas.getContext('2d', { willReadFrequently: true });
   const words = {
     title: ['Projection & GIF · 64×32', '投屏与 GIF · 64×32'], color: ['Color', '色彩'], fit: ['Fit', '缩放'],
+    stretch: ['Fill landscape 64×32', '填满横屏 64×32'], rotation: ['Rotation', '旋转'],
     contain: ['Full image', '完整画面'], cover: ['Fill / crop', '填满裁切'], mirror: ['Mirror', '镜像'],
     camera: ['Cast camera', '摄像头投屏'], screen: ['Share screen', '共享屏幕'], video: ['Cast image / video', '图片 / 视频投屏'],
     stop: ['Stop / restore face', '停止并恢复表情'], slot: ['GIF slot', 'GIF 槽位'], gif: ['Choose GIF', '选择 GIF'],
     upload: ['Upload to device', '上传到设备'], refresh: ['Refresh clips', '刷新动画列表'],
+    playlist: ['Animation playlist', '动画播放列表'], play: ['Play selected', '播放所选动画'], delete: ['Delete selected GIF', '删除所选 GIF'],
     hint: ['Camera, images and video are processed on your phone. Screen sharing depends on browser support. Keep this page in the foreground.', '摄像头、图片和视频在手机上处理；共享屏幕取决于浏览器支持。保持此页面在前台。']
   };
   const say = (en, zh) => I18N.getLang() === 'zh' ? zh : en;
@@ -24,9 +26,9 @@
   new MutationObserver(language).observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
   function setBusy(value) {
     busy = value;
-    for (const id of ['mediaCamera', 'mediaScreen', 'mediaSourceFile', 'mediaRefresh', 'mediaGIF', 'mediaSlot', 'mediaQuality', 'mediaFit']) $(id).disabled = value;
+    for (const id of ['mediaCamera', 'mediaScreen', 'mediaSourceFile', 'mediaRefresh', 'mediaGIF', 'mediaSlot', 'mediaQuality', 'mediaFit', 'mediaRotation', 'mediaPlaylist']) $(id).disabled = value;
     $('mediaUpload').disabled = value || !prepared;
-    $('mediaLibrary').querySelectorAll('button').forEach(b => { b.disabled = value; });
+    updatePlaylistActions();
   }
   function releaseSource() {
     if (capture) capture.getTracks().forEach(t => t.stop());
@@ -56,30 +58,41 @@
     renderLibrary(list);
   }
   function renderLibrary(data) {
-    const root = $('mediaLibrary'); root.replaceChildren();
-    const button = (label, fn) => {
-      const b = document.createElement('button'); b.className = 'btn small secondary'; b.textContent = label;
-      b.disabled = busy; b.onclick = () => action(fn); return b;
-    };
-    const play = async fields => {
-      await endLocal(); await ProtoTracerBLE.mediaRequest('media.play', fields);
-      status(say('Playing on device. Bluetooth can disconnect.', '设备正在播放，可断开蓝牙。'));
-    };
+    const select = $('mediaPlaylist'), selected = select.value;
+    select.replaceChildren();
+    const defaults = document.createElement('optgroup'); defaults.label = say('Built-in clips', '内置动画');
     for (const name of data.builtins || []) {
-      const row = document.createElement('div'), label = document.createElement('span');
-      label.textContent = `${say('Built-in', '内置')} · ${name}`;
-      row.append(label, button(say('Play', '播放'), () => play({ builtin: name }))); root.append(row);
+      defaults.append(new Option(name === 'badapple' ? 'Bad Apple' : name, 'builtin:' + name));
     }
+    if (defaults.children.length) select.append(defaults);
+    const uploaded = document.createElement('optgroup'); uploaded.label = say('Uploaded GIFs', '已上传 GIF');
     for (const clip of data.clips || []) {
-      const row = document.createElement('div'), label = document.createElement('span');
-      label.textContent = `GIF ${clip.slot + 1}${clip.name ? ' · ' + clip.name : ''} · ${(clip.bytes / 1024).toFixed(1)} KB`;
-      row.append(label, button(say('Play', '播放'), () => play({ slot: clip.slot })),
-        button(say('Delete', '删除'), async () => {
-          await ProtoTracerBLE.mediaRequest('media.delete', { slot: clip.slot }); await refresh();
-        })); root.append(row);
+      const label = `GIF ${clip.slot + 1}${clip.name ? ' · ' + clip.name : ''} · ${(clip.bytes / 1024).toFixed(1)} KB`;
+      uploaded.append(new Option(label, 'gif:' + clip.slot));
     }
+    if (uploaded.children.length) select.append(uploaded);
+    if (Array.from(select.options).some(o => o.value === selected)) select.value = selected;
+    updatePlaylistActions();
     status(`${say('Flash available', 'Flash 可用')} ${(data.free_bytes / 1024).toFixed(0)} KB · ${say('mode', '模式')}: ${data.mode}`);
   }
+  function updatePlaylistActions() {
+    const value = $('mediaPlaylist').value;
+    $('mediaPlay').disabled = busy || !value;
+    $('mediaDelete').disabled = busy || !value.startsWith('gif:');
+  }
+  $('mediaPlaylist').onchange = updatePlaylistActions;
+  $('mediaPlay').onclick = () => action(async () => {
+    const [type, value] = $('mediaPlaylist').value.split(':');
+    if (!value) return;
+    await endLocal();
+    await ProtoTracerBLE.mediaRequest('media.play', type === 'builtin' ? { builtin: value } : { slot: Number(value) });
+    status(say('Playing on device. Bluetooth can disconnect.', '设备正在播放，可断开蓝牙。'));
+  });
+  $('mediaDelete').onclick = () => action(async () => {
+    const [type, value] = $('mediaPlaylist').value.split(':');
+    if (type !== 'gif') return;
+    await ProtoTracerBLE.mediaRequest('media.delete', { slot: Number(value) }); await refresh();
+  });
   async function videoReady(video) {
     if (!video.videoWidth) await new Promise((resolve, reject) => {
       video.onloadedmetadata = resolve; video.onerror = () => reject(Error('Cannot open video'));
@@ -97,7 +110,7 @@
         const began = performance.now();
         const width = source.videoWidth || source.naturalWidth, height = source.videoHeight || source.naturalHeight;
         if (!width || !height) throw Error('Capture has no image');
-        MediaFormat.draw(ctx, source, width, height, $('mediaFit').value, $('mediaMirror').checked);
+        MediaFormat.draw(ctx, source, width, height, $('mediaFit').value, $('mediaMirror').checked, $('mediaRotation').value);
         const frame = MediaFormat.encode(ctx.getImageData(0, 0, 64, 32).data, $('mediaQuality').value);
         // Show the exact quantized image sent to the panels.
         ctx.putImageData(new ImageData(MediaFormat.decode(frame), 64, 32), 0, 0);
@@ -176,7 +189,7 @@
             else $('mediaProgress').value = data.progress;
           };
           worker.onerror = e => reject(Error(e.message));
-          worker.postMessage({ buffer, quality: $('mediaQuality').value, fit: $('mediaFit').value }, [buffer]);
+          worker.postMessage({ buffer, quality: $('mediaQuality').value, fit: $('mediaFit').value, rotation: Number($('mediaRotation').value) }, [buffer]);
         });
         prepared = new Uint8Array(result.buffer);
         preparedName = file.name;
@@ -205,6 +218,8 @@
       }
       if (cancelUpload) throw Error('Upload cancelled');
       await ProtoTracerBLE.mediaRequest('media.upload.end'); finished = true; await refresh();
+      $('mediaPlaylist').value = 'gif:' + $('mediaSlot').value;
+      updatePlaylistActions();
     } finally {
       if (!finished && ProtoTracerBLE.isConnected()) await ProtoTracerBLE.mediaRequest('media.upload.cancel').catch(() => {});
       uploading = false; $('mediaProgress').hidden = true;

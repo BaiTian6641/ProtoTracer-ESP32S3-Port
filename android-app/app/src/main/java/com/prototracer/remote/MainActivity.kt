@@ -193,14 +193,15 @@ class MainActivity : AppCompatActivity() {
 
         view<MaterialButton>(R.id.btn_ping).setOnClickListener { sendPing() }
         view<MaterialButton>(R.id.btn_media).setOnClickListener {
-            val names = arrayOf(getString(R.string.media_restore), "Wave", "Hex", "Orb")
+            val names = arrayOf(getString(R.string.media_restore), "Wave", "Hex", "Orb", "Bad Apple")
+            val clipIds = arrayOf("wave", "hex", "orb", "badapple")
             androidx.appcompat.app.AlertDialog.Builder(this)
                 .setTitle(R.string.ctrl_media)
                 .setItems(names) { _, index ->
                     val command = JsonObject().apply {
                         addProperty("op", if (index == 0) "media.stop" else "media.play")
                         addProperty("rid", 1)
-                        if (index > 0) addProperty("builtin", names[index].lowercase(java.util.Locale.ROOT))
+                        if (index > 0) addProperty("builtin", clipIds[index - 1])
                     }
                     ble.send(command.toString())
                 }.show()
