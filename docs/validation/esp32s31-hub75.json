@@ -1,0 +1,230 @@
+{
+  "board": "ESP32-S31 Function-Core / WROOM-3 E1H16R16V, chip revision v0.0",
+  "interface": "COM6 built-in USB Serial/JTAG",
+  "sdk": "ESP-IDF v6.1 / Arduino 4.0.0-RC1",
+  "cpu_mhz": 240,
+  "flash_bytes": 16777216,
+  "psram_bytes": 16777216,
+  "output_clock_hz": 10000000,
+  "minimum_scan_hz": 200,
+  "fps_observed": [
+    48.51,
+    48.71,
+    49.21,
+    49.4,
+    48.51,
+    49.61
+  ],
+  "app_bytes": 2859456,
+  "app_sha256": "dd33080a27c2ff896bcfeba557cb5a6fbcae864cb29a0f79f904baf1f8cc08ed",
+  "assumed_analyzer_gpio_order": [
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    42,
+    43
+  ],
+  "face_capture": {
+    "samples": 2000000,
+    "sample_rate_hz": 40000000,
+    "clock_rises": 200599,
+    "latches": 1568,
+    "capture_sha256": "e511ddcc2f15d1114e611aa6c37653c638e2861ad32369273fea46e49d435e7e",
+    "clock_hz": 10000000.0,
+    "complete_clock_bursts": {
+      "128": 1566
+    },
+    "oe_enabled_clock_edges": 0,
+    "lat_high_clock_edges": 0,
+    "latches_per_complete_burst": [
+      1
+    ],
+    "latch_after_final_clock_ns": {
+      "min": 50.0,
+      "median": 50.0
+    },
+    "oe_enabled_at_latch": 0,
+    "observed_ab": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "ab_progression_mod4": true,
+    "complete_ab_latch_runs": [
+      8
+    ],
+    "inferred_scan_refresh_hz": 244.8819668919581,
+    "ab_changes_while_oe_enabled": 0,
+    "rgb1_nonzero_samples": 121806
+  },
+  "face_capture_time": "2026-10-07T23:31:30.094763+00:00",
+  "ble_validation": {
+    "device": "30:ED:A0:F3:D5:8D",
+    "patterns": {
+      "red": {
+        "samples": 2000000,
+        "sample_rate_hz": 40000000,
+        "clock_rises": 200572,
+        "latches": 1567,
+        "capture_sha256": "0986f9e7ee4d4e6a8406a22b1a4543ee50859bc1326fd348c76bdbf32c8ed00a",
+        "clock_hz": 10000000.0,
+        "complete_clock_bursts": {
+          "128": 1566
+        },
+        "oe_enabled_clock_edges": 0,
+        "lat_high_clock_edges": 0,
+        "latches_per_complete_burst": [
+          1
+        ],
+        "latch_after_final_clock_ns": {
+          "min": 25.0,
+          "median": 50.0
+        },
+        "oe_enabled_at_latch": 0,
+        "observed_ab": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "ab_progression_mod4": true,
+        "complete_ab_latch_runs": [
+          8
+        ],
+        "inferred_scan_refresh_hz": 244.8819668919581,
+        "ab_changes_while_oe_enabled": 0,
+        "rgb1_nonzero_samples": 802420
+      },
+      "green": {
+        "samples": 2000000,
+        "sample_rate_hz": 40000000,
+        "clock_rises": 200572,
+        "latches": 1567,
+        "capture_sha256": "a22718c2bb484a9b849bd3399f3c11b451564265f3f8766950dc350692993551",
+        "clock_hz": 10000000.0,
+        "complete_clock_bursts": {
+          "128": 1566
+        },
+        "oe_enabled_clock_edges": 0,
+        "lat_high_clock_edges": 0,
+        "latches_per_complete_burst": [
+          1
+        ],
+        "latch_after_final_clock_ns": {
+          "min": 25.0,
+          "median": 50.0
+        },
+        "oe_enabled_at_latch": 0,
+        "observed_ab": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "ab_progression_mod4": true,
+        "complete_ab_latch_runs": [
+          8
+        ],
+        "inferred_scan_refresh_hz": 244.8819668919581,
+        "ab_changes_while_oe_enabled": 0,
+        "rgb1_nonzero_samples": 802419
+      },
+      "blue": {
+        "samples": 2000000,
+        "sample_rate_hz": 40000000,
+        "clock_rises": 200576,
+        "latches": 1567,
+        "capture_sha256": "69436c495522bdf56e5ecbfe8adc104c76cf16b13303aafa653f5362aeb7eeb2",
+        "clock_hz": 10000000.0,
+        "complete_clock_bursts": {
+          "128": 1565
+        },
+        "oe_enabled_clock_edges": 0,
+        "lat_high_clock_edges": 0,
+        "latches_per_complete_burst": [
+          1
+        ],
+        "latch_after_final_clock_ns": {
+          "min": 25.0,
+          "median": 50.0
+        },
+        "oe_enabled_at_latch": 0,
+        "observed_ab": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "ab_progression_mod4": true,
+        "complete_ab_latch_runs": [
+          8
+        ],
+        "inferred_scan_refresh_hz": 244.8819668919581,
+        "ab_changes_while_oe_enabled": 0,
+        "rgb1_nonzero_samples": 802417
+      },
+      "black": {
+        "samples": 2000000,
+        "sample_rate_hz": 40000000,
+        "clock_rises": 200656,
+        "latches": 1568,
+        "capture_sha256": "635e80880256dc45bcae8342fd7772d8dfffc76456b3f6939c5b59d50e9807fd",
+        "clock_hz": 10000000.0,
+        "complete_clock_bursts": {
+          "128": 1566
+        },
+        "oe_enabled_clock_edges": 0,
+        "lat_high_clock_edges": 0,
+        "latches_per_complete_burst": [
+          1
+        ],
+        "latch_after_final_clock_ns": {
+          "min": 50.0,
+          "median": 50.0
+        },
+        "oe_enabled_at_latch": 0,
+        "observed_ab": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "ab_progression_mod4": true,
+        "complete_ab_latch_runs": [
+          8
+        ],
+        "inferred_scan_refresh_hz": 244.8819668919581,
+        "ab_changes_while_oe_enabled": 0,
+        "rgb1_nonzero_samples": 0
+      }
+    },
+    "stats": [
+      "@DBG HUB75 frames=11963 failures=0",
+      "@DBG STATS intFree=200775 largest=135168 min=167524 psram=16165800",
+      "@DBG STACK loop=5368 anim=7436 mic=5504",
+      "@DBG TIMING animUs=2988 renderUs=1651 micFrames=6392 micDrops=0"
+    ]
+  },
+  "later_present_count": 15703,
+  "present_failures": 0,
+  "heap_integrity": "ok",
+  "int_free_bytes": 203143,
+  "largest_internal_block_bytes": 135168,
+  "psram_free_bytes": 16165800,
+  "microphone_drops": 0,
+  "unprobed": [
+    "C",
+    "D",
+    "R2",
+    "G2",
+    "B2",
+    "visible panel output",
+    "ES8311 onboard microphone",
+    "external auxiliary hardware",
+    "Wi-Fi/OTA runtime"
+  ]
+}

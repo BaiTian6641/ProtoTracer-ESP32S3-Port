@@ -2,7 +2,119 @@
 
 2026-10-08, branch `codex/esp32s31-parlio`.
 
-## First implemented step
+## Full application and first hardware qualification
+
+The S31 application now uses the real `src/main.cpp`, JSON face/morph engine,
+materials, rasterizer, BLE remote/media services and network/OTA code. The new
+`src/Controllers/TasESP32S31KitV0.h` keeps the S3 camera grid and mirrored
+two-panel mapping, driving the existing `esp-hub75` PARLIO backend. Build and
+flash instructions are in the experiment README and `tools/build_s31.ps1`.
+
+Hardware confirmation: COM6 is built-in USB Serial/JTAG (USB-DBG), chip rev
+v0.0, flash 16 MB and PSRAM 16 MB. esptool reports a 300 MHz maximum for this
+revision; the initial SDK configuration uses 240 MHz CPU and 200 MHz octal
+PSRAM. The original 16 MB flash was backed up to ignored
+`build/s31-before-full-port.bin` before bringing up the board.
+
+Full mode uses a custom partition table at 0x10000, two 3.5 MB OTA slots,
+and 8.875 MB LittleFS at 0x720000. The first successfully linked application
+was 2,859,280 bytes. Wired qualification boots with public local face and
+animation assets and `PROTOTRACER_S31_OFFLINE_BOOT=ON`; normal onboarding is
+selected by omitting `-Offline`. No S31 release manifest has been published.
+
+Required ports and repairs:
+
+- Arduino 4 BLE value handles, callbacks and MTU events preserve the existing
+  UART JSON/media protocol. The Arduino 3 path is retained for S3.
+- M5GFX generated copies use supported GPIO configuration and an Arduino Wire
+  I2C adapter, including address probes for missing displays. Headless menu
+  initialization and refresh both guard null display pointers. The first
+  hardware panic was decoded to an unguarded `Menu::Update()` display call;
+  the corrected firmware runs past it.
+- GPIO35/36/37 are CLK/LAT/OE; 38/39/40 are RGB1; 42/43 are A/B. Unprobed
+  C/D use 44/45 and RGB2 uses 46/47/48. Auxiliary I2C uses 2/3, external ADC
+  microphone input uses 49, status LED is 60, and BOOT/OTA is 61. USB-DBG
+  33/34 and onboard audio 50-57 are kept out of the HUB75 map.
+- PARLIO swaps wait for the matching SDK `on_buffer_switched` event. Timeouts
+  retain source ownership; brightness changes are deferred to the owned back
+  buffer. Failed stop/delete quarantines ISR state and DMA storage.
+- The first real trace exposed LAT asserted 150 ns before the final shift
+  clock. LAT now pulses in the first clock-gated padding word, and the start
+  and end of padding remain blanked. The corrected 40 MHz capture measured
+  LAT 125 ns after the last clock at a 4 MHz output clock.
+- ProtoGC requires C++ exceptions in the full SDK configuration. QRCode's
+  legacy C source uses C17 because its manual `bool` conflicts with C23.
+  Existing engine copy/clamp diagnostics remain warnings only in the S31
+  main component; other compiler errors remain fatal. A legacy packet copy
+  now validates four bytes instead of using `sizeof(pointer)`, and the
+  network-probe printf arguments use portable unsigned casts.
+
+Initial 4 MHz hardware results:
+
+| Check | Result |
+|---|---|
+| Face/animation loading | PASS: 495 vertices, 523 triangles, 37 retained morphs, 18,944 B morph store |
+| Dual-core renderer | About 37 FPS; 6.5 ms animation, 1.6 ms rasterization in one sampled frame |
+| HUB75 ownership | 10,325 completed presents, zero failures |
+| Memory after BLE/media tests | 200,515 B internal free, 135,168 B largest block; 16,109,352 B PSRAM free |
+| Heap integrity | `dbg check`: PASS |
+| Microphone sampler | Running on GPIO49; sampled telemetry showed zero dropped frames |
+| SLogic waveform | 4 MHz, 128 clocks per burst, one latch per burst, OE blanked during clocks/LAT, A/B progression modulo four |
+| Partial row address | Eight bit-plane latches per observed A/B row |
+| Scan refresh | Approximately 72.79 Hz at the initial 4 MHz clock |
+| BLE-to-USB-to-pins | Red/green/blue/black passed: exact 6144-byte pixel snapshots and correct RGB1 channel on real captures |
+
+### Final faster configuration
+
+The default controller now requests 10 MHz and a 200 Hz minimum scan rate.
+Increasing clock alone kept the upstream library near its default 60 Hz scan
+target by adding BCM padding: that intermediate setting measured 67.70 Hz scan
+and 33.87 FPS. The refresh estimator now counts the actual serialized shift
+and padding words before choosing its transition bit.
+
+The final configuration measures **244.88 Hz scan and 48.5-49.6 FPS** on the
+supplied face at 240 MHz CPU. LAT follows the last clock by 50 ns; the trace
+contains 128 clocks and one latch per burst, zero unblanked clock/latch events,
+and eight bit-plane latches per A/B address. Both DMA buffers together occupy
+163,328 B of PSRAM, down from 219,776 B in the initial 4 MHz test. The library's
+hybrid BCM/PWM scheme trades lower-bit precision for refresh; visible panel
+gradients still require qualification.
+
+The final red/green/blue/black BLE-to-USB-to-pins tests all pass at 40 MHz
+analyzer sampling. Subsequent diagnostics report **15,703 completed presents,
+zero failures**, heap integrity good, 203,143 B internal free (135,168 B largest
+block), 16,165,800 B PSRAM free, and zero microphone sampler drops. Loop,
+animation and microphone stack high-water values are 5368/7436/5504 B.
+Application size is 2,859,456 B. Normal Wi-Fi boot also passes an application
+API compile check; runtime network/OTA qualification remains pending.
+
+SLogic Combo8 is VID359F/PID0300 with its existing WinUSB interface. Workspace
+Python uses `pyusb`/`libusb-package` and a GPL-3.0-or-later adapter based on
+[Sipeed's published protocol](https://github.com/sipeed/libsigrok/tree/slogic-dev/src/hardware/sipeed-slogic-analyzer/slogic).
+Large queued USB reads avoid FIFO overflow caused by gaps between small
+synchronous reads. Both 20 and 40 MHz acquisition have been exercised.
+Raw captures, logs and framebuffer dumps stay under ignored `build/`; analysis
+JSON records capture SHA-256 values and times for reproduction.
+
+Regression gates: the final shared changes compiled on S3; host direct and
+legacy rendering remained byte-identical (6144 B, FNV-1a `BE8B37A9`); portable
+DSP vectors and frame-ownership fault cases passed; the analyzer's known-trace
+tests passed; `validate.ps1` passed both checks. The prepared components retain
+upstream licenses, and regeneration preserves timestamps when content is
+unchanged.
+
+Remaining qualification is the complete HUB75 connector and visible panels,
+auxiliary displays/gesture hardware, ES8311 onboard audio, Wi-Fi onboarding and
+OTA runtime, and longer operation with larger faces. ADC49 sampling does not
+qualify the onboard codec. The RP2350/ProtoGL route remains the separate roadmap
+awaiting GPU firmware. Nested PAJ7620 changes and private/paid source were
+preserved outside this work.
+
+Primary hardware/API references:
+[Function-Core pin map](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s31/esp32-s31-function-coreboard-1/user_guide.html),
+[IDF 6.1 S31 PARLIO](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s31/api-reference/peripherals/parlio/parlio_tx.html).
+
+## First implemented checkpoint (b82c8a6, historical)
 
 Created an [isolated IDF/Arduino probe](../experiments/esp32s31-parlio/README.md)
 for the user's ESP32-S31 Function-Core board, reported module

@@ -1773,6 +1773,8 @@ public:
         MicrophoneFourierIT::Initialize(1, 8000, 68.0f, 120.0f); // 8KHz sample rate, 50dB min, 120dB max
         #elif defined(TASESP32P4)
         MicrophoneFourierIT::Initialize(23, 8000, 68.0f, 120.0f);
+        #elif defined(TASESP32S31)
+        MicrophoneFourierIT::Initialize(49, 8000, 68.0f, 120.0f);
         #endif
         // BLE + gesture are initialized from main.cpp after WiFi shutdown so the
         // controller has a clean internal-DRAM heap.

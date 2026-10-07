@@ -12,6 +12,12 @@ As a quick way to showcase the capabilities of this software, here is a demo sho
 * ESP32-S3-WROOM-1/1U NxxRx
 Suggest N16R8 for future feature.
 
+* Experimental ESP32-S31 Function-Core, WROOM-3 E1H16R16V (16 MB flash / 16 MB PSRAM).
+  The native IDF 6.1 / Arduino 4 component build runs the JSON renderer and BLE
+  with the `TasESP32S31KitV0` PARLIO controller. See the
+  [S31 build and pin map](experiments/esp32s31-parlio/README.md) and
+  [hardware qualification log](docs/esp32s31-parlio-bringup.md).
+
 # Issues:
 Memory issue occur during long peroid run.
 Spectrum analyzer not working, need rewriting the DSP part of code.

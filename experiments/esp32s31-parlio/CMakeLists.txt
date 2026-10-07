@@ -1,6 +1,23 @@
 cmake_minimum_required(VERSION 3.16)
 # Arduino's public include set can exceed Windows CreateProcess limits.
 set(CMAKE_NINJA_FORCE_RESPONSE_FILE ON CACHE BOOL "Use response files for the probe")
+option(PROTOTRACER_FULL_FIRMWARE "Build the real ProtoTracer application" OFF)
+option(PROTOTRACER_S31_OFFLINE_BOOT "Skip Wi-Fi onboarding for wired bring-up with local assets" OFF)
+# IDF discovers component requirements in a separate CMake process. Carry the
+# selected mode into that pass and exclude unused generated local components.
+if(PROTOTRACER_FULL_FIRMWARE)
+    set(ENV{PROTOTRACER_S31_FULL_BUILD} "ON")
+else()
+    set(ENV{PROTOTRACER_S31_FULL_BUILD} "OFF")
+endif()
+set(COMPONENTS main)
+if(PROTOTRACER_FULL_FIRMWARE)
+    if(NOT EXISTS "${CMAKE_CURRENT_LIST_DIR}/components/prototracer_deps/CMakeLists.txt")
+        message(FATAL_ERROR "Run tools/prepare_s31_firmware.py first")
+    endif()
+    set(SDKCONFIG "${CMAKE_BINARY_DIR}/sdkconfig")
+    set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults;${CMAKE_CURRENT_LIST_DIR}/sdkconfig.full.defaults")
+endif()
 set(IDF_TARGET "esp32s31" CACHE STRING "S31 bring-up target")
 if(NOT IDF_TARGET STREQUAL "esp32s31")
     message(FATAL_ERROR "This probe targets ESP32-S31 only")
@@ -11,6 +28,8 @@ if(NOT EXISTS "${CMAKE_CURRENT_LIST_DIR}/components/arduino/CMakeLists.txt" OR
 endif()
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(prototracer_s31_parlio_probe)
+idf_component_get_property(arduino_lib arduino COMPONENT_LIB)
+target_compile_definitions(${arduino_lib} PUBLIC ARDUINO_USB_MODE=1 ARDUINO_USB_CDC_ON_BOOT=1)
 
 # IDF 6.1 S31 register headers and Arduino RC1 Ethernet use valid partial
 # aggregate initialization. Keep those diagnostics as warnings in this probe;
@@ -20,3 +39,14 @@ foreach(component arduino hub75 main)
     target_compile_options(${component_lib} PRIVATE
         "$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=missing-field-initializers>")
 endforeach()
+if(PROTOTRACER_FULL_FIRMWARE)
+    # Unused upstream Arduino dependency; GCC 15 diagnoses its bounded string copy.
+    idf_build_get_property(s31_components BUILD_COMPONENTS)
+    if("espressif__esp-modbus" IN_LIST s31_components)
+        idf_component_get_property(modbus_lib espressif__esp-modbus COMPONENT_LIB)
+        target_compile_options(${modbus_lib} PRIVATE -Wno-error=stringop-truncation)
+    endif()
+endif()
+if(PROTOTRACER_FULL_FIRMWARE)
+    littlefs_create_partition_image(spiffs "${CMAKE_CURRENT_LIST_DIR}/test-data" FLASH_IN_PROJECT)
+endif()

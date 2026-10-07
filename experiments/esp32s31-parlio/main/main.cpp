@@ -17,8 +17,8 @@ static bool ValidatePanelPins(const Hub75Pins& pins)
                            pins.a, pins.b, pins.c, pins.d, pins.lat, pins.oe, pins.clk};
     for (size_t i = 0; i < sizeof(outputs) / sizeof(outputs[0]); ++i) {
         if (!GPIO_IS_VALID_OUTPUT_GPIO(outputs[i])) return false;
-        // Function-Core USB-UART, onboard RGB LED and BOOT button.
-        if (outputs[i] >= 58 && outputs[i] <= 61) return false;
+        // Function-Core USB-DBG, USB-UART, onboard RGB LED and BOOT button.
+        if (outputs[i] == 33 || outputs[i] == 34 || (outputs[i] >= 58 && outputs[i] <= 61)) return false;
         for (size_t j = 0; j < i; ++j) if (outputs[i] == outputs[j]) return false;
     }
     return true;
@@ -27,7 +27,7 @@ static bool ValidatePanelPins(const Hub75Pins& pins)
 static void StartPanel()
 {
 #ifndef CONFIG_PROTOTRACER_HUB75_ENABLE
-    Serial0.println("[S31] HUB75 disabled: set board wiring in menuconfig first");
+    Serial.println("[S31] HUB75 disabled: set board wiring in menuconfig first");
     return;
 #endif
     // Keep the complete panel path type-checked even in the default idle build.
@@ -52,37 +52,38 @@ static void StartPanel()
     config.pins.oe = CONFIG_PROTOTRACER_HUB75_OE;
     config.pins.clk = CONFIG_PROTOTRACER_HUB75_CLK;
     if (!ValidatePanelPins(config.pins)) {
-        Serial0.println("[S31] HUB75 wiring incomplete or duplicate; output not started");
+        Serial.println("[S31] HUB75 wiring incomplete or duplicate; output not started");
         return;
     }
     // Persistent lifetime: continuous DMA owns its buffers until shutdown.
     static Hub75Driver panel(config);
     if (!panel.begin()) {
-        Serial0.println("[S31] HUB75 initialization failed");
+        Serial.println("[S31] HUB75 initialization failed");
         return;
     }
     panel.fill(0, 0, 64, 32, 32, 0, 0);
     panel.fill(64, 0, 64, 32, 0, 32, 0);
     panel.flip_buffer();
-    Serial0.println("[S31] Static two-panel PARLIO pattern submitted");
+    Serial.println("[S31] Static two-panel PARLIO pattern submitted");
 }
 
 void setup()
 {
-    Serial0.begin(115200);
-    Serial0.printf("[S31] IDF=%s flash=%u PSRAM=%u CPU=%u MHz\n", ESP.getSdkVersion(),
+    Serial.begin(115200);
+    Serial.setTxTimeoutMs(0);
+    Serial.printf("[S31] IDF=%s flash=%u PSRAM=%u CPU=%u MHz\n", ESP.getSdkVersion(),
                    unsigned(ESP.getFlashChipSize()), unsigned(esp_psram_get_size()),
                    unsigned(ESP.getCpuFreqMHz()));
     Vector2D a2(2, 3);
     Vector3D a3(2, 3, 4);
-    Serial0.printf("[S31] Portable DSP dot2=%.1f dot3=%.1f (expected 23/47)\n",
+    Serial.printf("[S31] Portable DSP dot2=%.1f dot3=%.1f (expected 23/47)\n",
                    a2.DotProduct(Vector2D(4, 5)), a3.DotProduct(Vector3D(4, 5, 6)));
     StartPanel();
 }
 
 void loop()
 {
-    Serial0.printf("[S31] intFree=%u largest=%u psramFree=%u\n",
+    Serial.printf("[S31] intFree=%u largest=%u psramFree=%u\n",
                    unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                    unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                    unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));

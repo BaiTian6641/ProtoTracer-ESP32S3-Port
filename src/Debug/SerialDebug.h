@@ -30,7 +30,11 @@ using MaterialProfile = bool (*)(const char*);
 inline char input[96] = {};
 inline size_t inputLength = 0;
 inline bool overflow = false;
+#if defined(TASESP32S31)
+inline char output[320] = {};
+#else
 inline char output[224] = {};
+#endif
 inline uint8_t* snapshot = nullptr;
 inline size_t total = 0, sent = 0;
 inline uint32_t sequence = 0, hash = 0, progressMs = 0;

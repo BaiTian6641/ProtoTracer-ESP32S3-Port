@@ -6,10 +6,15 @@
 #include <Wire.h>
 
 #include <esp_bt.h>
+#include <esp_arduino_version.h>
+#if ESP_ARDUINO_VERSION_MAJOR >= 4
+#include <BLE.h>
+#else
 #include <BLE2902.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
+#endif
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <ProtoGC.h>
@@ -24,7 +29,11 @@
 #include <string>
 #include <vector>
 
+#if defined(TASESP32S31)
+#include <M5GFX.h>
+#else
 #include <M5Unified.h>
+#endif
 #include <M5UnitGLASS2.h>
 
 #ifdef LANG_CN
@@ -68,6 +77,14 @@ extern ProtoRGBColor* volatile gHudColors;
 #include "../Media/MediaService.h"
 
 #define DEMO_MODE 0
+
+#ifndef ESPMENU_BACKLIGHT_PIN
+#if defined(TASESP32S31)
+#define ESPMENU_BACKLIGHT_PIN -1
+#else
+#define ESPMENU_BACKLIGHT_PIN 21
+#endif
+#endif
 
 // ── Fan PWM ──
 #ifndef FAN_PIN
@@ -846,6 +863,7 @@ namespace
         }
     }
 
+    #if ESP_ARDUINO_VERSION_MAJOR < 4
     class MenuBleServerCallbacks : public BLEServerCallbacks
     {
         void onConnect(BLEServer *server) override
@@ -889,12 +907,26 @@ namespace
 #endif
     };
 
+    #endif
+
+    #if ESP_ARDUINO_VERSION_MAJOR >= 4
+    class MenuBleRxCallbacks
+    #else
     class MenuBleRxCallbacks : public BLECharacteristicCallbacks
+    #endif
     {
+        public:
+        #if ESP_ARDUINO_VERSION_MAJOR >= 4
+        void onWrite(const BLECharacteristic& characteristic)
+        {
+            size_t length = 0;
+            const uint8_t* data = characteristic.getValue(&length);
+        #else
         void onWrite(BLECharacteristic *characteristic) override
         {
             const uint8_t *data = characteristic->getData();
             const size_t length = characteristic->getLength();
+        #endif
             if (data == nullptr || length == 0)
             {
                 return;
@@ -1141,7 +1173,8 @@ private:
     static void OnDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len)
     {
 
-        memcpy(&raw_data, data, sizeof(data));
+        if (!data || data_len != static_cast<int>(sizeof(raw_data))) return;
+        memcpy(&raw_data, data, sizeof(raw_data));
         data_type = (uint8_t)(raw_data >> 24);
         if (data_type == 0)
         {
@@ -1277,6 +1310,47 @@ private:
             return;
         }
 
+        #if ESP_ARDUINO_VERSION_MAJOR >= 4
+        BLE.setMTU(247);
+        if (!BLE.begin(user_name.c_str())) { Serial.println("[BLE] begin failed"); return; }
+        static BLEServer serverHandle = BLE.createServer();
+        if (!serverHandle) { Serial.println("[BLE] createServer failed"); return; }
+        bleServer = &serverHandle;
+        serverHandle.onConnect([](const BLEServer&, const BLEConnInfo&) {
+            portENTER_CRITICAL(&gBleFlagMux);
+            bleDeviceConnected = true;
+            OledCare::RequestWake();
+            portEXIT_CRITICAL(&gBleFlagMux);
+            bleRxJsonBuffer = String(""); ClearQueuedLegacyCommands();
+            MediaService::chunkBytes = 20;
+            Serial.println("BLE client connected");
+        });
+        serverHandle.onDisconnect([](const BLEServer&, const BLEConnInfo&, uint8_t) {
+            portENTER_CRITICAL(&gBleFlagMux);
+            bleDeviceConnected = false;
+            OledCare::RequestWake();
+            portEXIT_CRITICAL(&gBleFlagMux);
+            bleRxJsonBuffer = String(""); ClearQueuedLegacyCommands(); MediaService::Disconnect();
+            Serial.println("BLE client disconnected");
+        });
+        serverHandle.onMtuChanged([](const BLEServer&, const BLEConnInfo&, uint16_t mtu) {
+            MediaService::chunkBytes = uint16_t(std::max<size_t>(20, std::min<size_t>(244, mtu > 3 ? mtu - 3 : 20)));
+        });
+        BLEService service = serverHandle.createService(BLEUUID(BLE_SERIAL2_SERVICE_UUID));
+        static BLECharacteristic txHandle = service.createCharacteristic(BLEUUID(BLE_TX2_UUID.c_str()), BLEProperty::Notify, BLEPermission::None);
+        static BLECharacteristic rxHandle = service.createCharacteristic(BLEUUID(BLE_RX2_UUID.c_str()), BLEProperty::Write | BLEProperty::WriteNR, BLEPermission::WriteOpen);
+        if (!service || !txHandle || !rxHandle) { Serial.println("[BLE] characteristic creation failed"); return; }
+        bleTxCharacteristic = &txHandle;
+        rxHandle.onWrite([](const BLECharacteristic& characteristic, const BLEConnInfo&) {
+            static MenuBleRxCallbacks callbacks;
+            callbacks.onWrite(characteristic);
+        });
+        if (!serverHandle.start()) { Serial.println("[BLE] server start failed"); return; }
+        BLEAdvertising advertising = serverHandle.getAdvertising();
+        advertising.addServiceUUID(BLEUUID(BLE_SERIAL2_SERVICE_UUID));
+        advertising.setScanResponse(true);
+        advertising.start();
+        #else
         BLEDevice::init(user_name.c_str());
         BLEDevice::setMTU(247);
         bleServer = BLEDevice::createServer();
@@ -1324,6 +1398,7 @@ private:
         advertising->addServiceUUID(BLE_SERIAL2_SERVICE_UUID);
         advertising->setScanResponse(true);
         advertising->start();
+        #endif
         Serial.println("BLE UART ready, waiting for client...");
 
         // Pre-allocate the RX buffer while internal DRAM is still clean — avoids
@@ -1345,11 +1420,11 @@ public:
     void Initialize(uint8_t faceCount, uint8_t threshold)
     {
         #ifdef VERBOSE_STARTUP
-        display->println(TXT("Initialize Bluetooth...", "初始化蓝牙驱动..."));
+        if (display) display->println(TXT("Initialize Bluetooth...", "初始化蓝牙驱动..."));
         #else
-        display->progressBar(14,50,100,8,18);
+        if (display) display->progressBar(14,50,100,8,18);
         #endif
-        display->display();
+        if (display) display->display();
         delay(200);
         Menu::faceCount = faceCount;
         Menu::threshold = threshold;
@@ -1363,13 +1438,13 @@ public:
         //Wire1.setPins(38, 39);
         //Wire.begin();
         #ifndef VERBOSE_STARTUP 
-        display->progressBar(14,50,100,8,20);
+        if (display) display->progressBar(14,50,100,8,20);
         #endif
         //Wire.setPins(38, 39);
         //Wire.begin(38, 39);
         // Init ESPNow with a fallback logic
         Serial.println("IIC OK.");
-        pinMode(21,OUTPUT);
+        if (ESPMENU_BACKLIGHT_PIN >= 0) pinMode(ESPMENU_BACKLIGHT_PIN, OUTPUT);
 
         // ── Fan PWM init ──
         //ledcAttach(FAN_PIN, FAN_PWM_FREQ, FAN_PWM_RESOLUTION);
@@ -1377,7 +1452,7 @@ public:
         //Serial.printf("Fan PWM ready on GPIO %d\n", FAN_PIN);
 
         #ifndef VERBOSE_STARTUP 
-        display->progressBar(14,50,100,8,22);
+        if (display) display->progressBar(14,50,100,8,22);
         #endif
 
         // InitESPNow();
@@ -1386,22 +1461,22 @@ public:
         nowpixels.clear();
         nowpixels.setPixelColor(0, nowpixels.Color(50, 50, 50));
         #ifndef VERBOSE_STARTUP 
-        display->progressBar(14,50,100,8,25);
+        if (display) display->progressBar(14,50,100,8,25);
         #endif
 
         startBluetooth();
         #ifndef VERBOSE_STARTUP 
-        display->progressBar(14,50,100,8,30);
+        if (display) display->progressBar(14,50,100,8,30);
         #endif
 
         #ifdef VERBOSE_STARTUP
-        display->println(TXT("Initialize gesture sensor...", "初始化手势传感器驱动..."));
+        if (display) display->println(TXT("Initialize gesture sensor...", "初始化手势传感器驱动..."));
         #else
-        display->progressBar(14,50,100,8,35);
+        if (display) display->progressBar(14,50,100,8,35);
         #endif
 
         delay(500);  // let display I2C bus settle before probing PAJ7620
-        display->display();
+        if (display) display->display();
         // ── Gesture sensor init ──
         // The gesture bus (Wire shared with GLASS2, or Wire1) is initialised
         // explicitly by main.cpp before this runs — current M5GFX does NOT
@@ -1434,9 +1509,9 @@ public:
             if (!sensorOk)
         {
             #ifdef VERBOSE_STARTUP
-            display->println(TXT("Failed to initialize gesture sensor", "手势传感器驱动初始化失败"));
-            display->println(TXT("Please check connection", "请检查连接"));
-            display->display();
+            if (display) display->println(TXT("Failed to initialize gesture sensor", "手势传感器驱动初始化失败"));
+            if (display) display->println(TXT("Please check connection", "请检查连接"));
+            if (display) display->display();
             #endif
             Serial.println("failed to initialize device! Please check your wiring.");
             didBegin = false;
@@ -1445,9 +1520,9 @@ public:
         else
         {
             #ifdef VERBOSE_STARTUP
-            display->println(TXT("Gesture sensor initialized", "手势传感器驱动初始化成功"));
+            if (display) display->println(TXT("Gesture sensor initialized", "手势传感器驱动初始化成功"));
             #else
-            display->progressBar(14,50,100,8,40);
+            if (display) display->progressBar(14,50,100,8,40);
             #endif
             Serial.println("Device initialized!");
             didBegin = true;
@@ -1457,9 +1532,9 @@ public:
         #ifndef NEW_GESTURE
         if(apds.setProximityGain(PGAIN_2X)){
             #ifdef VERBOSE_STARTUP
-            display->println(TXT("Gesture sensor gain set", "手势传感器驱动增益设置成功"));
+            if (display) display->println(TXT("Gesture sensor gain set", "手势传感器驱动增益设置成功"));
             #else
-            display->progressBar(14,50,100,8,42);
+            if (display) display->progressBar(14,50,100,8,42);
             #endif
         }
         #endif
@@ -1478,7 +1553,7 @@ public:
         }
 
         #ifndef VERBOSE_STARTUP 
-        display->progressBar(14,50,100,8,45);
+        if (display) display->progressBar(14,50,100,8,45);
         #endif
 
         if (DEMO_MODE && demoTimer == nullptr)
@@ -1496,9 +1571,9 @@ public:
             }
         }
         #ifdef VERBOSE_STARTUP
-        display->println(TXT("Peripherals initialized", "外设初始化完成"));
+        if (display) display->println(TXT("Peripherals initialized", "外设初始化完成"));
         #else
-        display->progressBar(14,50,100,8,47);
+        if (display) display->progressBar(14,50,100,8,47);
         #endif
 
         // Pre-build the remote controller manifest once during init so that
@@ -1507,7 +1582,7 @@ public:
         bleCachedManifestJson = BuildRemoteControllerManifestJson();
         Serial.printf("BLE manifest cached: %u bytes\n", static_cast<unsigned>(bleCachedManifestJson.length()));
 
-        display->display();
+        if (display) display->display();
         delay(500);
     }
 
@@ -1527,8 +1602,10 @@ public:
             if (bleDeviceConnected)
             {
                 // Cached/reconnected centrals need not deliver a fresh MTU callback.
+                #if ESP_ARDUINO_VERSION_MAJOR < 4
                 const uint16_t mtu = bleServer->getPeerMTU(bleServer->getConnId());
                 MediaService::chunkBytes = uint16_t(std::max<size_t>(20, std::min<size_t>(244, mtu > 3 ? mtu - 3 : 20)));
+                #endif
             }
             if (!bleDeviceConnected && bleOldDeviceConnected)
             {
@@ -1600,7 +1677,7 @@ public:
         if (digitalRead(OTA_BTN) == LOW) OledCare::Activity(nowMs);
 #endif
         OledCare::Poll(nowMs);
-        const bool kDoDisplayUpdate = !OledCare::IsAsleep() &&
+        const bool kDoDisplayUpdate = display && !OledCare::IsAsleep() &&
                                      nowMs - sLastDisplayUpdateMs >= displayIntervalMs;
 
         // ── HUD preview: build RGB565 buffer BEFORE the I2C transaction ──
@@ -1745,12 +1822,12 @@ public:
         if (bright >= 120)
         {
             // display->drawString("Enable", 60, 36);
-            digitalWrite(21,HIGH);
+            if (ESPMENU_BACKLIGHT_PIN >= 0) digitalWrite(ESPMENU_BACKLIGHT_PIN, HIGH);
         }
         else
         {
             // display->drawString("Disable", 60, 36);
-            digitalWrite(21,LOW);
+            if (ESPMENU_BACKLIGHT_PIN >= 0) digitalWrite(ESPMENU_BACKLIGHT_PIN, LOW);
         }
 
         // ── Fan PWM: apply stored speed every frame ──

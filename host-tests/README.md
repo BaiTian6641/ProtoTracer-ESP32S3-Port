@@ -79,6 +79,17 @@ See `docs/s3-dynamic-material-optimization-2026-10-04.md` for device measurement
   `CAMERA_RASTER_WORKER=1`), add matching shims under `shim/` — the include
   dir is placed **first** on the `/I` list so shims win.
 
+## S31 ownership and waveform gates
+
+The S31 DMA ownership contract has a separate `build_s31_frame_sync.cmd` gate.
+It compiles the real acknowledgment helper with a small fake FreeRTOS/PARLIO
+transport, checking retained leases after timeouts, mismatched callbacks, an
+ISR acknowledgment before transmit returns, and queue errors. This does not
+model hardware timing; on-device counters and SLogic captures cover that.
+
+`python test_s31_hub75_analyzer.py` (NumPy required) checks the waveform analyzer
+against independent traces with safe and early latches and unblanked clocks.
+
 ## Environment caveat (this dev machine)
 
 The machine's **App Control (WDAC)** policy blocks *freshly-built, unsigned*

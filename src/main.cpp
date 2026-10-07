@@ -1,6 +1,6 @@
-// Select target controller via build flag: -DTASESP32S3 or -DTASESP32P4.
+// Select target controller via TASESP32S3, TASESP32P4, or TASESP32S31.
 // Default to ESP32-S3 when none specified.
-#if !defined(TASESP32S3) && !defined(TASESP32P4)
+#if !defined(TASESP32S3) && !defined(TASESP32P4) && !defined(TASESP32S31)
 #define TASESP32S3
 #endif
 #define ELEGANTOTA_USE_ASYNC_WEBSERVER 1
@@ -28,6 +28,8 @@ uint8_t maxAccentBrightness = 100;
 #include "Controllers/TasESP32S3KitV1.h"
 #elif defined(TASESP32P4)
 #include "Controllers/TasESP32P4KitV0.h"
+#elif defined(TASESP32S31)
+#include "Controllers/TasESP32S31KitV0.h"
 #endif
 #include "Animation/JsonDrivenProtogenAnimation.h"
 #include <Adafruit_NeoPixel.h>
@@ -46,7 +48,11 @@ uint8_t maxAccentBrightness = 100;
   #include <ElegantOTAPro.h>
   #define USING_ELEGANTOTA_PRO 1
 #endif
+#if defined(TASESP32S31)
+#include <M5GFX.h>
+#else
 #include <M5Unified.h>
+#endif
 
 // ── Display auto-detection: include all available drivers ──
 #if __has_include(<M5UnitGLASS2.h>)
@@ -134,7 +140,9 @@ constexpr bool kVerboseStartup = false;
 #endif
 
 #ifndef PROTOTRACER_FW_MANIFEST
-  #if defined(TASESP32P4)
+  #if defined(TASESP32S31)
+    #define PROTOTRACER_FW_MANIFEST "esp32s31-local.json"
+  #elif defined(TASESP32P4)
     #define PROTOTRACER_FW_MANIFEST "esp32p4.json"
   #else
     #define PROTOTRACER_FW_MANIFEST "esp32s3.json"
@@ -265,7 +273,11 @@ static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
 #endif
 #if __has_include(<M5UnitOLED.h>)
   {
+    #if defined(TASESP32S31)
+    auto *d = new M5UnitOLED(sda, scl, freq);
+    #else
     auto *d = new M5UnitOLED(38, 39, freq);
+    #endif
     if (d->begin())
     {
       display = d;
@@ -297,15 +309,23 @@ static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
 // ── Gesture sensor I2C bus selection ──
 // GLASS2 units: the PAJ7620 shares the display's I2C bus (same pins passed to
 // DetectDisplay).  Other displays: the PAJ7620 sits on a separate Wire1 bus.
-#if defined(TASESP32P4)
+#if defined(TASESP32S31)
+  #define GESTURE_SHARED_SDA 2
+  #define GESTURE_SHARED_SCL 3
+#elif defined(TASESP32P4)
   #define GESTURE_SHARED_SDA 47
   #define GESTURE_SHARED_SCL 48
 #else
   #define GESTURE_SHARED_SDA 41
   #define GESTURE_SHARED_SCL 42
 #endif
+#if defined(TASESP32S31)
+#define GESTURE_WIRE1_SDA 2
+#define GESTURE_WIRE1_SCL 3
+#else
 #define GESTURE_WIRE1_SDA 41
 #define GESTURE_WIRE1_SCL 42
+#endif
 
 TwoWire *gGestureWire = &Wire;
 
@@ -340,6 +360,9 @@ Adafruit_NeoPixel nowpixels(1, 45, NEO_GRB + NEO_KHZ800);
 #elif defined(TASESP32P4)
 TasESP32P4KitV0 controller = TasESP32P4KitV0(maxBrightness);
 Adafruit_NeoPixel nowpixels(1, 20, NEO_GRB + NEO_KHZ800);
+#elif defined(TASESP32S31)
+TasESP32S31KitV0 controller = TasESP32S31KitV0(maxBrightness);
+Adafruit_NeoPixel nowpixels(1, 60, NEO_GRB + NEO_KHZ800);
 #endif
 
 JsonDrivenProtogenAnimation animation = JsonDrivenProtogenAnimation();
@@ -621,7 +644,7 @@ void setup()
   protogc::ProtoGC::begin();
 
   pinMode(OTA_BTN, INPUT_PULLUP);
-  pinMode(21, OUTPUT);  // LED/backlight — set early to avoid GPIO spam before Menu::Initialize
+  if (ESPMENU_BACKLIGHT_PIN >= 0) pinMode(ESPMENU_BACKLIGHT_PIN, OUTPUT);
   Serial.begin(115200);
 #if ARDUINO_USB_CDC_ON_BOOT
   // USB attachment does not imply that a host is consuming the console.
@@ -637,6 +660,8 @@ void setup()
   if (!DetectDisplay(41, 42, 400000))
 #elif defined(TASESP32P4)
   if (!DetectDisplay(47, 48, 400000))
+#elif defined(TASESP32S31)
+  if (!DetectDisplay(2, 3, 400000))
 #endif
   {
     Serial.println("[DISP] No display detected; Continue with headless");
@@ -719,7 +744,7 @@ void setup()
     }
   }
 
-#ifdef TASESP32S3
+#if defined(TASESP32S3) || defined(TASESP32S31)
   // Reserve HUB75 DMA internal SRAM before WiFi/BLE/animation allocate from the same heap.
   EnsureControllerInitialized();
 #endif
@@ -737,7 +762,7 @@ void setup()
   // Progress output is kept away from the registration screen until assets exist.
   M5GFX* startupDisplay = gRegistrationDisplayHeld ? nullptr : display;
 
-#ifdef TASESP32S3
+#if defined(TASESP32S3) || defined(TASESP32S31)
   // Apply HUB75 color channel compensation from user config. The first
   // Initialize() ran before the config was available (DMA reservation), so
   // re-init the panel when a non-default order is configured — the re-run
@@ -878,10 +903,15 @@ void setup()
     }
   }
 
+  #if defined(PROTOTRACER_BOOT_OFFLINE) && PROTOTRACER_BOOT_OFFLINE
+  bool wifiConnected = false;
+  Serial.println("[S31 TEST] Offline boot from seeded local assets");
+  #else
   WiFi.mode(WIFI_AP_STA);
   delay(200); // Let RF calibration settle before NetWizard AP start
 
   bool wifiConnected = ConnectWifiWithNetWizard(userConfig, server, 15000, display, gRegistrationDisplayHeld);
+  #endif
   RefreshRegistrationDisplay(true);
 
   // ── Network update block ──
@@ -989,7 +1019,7 @@ void setup()
       }
 
       Serial.printf("[INFO] Probe: Gitee=%ums GitHub=%ums → primary=%s\n",
-                    giteeLatency, githubLatency, primaryName);
+                    unsigned(giteeLatency), unsigned(githubLatency), primaryName);
     }
     else if (cachedName == "GitHub")
     {
@@ -1291,13 +1321,14 @@ void setup()
   if (display) display->clear();
 }
 
-#if SERIAL_DEBUG_ENABLED && defined(TASESP32S3)
+#if SERIAL_DEBUG_ENABLED && (defined(TASESP32S3) || defined(TASESP32S31))
 static bool ResolveDebugView(const char* name, SerialDebug::View& view)
 {
   if (!strcmp(name, "hud")) {
     view = {gHudBuffer, 64 * 32 * sizeof(uint16_t), "rgb565le", 64, 32};
     return gHudBuffer && gHudColors;
   }
+  #if defined(TASESP32S3)
   if (!strncmp(name, "dmafront", 8) || !strncmp(name, "dmaback", 7)) {
     const bool front = !strncmp(name, "dmafront", 8);
     size_t row = 0;
@@ -1306,6 +1337,7 @@ static bool ResolveDebugView(const char* name, SerialDebug::View& view)
     view.format = "dma16le";
     return view.data != nullptr;
   }
+  #endif
   if (MicrophoneFourierIT::IsInitialized()) {
     if (!strcmp(name, "samples")) {
       view = {MicrophoneFourierIT::GetSamples(), 256 * sizeof(float), "f32le", 256, 1};
@@ -1345,11 +1377,19 @@ static bool ResolveDebugView(const char* name, SerialDebug::View& view)
 
 static void DebugStats(char* output, size_t capacity)
 {
+  size_t used = 0;
+#if defined(TASESP32S31)
+  snprintf(output, capacity, "@DBG HUB75 frames=%lu failures=%lu\n",
+      static_cast<unsigned long>(controller.GetCompletedFrames()),
+      static_cast<unsigned long>(controller.GetPresentFailures()));
+  used = strlen(output);
+  if (used >= capacity) return;
+#endif
   unsigned animStack = 0;
 #if ANIM_RENDER_PIPELINE
   if (gAnimTaskHandle) animStack = uxTaskGetStackHighWaterMark(gAnimTaskHandle);
 #endif
-  snprintf(output, capacity,
+  snprintf(output + used, capacity - used,
       "@DBG STATS intFree=%u largest=%u min=%u psram=%u\n"
       "@DBG STACK loop=%u anim=%u mic=%u\n"
       "@DBG TIMING animUs=%u renderUs=%u micFrames=%lu micDrops=%lu\n",
@@ -1391,7 +1431,7 @@ void loop()
       }
       if (!gBgDisplayResetDone)
       {
-#ifdef TASESP32S3
+#if defined(TASESP32S3) || defined(TASESP32S31)
         // Pick up any color order change from the freshly downloaded config.
         gHub75ColorOrder = userConfig.hub75_color_order;
 #endif
@@ -1494,14 +1534,16 @@ void loop()
   const bool otaLongPress = (gOtaButtonDownAtMs != 0) && ((now - gOtaButtonDownAtMs) >= 1200);
   const bool otaCooldownElapsed = (now - gOtaButtonLastTriggerMs) >= 30000;
 
-#ifdef TASESP32S3
+#if defined(TASESP32S3) || defined(TASESP32S31)
   if (otaLongPress && otaCooldownElapsed)
   {
     gOtaButtonLastTriggerMs = now;
+    #ifdef TASESP32S3
     if (virtualDisp) {
       virtualDisp->clearScreen();
       virtualDisp->fillScreenRGB888(255, 255, 255);
     }
+    #endif
     if (WiFi.getMode() != WIFI_AP)
     {
       WiFi.mode(WIFI_AP);
@@ -1624,7 +1666,7 @@ void loop()
 #endif
   yield(); // Feed watchdog after display update
 
-#if SERIAL_DEBUG_ENABLED && defined(TASESP32S3)
+#if SERIAL_DEBUG_ENABLED && (defined(TASESP32S3) || defined(TASESP32S31))
   // Animation has completed and is waiting for next frame's semaphore.
   static uint32_t debugFrame = 0;
 #ifdef PRINTINFO

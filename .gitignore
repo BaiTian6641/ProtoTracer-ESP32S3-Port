@@ -41,3 +41,5 @@ experiments/esp32s31-parlio/components/hub75/
 experiments/esp32s31-parlio/managed_components/
 experiments/esp32s31-parlio/sdkconfig
 experiments/esp32s31-parlio/sdkconfig.old
+experiments/esp32s31-parlio/components/prototracer_deps/
+experiments/esp32s31-parlio/test-data/
