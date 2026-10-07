@@ -2,10 +2,10 @@
 
 Update (2026-10-08): `20b551c` implements the dynamic gradient ownership fix
 described below. For the next hardware generation, follow the
-[ESP32-S31 / ProtoGL architecture plan](esp32s31-protogl-architecture-plan.md):
-retain this S3 backend as the baseline and use an external graphics processor
-for rendering and HUB75 output. Further ESP32 HUB75 driver development is not a
-prerequisite for that architecture.
+[ESP32-S31 dual roadmap](esp32s31-dual-roadmap.md): retain this S3 backend as
+the baseline, develop S31 local rendering with PARLIO HUB75, and separately
+develop the general ProtoGL graphics backend. The local path evaluates an
+existing PARLIO library port; the ProtoGL path delegates panel output to its GPU.
 
 This is an assessment, not a firmware change. COM5 was sampled without resetting,
 flashing, changing controls, or touching persisted configuration. Only public

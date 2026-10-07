@@ -1,12 +1,20 @@
 # ESP32-S31 and ProtoGL architecture review
 
+Update (2026-10-08): this initial review is retained as historical evidence.
+The current decision is **two paths**, S31 local rendering with PARLIO HUB75
+and a general ProtoGL backend. Follow the
+[dual roadmap](esp32s31-dual-roadmap.md) for sequencing and current dependencies.
+ProtoGL has now been pulled to `5ce6fc2` (protocol 9, expanded clock management);
+the GPU firmware will be provided later. The original revision/results below
+describe the earlier inspection, not the newly supplied firmware.
+
 Reviewed on 2026-10-08. Application baseline: `5772870` on `main`, following
 `20b551c`. ProtoGL inspected through SSH at
 `c099f90fe09e7d8db7b976048a8ab98905466642` (protocol 9).
 
 ## Decision
 
-Proceed with a staged prototype of **main CPU + RP2350 graphics coprocessor**
+The initial recommendation was a staged prototype of **main CPU + RP2350 graphics coprocessor**
 over QSPI. Prove the adapter on ESP32-S3 first, then port the host to ESP32-S31.
 Retain the current S3 local renderer and existing HUB75 library as a regression
 baseline. The new host backend should use ProtoGL for rendering and panel output;

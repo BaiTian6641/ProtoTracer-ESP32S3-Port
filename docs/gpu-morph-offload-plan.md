@@ -1,10 +1,12 @@
 # GPU morph offload: design and change list
 
-Follow-up to the [S31 / ProtoGL architecture review](esp32s31-protogl-architecture-plan.md),
-2026-10-08. Inspected application baseline `5772870` and ProtoGL
-`c099f90fe09e7d8db7b976048a8ab98905466642`. This document proposes changes;
-it does not implement them. The RP2350 firmware source is still unavailable
-through the inspected ProtoGL gitlink, so its internal paths remain to be mapped.
+Part of Path B in the [S31 dual roadmap](esp32s31-dual-roadmap.md),
+2026-10-08. Inspected application baseline `5772870`; ProtoGL has now been
+pulled to `5ce6fc290a73d3f6a81f14baaee4a6f0773f8196`. That update adds clock
+management and retains protocol 9; resident morph blending is still proposed.
+This document does not implement the extension. The user will provide GPU
+firmware later, when its internal resource/vertex paths and final version
+decision can be mapped. Host-side planning does not depend on its arrival.
 
 ## Recommendation and expected effect
 
@@ -164,7 +166,8 @@ must not apply morph deltas cumulatively.
 
 ## Implementation order and acceptance
 
-1. Obtain the actual GPU source and agree on the matched protocol extension.
+1. Specify the shared resource/draw contract and plan its host tests now; map
+   it to the actual GPU source and agree on the matched version when supplied.
 2. Implement offline packing and a CPU reference blender consuming that same
    package. Check the entire current face and larger/malformed assets.
 3. Implement GPU resource upload and blending for a solid, fixed-camera face;
