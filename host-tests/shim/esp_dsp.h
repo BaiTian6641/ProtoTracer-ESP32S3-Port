@@ -24,7 +24,7 @@ inline void dsps_sub_f32(const float* in1, const float* in2, float* out, int n, 
     }
 }
 
-inline void dsps_dotprod_f32_ae32(const float* in1, const float* in2, int n, float* out) {
+inline void dsps_dotprod_f32(const float* in1, const float* in2, float* out, int n) {
     float sum = 0.0f;
     for (int i = 0; i < n; i++) {
         sum += in1[i] * in2[i];

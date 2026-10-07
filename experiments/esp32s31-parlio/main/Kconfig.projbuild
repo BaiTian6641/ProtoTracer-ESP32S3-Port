@@ -1,0 +1,44 @@
+menu "ProtoTracer S31 probe"
+    config PROTOTRACER_HUB75_ENABLE
+        bool "Enable HUB75 output after assigning board wiring"
+        default n
+    config PROTOTRACER_HUB75_R1
+        int "R1 GPIO"
+        default -1
+    config PROTOTRACER_HUB75_G1
+        int "G1 GPIO"
+        default -1
+    config PROTOTRACER_HUB75_B1
+        int "B1 GPIO"
+        default -1
+    config PROTOTRACER_HUB75_R2
+        int "R2 GPIO"
+        default -1
+    config PROTOTRACER_HUB75_G2
+        int "G2 GPIO"
+        default -1
+    config PROTOTRACER_HUB75_B2
+        int "B2 GPIO"
+        default -1
+    config PROTOTRACER_HUB75_A
+        int "Address A GPIO"
+        default -1
+    config PROTOTRACER_HUB75_B
+        int "Address B GPIO"
+        default -1
+    config PROTOTRACER_HUB75_C
+        int "Address C GPIO"
+        default -1
+    config PROTOTRACER_HUB75_D
+        int "Address D GPIO"
+        default -1
+    config PROTOTRACER_HUB75_LAT
+        int "Latch GPIO"
+        default -1
+    config PROTOTRACER_HUB75_OE
+        int "Output enable GPIO"
+        default -1
+    config PROTOTRACER_HUB75_CLK
+        int "Clock GPIO"
+        default -1
+endmenu

@@ -165,7 +165,7 @@ public:
 		alignas(16) float a[4] = {X, Y, Z, 0.0f};
 		alignas(16) float b[4] = {vector.X, vector.Y, vector.Z, 0.0f};
 		float out = 0.0f;
-		dsps_dotprod_f32_ae32(a, b, 3, &out);
+		dsps_dotprod_f32(a, b, &out, 3);
 		return out;
 #else
 		return (X * vector.X) + (Y * vector.Y) + (Z * vector.Z);

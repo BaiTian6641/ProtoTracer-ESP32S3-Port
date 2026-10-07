@@ -60,6 +60,12 @@ powershell -File compare.ps1 -LegacyBin legacy.bin -DirectBin direct.bin
 
 ## Notes
 
+`build_vectors.cmd` enables both optional vector DSP paths and validates the
+public ESP-DSP destination-before-length API without exposing any Xtensa-only
+symbols in the host shim. It checks 2D/3D arithmetic for signed inputs and
+orthogonal vectors; default firmware vector math remains scalar unless those
+DSP flags are selected.
+
 `build_materials.cmd` validates the real spiral/gradient headers against the
 original shader math, plus owned/external palettes, absolute hue changes,
 virtual destruction and lazy PSRAM spectrum state/failure. It compiles with

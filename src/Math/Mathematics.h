@@ -1,5 +1,6 @@
 #pragma once
 #include <math.h>
+#include <cmath>
 #include <WString.h>
 #include "FastTrig.h"
 
@@ -48,11 +49,11 @@ public:
 	}
 
 	static bool IsInfinite(float value) {
-		return isinf(value);
+		return std::isinf(value);
 	}
 
 	static bool IsFinite(float value) {
-		return isfinite(value);
+		return std::isfinite(value);
 	}
 
 	static bool IsClose(float v1, float v2, float epsilon){

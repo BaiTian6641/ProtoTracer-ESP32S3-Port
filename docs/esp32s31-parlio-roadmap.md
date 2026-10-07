@@ -1,6 +1,9 @@
 # Path A: ESP32-S31 single-chip renderer and PARLIO HUB75
 
 Part of the [dual roadmap](esp32s31-dual-roadmap.md), 2026-10-08.
+Implementation has started on `codex/esp32s31-parlio`; see the
+[bring-up log](esp32s31-parlio-bringup.md) for the buildable first probe and
+current hardware/integration gates.
 This path keeps morph blending, rendering and screenspace effects on S31 and
 uses PARLIO/GDMA for panel refresh. It has no external GPU requirement.
 

@@ -34,3 +34,10 @@ __pycache__/
 
 # CMake/IDE build output dir (not part of PlatformIO firmware build)
 build/
+
+# Generated components and configuration for the isolated S31 IDF/Arduino probe
+experiments/esp32s31-parlio/components/arduino/
+experiments/esp32s31-parlio/components/hub75/
+experiments/esp32s31-parlio/managed_components/
+experiments/esp32s31-parlio/sdkconfig
+experiments/esp32s31-parlio/sdkconfig.old
