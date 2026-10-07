@@ -106,6 +106,11 @@ handling under IDF 6.1 even where APIs appear source-compatible.
 
 ## Responsibilities and application integration
 
+For the proposed next stage, see the
+[GPU morph offload design and change list](gpu-morph-offload-plan.md).
+It replaces per-frame vertex uploads with weight snapshots and moves resident
+morph data/blending to the GPU after extending both the library and firmware.
+
 ```mermaid
 flowchart LR
     A["Main CPU: S3 prototype / S31 target\nJSON, morphs, audio, sensors, BLE, Wi-Fi, OTA"]
