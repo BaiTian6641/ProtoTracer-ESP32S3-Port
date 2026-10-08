@@ -2,6 +2,68 @@
 
 2026-10-08, branch `codex/esp32s31-parlio`.
 
+## Onboard audio and additional signal qualification
+
+The follow-up replaces S31's default floating external-ADC input with the
+Function-Core's onboard ES8311 microphone. `esp_codec_dev` is pinned to 1.6.2;
+the adapter uses checked IDF I2C/I2S initialization and bounded 256-sample DMA
+reads at 8 kHz. It feeds the existing FFT and viseme scale by mapping signed
+16-bit PCM into unsigned 12-bit samples. It counts read failures and I2S RX
+queue overflow events. GPIO49 ADC remains selectable with `-Microphone ADC`.
+
+Pin assignments were checked visually against the official schematic: I2C
+SDA51/SCL50, MCLK52, BCLK53, LRCK55 and codec ADC output into GPIO54. GPIO56
+is the codec DAC input, not microphone data. PA control GPIO57 remains low.
+The external display/gesture bus moves to I2C1 on GPIO2/3 so it can coexist
+with the codec on I2C0. S3 constructor/bus defaults are preserved.
+
+On the supplied face, DMA audio reduces animation work from roughly 8-10 ms
+to about 1 ms; sampled rendering measures **81.67 FPS** at the same 240 MHz CPU
+and 10 MHz HUB75 clock. An audio check captured 16 distinct 256-sample frames:
+range 2034-2060, mean 2047.74, median AC RMS 3.96 ADC-equivalent counts, zero
+clipping, finite FFT arrays, zero reported drops and a healthy heap. This
+qualifies live microphone transport and publication; it does not establish
+speech/viseme classification accuracy. Published spectra now begin as silence,
+including the previously unwritten final FFT bin.
+
+The final ES8311 firmware completed a five-minute soak with 24 snapshots /
+82,530 B and 147 frame windows. Median throughput was **81.67 FPS**, with
+8.58 ms display time, zero audio drops, zero reported faults and a healthy
+heap. Internal free memory stayed at 200,487 B, with a 135,168 B largest
+block. The final counter was 30,465 presents with zero failures. These are
+measurements for the supplied face and headless offline test configuration.
+
+The existing ADC firmware also completed a five-minute snapshot soak with
+24 snapshots / 82,530 B, median 48.76 FPS, no faults, no sampler drops and an
+unchanged 203,179 B internal free heap. Its final cumulative counter was
+786,907 presents with zero failures, covering more than four hours of prior
+operation on the same boot.
+
+Because only the eight analyzer probes are connected, a diagnostic build
+temporarily routed RGB2 and C/D onto GPIO38-40 and 42/43. Red, green, blue and
+black again passed exact USB pixel comparisons and pin captures. C/D advanced
+modulo four with 32 latches per observed group; scan measured 244.88 Hz,
+CLK 10 MHz, LAT 50 ns after the final clock, and no enabled OE at clocks or
+LAT. The standard pin map is restored after this test. GPIO44-48 in their
+production assignments and visible panels still require physical probing.
+
+After restoring the normal map, the final ES8311 firmware also passed all
+four BLE-to-USB-to-RGB1/A/B tests at 40 Msamples/s: 128 clocks per burst,
+one latch, eight latches per A/B group, correct address progression, blanked
+OE during shifting/latching/address changes, and approximately 244.88 Hz
+scan refresh. Its application is 2,915,696 B, SHA-256
+`88cac8be4bba2401d8799efc810c0fa4c1672179ff8f0907a51dd2d212b79497`.
+Both full S31 and S3 builds pass; the independent analyzer's four known-trace
+tests and `validate.ps1` also pass. Follow-up measurements are recorded in
+[`validation/esp32s31-audio-and-banks.json`](validation/esp32s31-audio-and-banks.json).
+
+References: [Function-Core schematic](https://dl.espressif.com/schematics/esp32-s31-function-coreboard-1-schematics.pdf),
+[Espressif codec API](https://components.espressif.com/components/espressif/esp_codec_dev/versions/1.6.2/readme).
+The board-manager source inspected was `80aef5c3da572ca06a08374386475aad2cbdd52c`;
+its tentative pin comments were resolved using the schematic. Wi-Fi/OTA
+runtime awaits a test network; the PC's active connection uses its sole WLAN
+adapter. No host network settings were changed.
+
 ## Full application and first hardware qualification
 
 The S31 application now uses the real `src/main.cpp`, JSON face/morph engine,

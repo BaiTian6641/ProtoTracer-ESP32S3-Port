@@ -2,6 +2,8 @@ param(
     [ValidateSet('build', 'flash', 'monitor')][string]$Action = 'build',
     [string]$Port = 'COM6',
     [switch]$Offline,
+    [ValidateSet('ES8311', 'ADC')][string]$Microphone = 'ES8311',
+    [switch]$ProbeSecondBank,
     [string]$ToolRoot = 'C:/Espressif/tools',
     [int]$Jobs = 4
 )
@@ -29,7 +31,10 @@ $env:IDF_PY_BUILD_JOBS = "$Jobs"
 $env:CMAKE_BUILD_PARALLEL_LEVEL = '2'
 $env:PATH = ($s31Bins -join ';') + ';' + $env:PATH
 $s31OfflineValue = if ($Offline) { 'ON' } else { 'OFF' }
+$s31SecondBankValue = if ($ProbeSecondBank) { 'ON' } else { 'OFF' }
 & $s31Python "$s31Sdk/tools/idf.py" -C "$s31Root/experiments/esp32s31-parlio" `
     -B "$s31Root/build/s31-full" -DPROTOTRACER_FULL_FIRMWARE=ON `
+    "-DPROTOTRACER_S31_MICROPHONE=$Microphone" `
+    "-DPROTOTRACER_S31_PROBE_SECOND_BANK=$s31SecondBankValue" `
     "-DPROTOTRACER_S31_OFFLINE_BOOT=$s31OfflineValue" -p $Port $Action
 exit $LASTEXITCODE

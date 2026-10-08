@@ -1,0 +1,565 @@
+{
+  "date": "2026-10-08",
+  "board": "ESP32-S31 Function-Core / WROOM-3 E1H16R16V, revision v0.0",
+  "interface": "COM6 USB Serial/JTAG",
+  "configuration": {
+    "cpu_mhz": 240,
+    "psram_mhz": 200,
+    "flash_bytes": 16777216,
+    "psram_bytes": 16777216,
+    "offline_boot": true,
+    "physical_panels_connected": false,
+    "final_microphone": "ES8311",
+    "final_probe_second_bank": false
+  },
+  "final_app": {
+    "bytes": 2915696,
+    "sha256": "88cac8be4bba2401d8799efc810c0fa4c1672179ff8f0907a51dd2d212b79497"
+  },
+  "onboard_audio": {
+    "component": "espressif/esp_codec_dev 1.6.2",
+    "sample_rate_hz": 8000,
+    "pcm_bits": 16,
+    "frame_samples": 256,
+    "input_gain_db": 30,
+    "pins": {
+      "sda": 51,
+      "scl": 50,
+      "mclk": 52,
+      "bclk": 53,
+      "ws": 55,
+      "din": 54,
+      "pa_disabled": 57
+    },
+    "i2c_port": 0,
+    "fft_input_range": [
+      0,
+      4095
+    ],
+    "live_snapshot_check": {
+      "frames": 16,
+      "distinct_frames": 16,
+      "minimum": 2034.0,
+      "maximum": 2060.0,
+      "mean": 2047.74072265625,
+      "ac_rms_median": 3.9633617401123047,
+      "clipped_samples": 0,
+      "before": [
+        "@DBG HUB75 frames=3760 failures=0 micSource=ES8311",
+        "@DBG STATS intFree=200487 largest=135168 min=168456 psram=16181124",
+        "@DBG STACK loop=5832 anim=7444 mic=5048",
+        "@DBG TIMING animUs=916 renderUs=1591 micFrames=1613 micDrops=0"
+      ],
+      "after": [
+        "@DBG HUB75 frames=3918 failures=0 micSource=ES8311",
+        "@DBG STATS intFree=200487 largest=135168 min=168456 psram=16181124",
+        "@DBG STACK loop=5832 anim=7444 mic=5048",
+        "@DBG TIMING animUs=969 renderUs=1592 micFrames=1674 micDrops=0"
+      ],
+      "heap": [
+        "@DBG CHECK heap=ok"
+      ]
+    }
+  },
+  "adc_baseline_soak": {
+    "target": "esp32s31",
+    "seconds": 300.2,
+    "snapshots": 24,
+    "bytes": 82530,
+    "distinct_rgb_hashes": 3,
+    "windows": 148,
+    "median_fps": 48.760000000000005,
+    "median_display_ms": 9.01,
+    "last_heap": [
+      203179,
+      135168,
+      0
+    ],
+    "heap_range": [
+      203179,
+      203179
+    ],
+    "max_mic_drops": 0,
+    "pack_verify": [],
+    "faults": [],
+    "final_check": [
+      "@DBG CHECK heap=ok"
+    ],
+    "final_stats": [
+      "@DBG HUB75 frames=786907 failures=0",
+      "@DBG STATS intFree=203179 largest=135168 min=171148 psram=16182716",
+      "@DBG STACK loop=5816 anim=7436 mic=5504",
+      "@DBG TIMING animUs=9253 renderUs=1629 micFrames=491778 micDrops=0"
+    ]
+  },
+  "es8311_soak": {
+    "target": "esp32s31",
+    "seconds": 300.2,
+    "snapshots": 24,
+    "bytes": 82530,
+    "distinct_rgb_hashes": 3,
+    "windows": 147,
+    "median_fps": 81.67,
+    "median_display_ms": 8.58,
+    "last_heap": [
+      200487,
+      135168,
+      0
+    ],
+    "heap_range": [
+      200487,
+      200487
+    ],
+    "max_mic_drops": 0,
+    "pack_verify": [],
+    "faults": [],
+    "final_check": [
+      "@DBG CHECK heap=ok"
+    ],
+    "final_stats": [
+      "@DBG HUB75 frames=30465 failures=0 micSource=ES8311",
+      "@DBG STATS intFree=200487 largest=135168 min=168456 psram=16181124",
+      "@DBG STACK loop=5832 anim=7444 mic=5032",
+      "@DBG TIMING animUs=1039 renderUs=1596 micFrames=11837 micDrops=0"
+    ]
+  },
+  "hub75_validation": {
+    "primary": {
+      "signals": [
+        "CLK",
+        "LAT",
+        "OE",
+        "R1",
+        "G1",
+        "B1",
+        "A",
+        "B"
+      ],
+      "probe_gpio_order": [
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        42,
+        43
+      ],
+      "temporary_remap": false,
+      "patterns": {
+        "red": {
+          "started_utc": "2026-10-08T05:06:59.786998+00:00",
+          "exact_usb_pixels": true,
+          "usb_rgb_bytes": 6144,
+          "analysis": {
+            "samples": 2000000,
+            "sample_rate_hz": 40000000,
+            "clock_rises": 200576,
+            "latches": 1567,
+            "capture_sha256": "e8a62f60f328bca0f93fab6f4951e7b12555a1fb5949e5b4e5b470870c14aa2a",
+            "address_signals": [
+              "A",
+              "B"
+            ],
+            "clock_hz": 10000000.0,
+            "complete_clock_bursts": {
+              "128": 1565
+            },
+            "oe_enabled_clock_edges": 0,
+            "lat_high_clock_edges": 0,
+            "latches_per_complete_burst": [
+              1
+            ],
+            "latch_after_final_clock_ns": {
+              "min": 50.0,
+              "median": 50.0
+            },
+            "oe_enabled_at_latch": 0,
+            "observed_ab": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "ab_progression_mod4": true,
+            "complete_ab_latch_runs": [
+              8
+            ],
+            "inferred_scan_refresh_hz": 244.8819668919581,
+            "ab_changes_while_oe_enabled": 0,
+            "rgb_bank": "RGB1",
+            "rgb_nonzero_samples": 802415,
+            "rgb1_nonzero_samples": 802415
+          }
+        },
+        "green": {
+          "started_utc": "2026-10-08T05:07:09.420508+00:00",
+          "exact_usb_pixels": true,
+          "usb_rgb_bytes": 6144,
+          "analysis": {
+            "samples": 2000000,
+            "sample_rate_hz": 40000000,
+            "clock_rises": 200576,
+            "latches": 1567,
+            "capture_sha256": "17ca95d31b1acb0d792496f49672fb2456b965e781877f75f7afbf140f266b0b",
+            "address_signals": [
+              "A",
+              "B"
+            ],
+            "clock_hz": 10000000.0,
+            "complete_clock_bursts": {
+              "128": 1565
+            },
+            "oe_enabled_clock_edges": 0,
+            "lat_high_clock_edges": 0,
+            "latches_per_complete_burst": [
+              1
+            ],
+            "latch_after_final_clock_ns": {
+              "min": 25.0,
+              "median": 50.0
+            },
+            "oe_enabled_at_latch": 0,
+            "observed_ab": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "ab_progression_mod4": true,
+            "complete_ab_latch_runs": [
+              8
+            ],
+            "inferred_scan_refresh_hz": 244.8819668919581,
+            "ab_changes_while_oe_enabled": 0,
+            "rgb_bank": "RGB1",
+            "rgb_nonzero_samples": 802435,
+            "rgb1_nonzero_samples": 802435
+          }
+        },
+        "blue": {
+          "started_utc": "2026-10-08T05:07:19.790730+00:00",
+          "exact_usb_pixels": true,
+          "usb_rgb_bytes": 6144,
+          "analysis": {
+            "samples": 2000000,
+            "sample_rate_hz": 40000000,
+            "clock_rises": 200573,
+            "latches": 1567,
+            "capture_sha256": "e715017c3a1a0eada2cf42a7bc9cf4a71bc97581e8e9ee8af290d4aa0696d7ce",
+            "address_signals": [
+              "A",
+              "B"
+            ],
+            "clock_hz": 10000000.0,
+            "complete_clock_bursts": {
+              "128": 1566
+            },
+            "oe_enabled_clock_edges": 0,
+            "lat_high_clock_edges": 0,
+            "latches_per_complete_burst": [
+              1
+            ],
+            "latch_after_final_clock_ns": {
+              "min": 25.0,
+              "median": 50.0
+            },
+            "oe_enabled_at_latch": 0,
+            "observed_ab": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "ab_progression_mod4": true,
+            "complete_ab_latch_runs": [
+              8
+            ],
+            "inferred_scan_refresh_hz": 244.8819668919581,
+            "ab_changes_while_oe_enabled": 0,
+            "rgb_bank": "RGB1",
+            "rgb_nonzero_samples": 802400,
+            "rgb1_nonzero_samples": 802400
+          }
+        },
+        "black": {
+          "started_utc": "2026-10-08T05:07:30.361222+00:00",
+          "exact_usb_pixels": true,
+          "usb_rgb_bytes": 6144,
+          "analysis": {
+            "samples": 2000000,
+            "sample_rate_hz": 40000000,
+            "clock_rises": 200576,
+            "latches": 1567,
+            "capture_sha256": "ec0c8393ba77c83e6a93ff4af765bae40e6642901b4e7a61830d711d98ea3966",
+            "address_signals": [
+              "A",
+              "B"
+            ],
+            "clock_hz": 10000000.0,
+            "complete_clock_bursts": {
+              "128": 1565
+            },
+            "oe_enabled_clock_edges": 0,
+            "lat_high_clock_edges": 0,
+            "latches_per_complete_burst": [
+              1
+            ],
+            "latch_after_final_clock_ns": {
+              "min": 50.0,
+              "median": 50.0
+            },
+            "oe_enabled_at_latch": 0,
+            "observed_ab": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "ab_progression_mod4": true,
+            "complete_ab_latch_runs": [
+              8
+            ],
+            "inferred_scan_refresh_hz": 244.8819668919581,
+            "ab_changes_while_oe_enabled": 0,
+            "rgb_bank": "RGB1",
+            "rgb_nonzero_samples": 0,
+            "rgb1_nonzero_samples": 0
+          }
+        }
+      },
+      "stats": [
+        "@DBG HUB75 frames=38083 failures=0 micSource=ES8311",
+        "@DBG STATS intFree=198091 largest=131072 min=165408 psram=16164208",
+        "@DBG STACK loop=5368 anim=7444 mic=5032",
+        "@DBG TIMING animUs=941 renderUs=1547 micFrames=14562 micDrops=0"
+      ]
+    },
+    "secondary": {
+      "signals": [
+        "CLK",
+        "LAT",
+        "OE",
+        "R2",
+        "G2",
+        "B2",
+        "C",
+        "D"
+      ],
+      "probe_gpio_order": [
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        42,
+        43
+      ],
+      "temporary_remap": true,
+      "patterns": {
+        "red": {
+          "started_utc": "2026-10-08T04:53:45.457028+00:00",
+          "exact_usb_pixels": true,
+          "usb_rgb_bytes": 6144,
+          "analysis": {
+            "samples": 2000000,
+            "sample_rate_hz": 40000000,
+            "clock_rises": 200616,
+            "latches": 1567,
+            "capture_sha256": "e983b7b3aed50c0fd2f38c7056b232c221a98ca3e26da86ecd5243c6b2ce2ac0",
+            "address_signals": [
+              "C",
+              "D"
+            ],
+            "clock_hz": 10000000.0,
+            "complete_clock_bursts": {
+              "128": 1566
+            },
+            "oe_enabled_clock_edges": 0,
+            "lat_high_clock_edges": 0,
+            "latches_per_complete_burst": [
+              1
+            ],
+            "latch_after_final_clock_ns": {
+              "min": 50.0,
+              "median": 50.0
+            },
+            "oe_enabled_at_latch": 0,
+            "observed_cd": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "cd_progression_mod4": true,
+            "complete_cd_latch_runs": [
+              32
+            ],
+            "inferred_scan_refresh_hz": 244.87597032103238,
+            "cd_changes_while_oe_enabled": 0,
+            "rgb_bank": "RGB2",
+            "rgb_nonzero_samples": 802592,
+            "rgb2_nonzero_samples": 802592
+          }
+        },
+        "green": {
+          "started_utc": "2026-10-08T04:53:56.388027+00:00",
+          "exact_usb_pixels": true,
+          "usb_rgb_bytes": 6144,
+          "analysis": {
+            "samples": 2000000,
+            "sample_rate_hz": 40000000,
+            "clock_rises": 200698,
+            "latches": 1567,
+            "capture_sha256": "bc279f3f5ccf668da33cba26f669c220aaf894031ea7bab9243ad309e0ab3af9",
+            "address_signals": [
+              "C",
+              "D"
+            ],
+            "clock_hz": 10000000.0,
+            "complete_clock_bursts": {
+              "128": 1566
+            },
+            "oe_enabled_clock_edges": 0,
+            "lat_high_clock_edges": 0,
+            "latches_per_complete_burst": [
+              1
+            ],
+            "latch_after_final_clock_ns": {
+              "min": 50.0,
+              "median": 50.0
+            },
+            "oe_enabled_at_latch": 0,
+            "observed_cd": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "cd_progression_mod4": true,
+            "complete_cd_latch_runs": [
+              32
+            ],
+            "inferred_scan_refresh_hz": 244.87597032103238,
+            "cd_changes_while_oe_enabled": 0,
+            "rgb_bank": "RGB2",
+            "rgb_nonzero_samples": 802919,
+            "rgb2_nonzero_samples": 802919
+          }
+        },
+        "blue": {
+          "started_utc": "2026-10-08T04:54:06.951683+00:00",
+          "exact_usb_pixels": true,
+          "usb_rgb_bytes": 6144,
+          "analysis": {
+            "samples": 2000000,
+            "sample_rate_hz": 40000000,
+            "clock_rises": 200704,
+            "latches": 1568,
+            "capture_sha256": "1068fab0309725b79ed02569df693991771678cd1c849c573e3c443ce0f153a9",
+            "address_signals": [
+              "C",
+              "D"
+            ],
+            "clock_hz": 10000000.0,
+            "complete_clock_bursts": {
+              "128": 1566
+            },
+            "oe_enabled_clock_edges": 0,
+            "lat_high_clock_edges": 0,
+            "latches_per_complete_burst": [
+              1
+            ],
+            "latch_after_final_clock_ns": {
+              "min": 25.0,
+              "median": 50.0
+            },
+            "oe_enabled_at_latch": 0,
+            "observed_cd": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "cd_progression_mod4": true,
+            "complete_cd_latch_runs": [
+              32
+            ],
+            "inferred_scan_refresh_hz": 244.87597032103238,
+            "cd_changes_while_oe_enabled": 0,
+            "rgb_bank": "RGB2",
+            "rgb_nonzero_samples": 802934,
+            "rgb2_nonzero_samples": 802934
+          }
+        },
+        "black": {
+          "started_utc": "2026-10-08T04:54:17.376092+00:00",
+          "exact_usb_pixels": true,
+          "usb_rgb_bytes": 6144,
+          "analysis": {
+            "samples": 2000000,
+            "sample_rate_hz": 40000000,
+            "clock_rises": 200687,
+            "latches": 1568,
+            "capture_sha256": "95c2f097f33f1ac51660603be66b09de6bb221053b81c9017b77376bbdbc4503",
+            "address_signals": [
+              "C",
+              "D"
+            ],
+            "clock_hz": 10000000.0,
+            "complete_clock_bursts": {
+              "128": 1566
+            },
+            "oe_enabled_clock_edges": 0,
+            "lat_high_clock_edges": 0,
+            "latches_per_complete_burst": [
+              1
+            ],
+            "latch_after_final_clock_ns": {
+              "min": 25.0,
+              "median": 50.0
+            },
+            "oe_enabled_at_latch": 0,
+            "observed_cd": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "cd_progression_mod4": true,
+            "complete_cd_latch_runs": [
+              32
+            ],
+            "inferred_scan_refresh_hz": 244.87597032103238,
+            "cd_changes_while_oe_enabled": 0,
+            "rgb_bank": "RGB2",
+            "rgb_nonzero_samples": 0,
+            "rgb2_nonzero_samples": 0
+          }
+        }
+      },
+      "stats": [
+        "@DBG HUB75 frames=7286 failures=0 micSource=ES8311",
+        "@DBG STATS intFree=198091 largest=131072 min=165416 psram=16164208",
+        "@DBG STACK loop=5368 anim=7444 mic=5048",
+        "@DBG TIMING animUs=978 renderUs=1319 micFrames=2760 micDrops=0"
+      ]
+    }
+  },
+  "build_and_host_checks": {
+    "s31_full_build": "PASS",
+    "s3_firmware_build": "PASS",
+    "normal_network_path_compile": "PASS",
+    "external_adc_path_compile": "PASS",
+    "known_trace_analyzer_tests": 4,
+    "animation_validate_ps1": "PASS"
+  },
+  "remaining_qualification": [
+    "Physical HUB75 panel brightness, gradients, scan mapping and signal integrity",
+    "GPIO44-48 in their production assignments",
+    "Speech/viseme accuracy with actual vocal input",
+    "Auxiliary HUD and gesture hardware",
+    "Wi-Fi onboarding, remote sync and OTA on a test network"
+  ]
+}

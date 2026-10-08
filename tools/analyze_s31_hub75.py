@@ -1,4 +1,4 @@
-"""Analyze partial HUB75 wiring: D0 CLK, D1 LAT, D2 OE, D3-5 RGB1, D6-7 A/B."""
+"""Analyze HUB75 probes: CLK/LAT/OE, one RGB bank, and two address bits."""
 import argparse
 import json
 from pathlib import Path
@@ -6,7 +6,8 @@ import numpy as np
 import hashlib
 
 
-def analyze(path):
+def analyze(path, address_shift=0):
+    if address_shift not in (0, 2): raise ValueError('address shift must be 0 (A/B) or 2 (C/D)')
     metadata = json.loads(path.with_suffix('.json').read_text())
     rate = metadata['sample_rate_hz']
     raw = np.frombuffer(path.read_bytes(), dtype=np.uint8)
@@ -16,7 +17,8 @@ def analyze(path):
     rises = np.flatnonzero(~clk[:-1] & clk[1:]) + 1
     latches = np.flatnonzero(~lat[:-1] & lat[1:]) + 1
     result = {'samples':len(raw), 'sample_rate_hz':rate, 'clock_rises':len(rises), 'latches':len(latches),
-              'capture_sha256':hashlib.sha256(raw).hexdigest()}
+              'capture_sha256':hashlib.sha256(raw).hexdigest(),
+              'address_signals':['A','B'] if address_shift == 0 else ['C','D']}
     if len(rises) > 2:
         deltas = np.diff(rises)
         period = float(np.median(deltas))
@@ -41,18 +43,21 @@ def analyze(path):
                                                     'median':float(np.median(distances) * 1e9 / rate)}
     if len(latches):
         result['oe_enabled_at_latch'] = int(np.count_nonzero(~oe[latches]))
-        result['observed_ab'] = sorted(set(((raw[latches] >> 6) & 3).tolist()))
+        prefix = 'ab' if address_shift == 0 else 'cd'
+        result['observed_' + prefix] = sorted(set(((raw[latches] >> 6) & 3).tolist()))
         addresses = ((raw[latches] >> 6) & 3).astype(np.int16)
         changes = np.flatnonzero(addresses[1:] != addresses[:-1]) + 1
         runs = addresses[np.r_[0, changes]]
-        result['ab_progression_mod4'] = bool(len(runs) > 1 and np.all((np.diff(runs) & 3) == 1))
-        result['complete_ab_latch_runs'] = sorted(set(np.diff(np.r_[0, changes, len(addresses)])[1:-1].tolist()))
+        result[prefix + '_progression_mod4'] = bool(len(runs) > 1 and np.all((np.diff(runs) & 3) == 1))
+        result['complete_' + prefix + '_latch_runs'] = sorted(set(np.diff(np.r_[0, changes, len(addresses)])[1:-1].tolist()))
         if len(changes) > 1:
             # Row-start spacing excludes the unequal BCM intervals within rows.
-            result['inferred_scan_refresh_hz'] = rate / float(np.median(np.diff(latches[changes]))) / 16
+            result['inferred_scan_refresh_hz'] = rate / float(np.median(np.diff(latches[changes]))) / (16 >> address_shift)
     ab = (raw >> 6) & 3
-    result['ab_changes_while_oe_enabled'] = int(np.count_nonzero((ab[1:] != ab[:-1]) & (~oe[1:] | ~oe[:-1])))
-    result['rgb1_nonzero_samples'] = int(np.count_nonzero(raw & 0x38))
+    result[('ab' if address_shift == 0 else 'cd') + '_changes_while_oe_enabled'] = int(np.count_nonzero((ab[1:] != ab[:-1]) & (~oe[1:] | ~oe[:-1])))
+    result['rgb_bank'] = 'RGB1' if address_shift == 0 else 'RGB2'
+    result['rgb_nonzero_samples'] = int(np.count_nonzero(raw & 0x38))
+    result[('rgb1' if address_shift == 0 else 'rgb2') + '_nonzero_samples'] = result['rgb_nonzero_samples']
     print(json.dumps(result,indent=2))
     path.with_suffix('.analysis.json').write_text(json.dumps(result,indent=2))
     return result
@@ -61,4 +66,6 @@ def analyze(path):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('capture',type=Path)
-    analyze(parser.parse_args().capture)
+    parser.add_argument('--address-shift', type=int, choices=[0,2], default=0)
+    args = parser.parse_args()
+    analyze(args.capture, args.address_shift)

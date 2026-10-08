@@ -69,6 +69,16 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 2.0.4
+  espressif/esp_codec_dev:
+    component_hash: 4779f31a3ba3f9b38aee1afe6ccb9ba8f6108dc3a6e77d39d7d714e9a215371b
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.6.2
   espressif/esp_daylight:
     component_hash: e27629eb7e12da9e6d01c646e0e4ce6358b977b6f89d4f291a4cc1aea755af94
     dependencies:
@@ -448,6 +458,7 @@ direct_dependencies:
 - espressif/esp-dsp
 - espressif/esp-modbus
 - espressif/esp-zigbee-lib
+- espressif/esp_codec_dev
 - espressif/esp_insights
 - espressif/esp_modem
 - espressif/esp_rainmaker
@@ -458,6 +469,6 @@ direct_dependencies:
 - espressif/w5500
 - idf
 - joltwallet/littlefs
-manifest_hash: c48b72292ae747375fc12a616ab450569fc2a157ecccf4b0121ac0507c3c7b35
+manifest_hash: 47a4fd20682586d21a524b48519ac60fcc9d8b301c5836ce9b91c067af3c2172
 target: esp32s31
 version: 3.0.0

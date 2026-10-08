@@ -258,9 +258,14 @@ bool gColoredPreview = false; // true for UnitLCD color mode
 // and cannot be auto-distinguished, so GLASS2 is preferred on 0x3C HUDs.
 static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
 {
+#if defined(TASESP32S31)
+  constexpr int8_t auxiliaryI2cPort = 1; // I2C0 belongs to the onboard codec.
+#else
+  constexpr int8_t auxiliaryI2cPort = -1;
+#endif
 #if __has_include(<M5UnitGLASS2.h>)
   {
-    auto *d = new M5UnitGLASS2(sda, scl, freq);
+    auto *d = new M5UnitGLASS2(sda, scl, freq, auxiliaryI2cPort);
     if (d->begin())
     {
       display = d;
@@ -274,7 +279,7 @@ static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
 #if __has_include(<M5UnitOLED.h>)
   {
     #if defined(TASESP32S31)
-    auto *d = new M5UnitOLED(sda, scl, freq);
+    auto *d = new M5UnitOLED(sda, scl, freq, auxiliaryI2cPort);
     #else
     auto *d = new M5UnitOLED(38, 39, freq);
     #endif
@@ -290,7 +295,7 @@ static bool DetectDisplay(uint8_t sda, uint8_t scl, uint32_t freq)
 #endif
 #if __has_include(<M5UnitLCD.h>)
   {
-    auto *d = new M5UnitLCD(sda, scl, freq);
+    auto *d = new M5UnitLCD(sda, scl, freq, auxiliaryI2cPort);
     if (d->begin())
     {
       display = d;
@@ -678,8 +683,13 @@ void setup()
   // without this.  On an un-begun TwoWire the PAJ7620 is unreachable.
   if (gDisplayType == DisplayType::GLASS2)
   {
+#if defined(TASESP32S31)
+    Wire1.begin(GESTURE_SHARED_SDA, GESTURE_SHARED_SCL);
+    gGestureWire = &Wire1;
+#else
     Wire.begin(GESTURE_SHARED_SDA, GESTURE_SHARED_SCL);
     gGestureWire = &Wire;
+#endif
     Serial.printf("[INFO] Gesture sharing display I2C bus (GPIO%d=SDA, GPIO%d=SCL)\n",
                   GESTURE_SHARED_SDA, GESTURE_SHARED_SCL);
   }
@@ -1379,9 +1389,9 @@ static void DebugStats(char* output, size_t capacity)
 {
   size_t used = 0;
 #if defined(TASESP32S31)
-  snprintf(output, capacity, "@DBG HUB75 frames=%lu failures=%lu\n",
+  snprintf(output, capacity, "@DBG HUB75 frames=%lu failures=%lu micSource=%s\n",
       static_cast<unsigned long>(controller.GetCompletedFrames()),
-      static_cast<unsigned long>(controller.GetPresentFailures()));
+      static_cast<unsigned long>(controller.GetPresentFailures()), MicrophoneFourierIT::GetInputName());
   used = strlen(output);
   if (used >= capacity) return;
 #endif

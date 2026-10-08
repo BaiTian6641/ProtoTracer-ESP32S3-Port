@@ -3,6 +3,12 @@ cmake_minimum_required(VERSION 3.16)
 set(CMAKE_NINJA_FORCE_RESPONSE_FILE ON CACHE BOOL "Use response files for the probe")
 option(PROTOTRACER_FULL_FIRMWARE "Build the real ProtoTracer application" OFF)
 option(PROTOTRACER_S31_OFFLINE_BOOT "Skip Wi-Fi onboarding for wired bring-up with local assets" OFF)
+option(PROTOTRACER_S31_PROBE_SECOND_BANK "Route RGB2 and C/D onto the existing eight analyzer pins" OFF)
+set(PROTOTRACER_S31_MICROPHONE "ES8311" CACHE STRING "S31 microphone source: ES8311 or ADC")
+set_property(CACHE PROTOTRACER_S31_MICROPHONE PROPERTY STRINGS ES8311 ADC)
+if(NOT PROTOTRACER_S31_MICROPHONE MATCHES "^(ES8311|ADC)$")
+    message(FATAL_ERROR "PROTOTRACER_S31_MICROPHONE must be ES8311 or ADC")
+endif()
 # IDF discovers component requirements in a separate CMake process. Carry the
 # selected mode into that pass and exclude unused generated local components.
 if(PROTOTRACER_FULL_FIRMWARE)

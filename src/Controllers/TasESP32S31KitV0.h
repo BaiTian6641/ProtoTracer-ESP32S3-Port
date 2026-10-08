@@ -3,6 +3,7 @@
 #include <M5UnitGLASS2.h>
 #include <hub75.h>
 #include <esp_heap_caps.h>
+#include <utility>
 #include "Controller.h"
 #include "../Render/Camera.h"
 
@@ -64,6 +65,16 @@ public:
         config.pins.a = 42; config.pins.b = 43;
         config.pins.c = 44; config.pins.d = 45; config.pins.e = -1;
         config.pins.r2 = 46; config.pins.g2 = 47; config.pins.b2 = 48;
+#if defined(S31_HUB75_PROBE_SECOND_BANK) && S31_HUB75_PROBE_SECOND_BANK
+        // Diagnostic only: the same eight probes observe the lower RGB bank
+        // and high address bits. Restore the primary map before wiring panels.
+        std::swap(config.pins.r1, config.pins.r2);
+        std::swap(config.pins.g1, config.pins.g2);
+        std::swap(config.pins.b1, config.pins.b2);
+        std::swap(config.pins.a, config.pins.c);
+        std::swap(config.pins.b, config.pins.d);
+        Serial.println("[S31 HUB75] diagnostic probe bank: RGB2/C/D");
+#endif
         MapColors(gHub75ColorOrder, config.pins.r1, config.pins.g1, config.pins.b1);
         MapColors(gHub75ColorOrder, config.pins.r2, config.pins.g2, config.pins.b2);
         panel = new Hub75Driver(config);

@@ -19,6 +19,9 @@
 #include "../Filter/PeakDetection.h"
 #include "../Signals/TimeStep.h"
 #include <new>
+#if defined(MIC_USE_ES8311) && MIC_USE_ES8311
+#include "S31Es8311Microphone.h"
+#endif
 //volatile SemaphoreHandle_t timerSemaphore;
 static const char *TAG = "main";
 
@@ -85,6 +88,15 @@ private:
     static float pendingThreshold;
     static float publishedThreshold;
     static FFTFilter* fftFilters;          // CPU-only filter history in PSRAM
+
+    static void ReleaseStorage() {
+        float** buffers[] = {&SampleArray, &inputStorage, &outputData, &outputDataFilt,
+            &pendingInputStorage, &pendingOutputData, &pendingOutputDataFilt,
+            &publishedInputStorage, &publishedOutputData, &publishedOutputDataFilt, &noiseMagnitude};
+        for (float** buffer : buffers) { heap_caps_free(*buffer); *buffer = nullptr; }
+        heap_caps_free(fftFilters);
+        fftFilters = nullptr;
+    }
 
     
     //static arm_cfft_radix4_instance_f32 RadixFFT;
@@ -208,10 +220,20 @@ private:
 
     static void FftTask(void*){
         while (true) {
+#if defined(MIC_USE_ES8311) && MIC_USE_ES8311
+            if (S31Es8311Microphone::ReadFrame(rawSamples, FFTSize)) {
+                samplesReady = true;
+                ProcessReadySamples();
+            } else {
+                samplerDropCount = samplerDropCount + 1;
+                vTaskDelay(pdMS_TO_TICKS(5));
+            }
+#else
             if (samplesReadySemaphore && xSemaphoreTake(samplesReadySemaphore, portMAX_DELAY) == pdTRUE) {
                 ProcessReadySamples();
                 StartSampler();
             }
+#endif
         }
     }
 
@@ -220,8 +242,19 @@ private:
         memset(noiseMagnitude, 0, FFTSize * sizeof(float));
     
         for (int f = 0; f < noiseFrames; ++f) {
+#if defined(MIC_USE_ES8311) && MIC_USE_ES8311
+            if (!S31Es8311Microphone::ReadFrame(rawSamples, FFTSize)) {
+                memset(noiseMagnitude, 0, FFTSize * sizeof(float));
+                Serial.println("[MIC ES8311] Noise acquisition failed; using zero baseline");
+                return;
+            }
+#endif
             for (int i = 0; i < FFTSize; ++i) {
+#if defined(MIC_USE_ES8311) && MIC_USE_ES8311
+                float val = float(rawSamples[i]);
+#else
                 float val = (float)analogRead(pin);
+#endif
                 inputStorage[i] = val;
                 SampleArray[i * 2] = val;
                 SampleArray[i * 2 + 1] = 0.0f;
@@ -253,6 +286,12 @@ public:
         dsps_fft4r_init_fc32(NULL, FFTSize);
         //Serial.print("OK");
 
+#if defined(MIC_USE_ES8311) && MIC_USE_ES8311
+        if (!S31Es8311Microphone::Begin(sampleRate)) {
+            isInitialized = false;
+            return;
+        }
+#else
         pinMode(pin, INPUT);
         analogReadResolution(12);
 
@@ -262,6 +301,7 @@ public:
             Serial.printf("[MIC] Timer create failed: %d\n", err);
             timer = nullptr;
         }
+#endif
 
         MicrophoneFourierIT::sampleRate = sampleRate;
         MicrophoneFourierIT::samples = 0;
@@ -296,16 +336,20 @@ public:
             !publishedInputStorage || !publishedOutputData || !publishedOutputDataFilt ||
             !noiseMagnitude || !fftFilters) {
             Serial.println("[MIC] PSRAM alloc failed — audio disabled");
-            float** buffers[] = {&SampleArray, &inputStorage, &outputData, &outputDataFilt,
-                &pendingInputStorage, &pendingOutputData, &pendingOutputDataFilt,
-                &publishedInputStorage, &publishedOutputData, &publishedOutputDataFilt, &noiseMagnitude};
-            for (float** buffer : buffers) { heap_caps_free(*buffer); *buffer = nullptr; }
-            heap_caps_free(fftFilters);
-            fftFilters = nullptr;
+            ReleaseStorage();
             isInitialized = false;
+#if defined(MIC_USE_ES8311) && MIC_USE_ES8311
+            S31Es8311Microphone::Close();
+#endif
             return;
         }
         for (uint8_t i = 0; i < OutputBins; ++i) new (&fftFilters[i]) FFTFilter();
+        // Publish silence until the first complete frame, including the final
+        // FFT bin which the existing adjacent-bin loop does not update.
+        float* spectra[] = {outputData, outputDataFilt, pendingOutputData,
+            pendingOutputDataFilt, publishedOutputData, publishedOutputDataFilt};
+        for (float* spectrum : spectra) memset(spectrum, 0, OutputBins * sizeof(float));
+        memset(publishedInputStorage, 0, FFTSize * sizeof(float));
 
         float windowRange = float(sampleRate) / 2.0f / float(OutputBins);
 
@@ -321,10 +365,15 @@ public:
         isInitialized = true;
 
 #if MIC_FFT_ASYNC
+#if defined(MIC_USE_ES8311) && MIC_USE_ES8311
+        const bool canStartAsync = true;
+#else
         if (!samplesReadySemaphore) {
             samplesReadySemaphore = xSemaphoreCreateBinary();
         }
-        if (samplesReadySemaphore && !fftTaskHandle) {
+        const bool canStartAsync = samplesReadySemaphore != nullptr;
+#endif
+        if (canStartAsync && !fftTaskHandle) {
             BaseType_t taskResult = xTaskCreatePinnedToCore(
                 FftTask,
                 "MicFFT",
@@ -341,6 +390,15 @@ public:
 #endif
 
         // Start the first sampling cycle
+#if defined(MIC_USE_ES8311) && MIC_USE_ES8311
+        if (!asyncTaskStarted) {
+            Serial.println("[MIC ES8311] Async task unavailable; audio disabled");
+            S31Es8311Microphone::Close();
+            ReleaseStorage();
+            isInitialized = false;
+            return;
+        }
+#endif
         if (timer) {
             StartSampler();
         }
@@ -350,6 +408,13 @@ public:
 
     static bool IsInitialized(){
         return isInitialized;
+    }
+    static const char* GetInputName() {
+#if defined(MIC_USE_ES8311) && MIC_USE_ES8311
+        return "ES8311";
+#else
+        return "ADC";
+#endif
     }
 
     static float GetSampleRate(){
@@ -378,7 +443,11 @@ public:
     }
 
     static uint32_t GetSamplerDropCount(){
+#if defined(MIC_USE_ES8311) && MIC_USE_ES8311
+        return samplerDropCount + S31Es8311Microphone::GetOverflowCount();
+#else
         return samplerDropCount;
+#endif
     }
 
     static uint32_t GetTaskStackHighWater(){
@@ -396,6 +465,7 @@ public:
     }
     
     static void Update(){
+        if (!isInitialized) return;
         if (!asyncTaskStarted && samplesReady && timeStep.IsReady()) {
             ProcessReadySamples();
             StartSampler();

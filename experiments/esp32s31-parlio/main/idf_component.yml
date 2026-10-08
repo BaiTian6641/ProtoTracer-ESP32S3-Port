@@ -1,3 +1,4 @@
 dependencies:
   idf: ">=6.1,<6.2"
   espressif/esp-dsp: "==1.8.0"
+  espressif/esp_codec_dev: "==1.6.2"

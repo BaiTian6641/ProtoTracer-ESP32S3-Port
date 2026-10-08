@@ -27,6 +27,7 @@ remote protocol, using `TasESP32S31KitV0` for two chained 64x32 panels.
 | Arduino 4.0.0-RC1 | `76f683d935b390f2805301ec10a5562bbbb37811` |
 | `esphome-libs/esp-hub75` | `d0bb571fdae6ec6215615de4b73a6e8ce8868a85` |
 | ESP-DSP | `1.8.0` through the component manager |
+| ESP codec device | `1.6.2` through the component manager |
 
 Clone the reference inputs into the gitignored `reference/` directory:
 
@@ -86,8 +87,12 @@ generated copies for S31 GPIO types and an Arduino Wire I2C adapter; M5Unified
 board autodetection is not needed on this board. Auxiliary I2C transactions
 are bounded to 8192 bytes with persistent Wire buffers and 50 ms timeouts.
 Hardware qualification of auxiliary displays remains separate from headless
-rendering. S31 external MAX9814 input uses ADC1 GPIO49; the onboard ES8311
-codec needs a separate audio adapter.
+rendering. The default S31 audio input is now the onboard ES8311 at 8 kHz,
+16-bit mono through I2S DMA, using pinned `esp_codec_dev` 1.6.2. Signed PCM is
+mapped to the existing 12-bit FFT/viseme input scale. Select the external
+MAX9814 input on ADC1 GPIO49 with `tools/build_s31.ps1 -Microphone ADC`.
+Onboard audio uses I2C0 (SDA51/SCL50), MCLK52, BCLK53, WS55 and DIN54;
+the PA on GPIO57 stays disabled. External HUD/gesture I2C uses I2C1 on GPIO2/3.
 
 The smaller probe remains available with `PROTOTRACER_FULL_FIRMWARE=OFF`.
 Install/activate the pinned IDF 6.1 environment using its standard tools, then
@@ -130,9 +135,8 @@ adds an IDF `on_buffer_switched` acknowledgment, retains DMA ownership across
 timeouts, and applies brightness only to the owned back buffer. The full
 controller waits before drawing and presenting each animation frame.
 
-The onboard microphone uses an ES8311 I2S/I2C codec. It is a different input
-from this application's current MAX9814 ADC path; keep external microphone
-support or add a separate codec input adapter when choosing the audio wiring.
+The full firmware uses the onboard ES8311 I2S/I2C microphone by default;
+the external MAX9814 ADC path remains selectable with `-Microphone ADC`.
 
 The full controller's bring-up map is:
 
@@ -151,7 +155,7 @@ The library's hybrid BCM/PWM timing trades lower-bit precision for refresh;
 visible gradients still need panel qualification. The initial waveform tests
 used 4 MHz for detailed edge inspection before testing the faster setting.
 GPIO33/34 remain USB-DBG, 58/59 remain USB-UART, 60 is the status LED and 61
-is BOOT/OTA. Auxiliary I2C uses GPIO2/3. Confirm the complete panel wiring
+is BOOT/OTA. Auxiliary I2C1 uses GPIO2/3. Confirm the complete panel wiring
 before using the unprobed signals.
 
 For the detected SLogic Combo8 (VID359F/PID0300), workspace Python can capture
@@ -164,7 +168,16 @@ python tools/analyze_s31_hub75.py build/s31-hub75.bin
 python tools/serial_debug.py --port COM6 stats
 python -m pip install bleak
 python tools/test_s31_ble_hub75.py --port COM6 --output build/s31-ble-hub75
+python tools/check_s31_audio.py --port COM6
+python tools/serial_debug_soak.py --target esp32s31 --port COM6 --seconds 300 --directory build/s31-soak
 ```
+
+With **only analyzer probes attached**, `-ProbeSecondBank` temporarily swaps
+RGB2 and C/D onto the same eight pins. Run `test_s31_ble_hub75.py --bank secondary`
+or `analyze_s31_hub75.py CAPTURE.bin --address-shift 2` for that mapping.
+This verifies the lower RGB bank and high address logic without rewiring;
+it does not measure GPIO44-48 in their production assignments. Build/flash
+again without `-ProbeSecondBank` to restore the normal map before wiring panels.
 
 The GPL-3.0-or-later capture adapter follows Sipeed's published Combo8 protocol
 and performs no device firmware writes. Capture duration is bounded to 250 ms.

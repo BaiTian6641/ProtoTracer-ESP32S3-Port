@@ -88,7 +88,8 @@ ISR acknowledgment before transmit returns, and queue errors. This does not
 model hardware timing; on-device counters and SLogic captures cover that.
 
 `python test_s31_hub75_analyzer.py` (NumPy required) checks the waveform analyzer
-against independent traces with safe and early latches and unblanked clocks.
+against independent traces with safe and early latches, unblanked clocks,
+and C/D address grouping with an independently known frame period.
 
 ## Environment caveat (this dev machine)
 

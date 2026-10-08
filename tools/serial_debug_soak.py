@@ -70,6 +70,7 @@ def validate(metadata, data, vertex_count=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", default="COM5")
+    parser.add_argument("--target", choices=("esp32s3", "esp32s31"), default="esp32s3")
     parser.add_argument("--seconds", type=int, default=600)
     parser.add_argument("--dumps", type=int, default=60)
     parser.add_argument("--directory", type=Path, default=Path(".pio/build/debug-soak"))
@@ -100,8 +101,8 @@ def main():
             partial, data = receive(monitor, "dbg dump rgb0 6130 14")
             if partial["offset"] != 6130 or len(data) != 14:
                 raise RuntimeError("Partial range not honored")
-            targets = ["rgb0", "scratch0", "hud", "vertices0", "indices0", "samples", "fft", "filtered",
-                       "dmafront0", "dmaback0"]
+            targets = ["rgb0", "scratch0", "hud", "vertices0", "indices0", "samples", "fft", "filtered"]
+            if args.target == "esp32s3": targets += ["dmafront0", "dmaback0"]
             transferred = 0
             vertex_count = None
             hashes = set()
@@ -137,7 +138,7 @@ def main():
                     last_report = time.monotonic()
             check = receive(monitor, "dbg check")[1]
             stats = receive(monitor, "dbg stats")[1]
-            summary = dict(seconds=round(time.monotonic() - start, 1), snapshots=args.dumps,
+            summary = dict(target=args.target, seconds=round(time.monotonic() - start, 1), snapshots=args.dumps,
                            bytes=transferred, distinct_rgb_hashes=len(hashes), windows=len(monitor.frames),
                            median_fps=statistics.median(f[0] for f in monitor.frames),
                            median_display_ms=statistics.median(f[2] for f in monitor.frames),
